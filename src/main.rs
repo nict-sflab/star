@@ -1,40 +1,86 @@
-use constant_time_utils::time::current_period;
 use rand::RngCore;
-use star::enclave::core::{bytes::Short, cred::Credential, token::Token};
+use star::enclave::core::token::Token;
 use star::enclave::enclave::Enclave;
+use star::user::User;
 
 fn main() {
-    issue_credential_then_token();
-}
-
-fn issue_credential_then_token() {
+    // End-to-end demo: issue a credential, request a token over HPKE, and inspect the token.
     let mut rng = rand::thread_rng();
 
-    let mut sk = [0u8; 32];
-    rng.fill_bytes(&mut sk);
+    // Bootstrap enclave secrets.
+    let mut token_sk = [0u8; 32];
+    let mut hpke_sk = [0u8; 32];
+    rng.fill_bytes(&mut token_sk);
+    rng.fill_bytes(&mut hpke_sk);
 
-    let mut cipher_receiver = [0u8; 32];
-    rng.fill_bytes(&mut cipher_receiver);
+    let max_tokens_per_credential = 3u32;
+    let enclave =
+        Enclave::new(max_tokens_per_credential, token_sk, hpke_sk)
+            .expect("failed to initialize enclave");
 
-    // Allow up to 5 tokens per period in this demo.
-    let enclave = Enclave::new(5, sk, cipher_receiver).expect("failed to create enclave");
-
-    // Issue a credential inside the enclave.
+    // User setup and credential issuance.
+    let mut user = User::new(max_tokens_per_credential as u64);
     let credential_bytes = enclave.issue_cred_plain();
-    let credential = Credential::from_bytes(&credential_bytes);
+    user.receive_credential(&credential_bytes);
+    println!(
+        "User received credential ({} bytes): {}",
+        credential_bytes.len(),
+        hex(&credential_bytes)
+    );
 
-    // Build the plaintext token request: cmd + credential + count + period.
-    let period: Short = current_period();
-    let count: Short = 1u64.to_be_bytes();
-    let mut token_request = Vec::with_capacity(1 + credential_bytes.len() + count.len() + period.len());
-    token_request.push(0x01); // placeholder command byte
-    token_request.extend_from_slice(&credential_bytes);
-    token_request.extend_from_slice(&count);
-    token_request.extend_from_slice(&period);
+    // User asks for a token using an HPKE-wrapped request.
+    let envelope1 = user
+        .request_auth(0, &enclave.public_key())
+        .expect("failed to build token request");
+    let token_bytes1 = enclave
+        .issue_token(&envelope1)
+        .expect("token issuance failed");
 
-    let token_bytes = enclave.issue_token_plain(&token_request);
-    let token = Token::from_bytes(&token_bytes);
 
-    println!("issued credential uid     : {:02x?}", credential.uid);
-    println!("issued token (period {:?}): {:02x?}", token.period, token.token);
+    let envelope2 = user
+        .request_auth(0, &enclave.public_key())
+        .expect("failed to build token request");
+    let token_bytes2 = enclave
+        .issue_token(&envelope2)
+        .expect("token issuance failed");
+
+    let envelope3 = user
+        .request_auth(1, &enclave.public_key())
+        .expect("failed to build token request");
+    let token_bytes3 = enclave
+        .issue_token(&envelope3)
+        .expect("token issuance failed");
+
+
+    println!(
+        "Issued token for period ({} bytes): {}",
+        token_bytes1.len(),
+        hex(&token_bytes1)
+    );
+
+
+    println!(
+        "Issued token for period ({} bytes): {}",
+        token_bytes2.len(),
+        hex(&token_bytes2)
+    );
+    
+    println!(
+        "Issued token for period ({} bytes): {}",
+        token_bytes3.len(),
+        hex(&token_bytes3)
+    );
+
+    assert!(token_bytes1 == token_bytes2);
+    assert!(token_bytes1 != token_bytes3);
+
+}
+
+/// Hex formatter to avoid pulling an extra dependency for the example.
+fn hex(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push_str(&format!("{:02x}", byte));
+    }
+    out
 }

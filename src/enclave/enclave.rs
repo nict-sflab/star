@@ -64,16 +64,16 @@ impl Enclave {
         Ok(result)
     }
 
-    /// Issue a token from an already decrypted request (cmd + credential 64 bytes + count 8 bytes + period 8 bytes).
+    /// Issue a token from an already decrypted request (credential 64 bytes + count 8 bytes + period 8 bytes).
     /// This is mainly for examples/tests; production callers should use `issue_token` with HPKE-protected payloads.
     pub fn issue_token_plain(&self, request: &[u8]) -> Vec<u8> {
-        if request.len() < 81 {
+        if request.len() < 80 {
             return vec![0u8];
         }
 
-        let cred = Credential::from_bytes(&request[1..65]);
-        let count: Short = request[65..73].try_into().expect("fixed-length slice");
-        let period: Short = request[73..81].try_into().expect("fixed-length slice");
+        let cred = Credential::from_bytes(&request[0..64]);
+        let count: Short = request[64..72].try_into().expect("fixed-length slice");
+        let period: Short = request[72..80].try_into().expect("fixed-length slice");
 
         if !cred.is_valid(period, count, self.max_tickets, self.sk) {
             return vec![0u8];
@@ -88,7 +88,6 @@ impl Enclave {
 
         token.to_bytes()
     }
-
 
 
     pub fn issue_cred(&self, cipher: &[u8]) -> Vec<u8> {
