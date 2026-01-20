@@ -1,0 +1,90 @@
+use chacha20poly1305::{
+    aead::{Aead, KeyInit},
+    ChaCha20Poly1305,
+    Nonce,
+};
+use rand::{rngs::OsRng, RngCore};
+use hpke::{
+    aead::ChaCha20Poly1305 as HpkeChaCha20Poly1305,
+    kdf::HkdfSha256,
+    kem::{Kem as _, X25519HkdfSha256},
+    setup_receiver, Deserializable, HpkeError, OpModeR, Serializable,
+};
+
+// HPKE receiver living inside the enclave.
+pub struct CipherReceiver {
+    sk: <X25519HkdfSha256 as hpke::kem::Kem>::PrivateKey,
+    pk: <X25519HkdfSha256 as hpke::kem::Kem>::PublicKey,
+}
+
+impl CipherReceiver {
+    /// Restore a receiver from an existing 32-byte X25519 secret key.
+    pub fn new(sk_bytes: [u8; 32]) -> Result<Self, HpkeError> {
+        let sk = <X25519HkdfSha256 as hpke::kem::Kem>::PrivateKey::from_bytes(&sk_bytes)?;
+        let pk = X25519HkdfSha256::sk_to_pk(&sk);
+        Ok(Self { sk, pk })
+    }
+    
+    /// Generate a fresh receiver keypair using curve25519-dalek.
+    pub fn random() -> Self {
+        let mut rng = OsRng;
+        let (sk, pk) = X25519HkdfSha256::gen_keypair(&mut rng);
+
+        Self { sk, pk }
+    }
+
+    /// Public key for advertising to senders.
+    pub fn public_key(&self) -> Vec<u8> {
+        self.pk.to_bytes().to_vec()
+    }
+
+    /// Decrypt an HPKE ciphertext (X25519 + ChaCha20-Poly1305).
+    pub fn receive_hpke(
+        &self,
+        enc: &[u8],
+        info: &[u8],
+        aad: &[u8],
+        ciphertext: &[u8],
+    ) -> Result<Vec<u8>, HpkeError> {
+        let enc = <X25519HkdfSha256 as hpke::kem::Kem>::EncappedKey::from_bytes(enc)?;
+        let mut ctx = setup_receiver::<HpkeChaCha20Poly1305, HkdfSha256, X25519HkdfSha256>(
+            &OpModeR::Base,
+            &self.sk,
+            &enc,
+            info,
+        )?;
+
+        ctx.open(ciphertext, aad)
+    }
+
+    pub fn respond_cipher(&self, response: &[u8], cipher: &[u8]) -> Vec<u8> {
+        const AAD_LEN: usize = 32;
+        const INFO_LEN: usize = 32;
+        const ENC_LEN: usize = 32;
+
+        let min_len = AAD_LEN + INFO_LEN + ENC_LEN;
+        assert!(cipher.len() >= min_len, "HPKE envelope too short");
+
+        let aad = &cipher[..AAD_LEN];
+        let info = &cipher[AAD_LEN..AAD_LEN + INFO_LEN];
+        let enc = &cipher[AAD_LEN + INFO_LEN..AAD_LEN + INFO_LEN + ENC_LEN];
+        let ciphertext = &cipher[AAD_LEN + INFO_LEN + ENC_LEN..];
+
+        let key = self.receive_hpke(enc, info, aad, ciphertext).expect("decryption failed");
+
+        let mut nonce_bytes = [0u8; 12];
+        OsRng.fill_bytes(&mut nonce_bytes);
+        let nonce = Nonce::from_slice(&nonce_bytes);
+
+        let aead = ChaCha20Poly1305::new_from_slice(&key)
+            .expect("HPKE response key must be 32 bytes");
+        let ciphertext = aead
+            .encrypt(nonce, response)
+            .expect("encryption failure!");
+
+        let mut result = Vec::with_capacity(nonce_bytes.len() + ciphertext.len());
+        result.extend_from_slice(&nonce_bytes);
+        result.extend_from_slice(&ciphertext);
+        result
+    }
+}
