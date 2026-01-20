@@ -1,11 +1,10 @@
-use crate::enclave::cipher::SecureChannel;
-use crate::enclave::core::cred::Credential;
-use crate::enclave::core::token::Token;
-use crate::enclave::core::bytes::{Long, Short};
+use crate::serv::cipher::SecureChannel;
+use crate::serv::core::cred::Credential;
+use crate::serv::core::token::Token;
+use crate::serv::core::bytes::{Long, Short};
 
 use hpke::HpkeError;
 use rand::RngCore;
-use redb::Result;
 
 // HPKE receiver living inside the enclave.
 pub struct Enclave {

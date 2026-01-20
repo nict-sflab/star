@@ -1,4 +1,4 @@
-use crate::enclave::core::bytes::{Long, Short};
+use crate::serv::core::bytes::{Long, Short};
 
 pub struct Token {
     pub token: Long,

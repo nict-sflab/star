@@ -1,7 +1,7 @@
 use rand::RngCore;
-use star::enclave::core::token::Token;
-use star::enclave::enclave::Enclave;
-use star::user::User;
+use star_core::serv::core::token::Token;
+use star_core::serv::enclave::Enclave;
+use star_core::client::User;
 
 fn main() {
     // End-to-end demo: issue a credential, request a token over HPKE, and inspect the token.

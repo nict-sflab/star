@@ -1,6 +1,6 @@
 use rand::RngCore;
 
-use crate::enclave::core::bytes::{Long, Short};
+use crate::serv::core::bytes::{Long, Short};
 
 pub struct Credential {
     pub uid: Long,

@@ -7,7 +7,7 @@ use hpke::{
 use rand::{rngs::OsRng, RngCore};
 use constant_time_utils::time::current_period;
 
-use crate::enclave::core::{bytes::Short, cred::Credential};
+use crate::serv::core::{bytes::Short, cred::Credential};
 
 /// Client-side holder for credentials and token requests.
 pub struct User {
