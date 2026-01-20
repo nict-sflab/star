@@ -12,12 +12,12 @@ use hpke::{
 };
 
 // HPKE receiver living inside the enclave.
-pub struct CipherReceiver {
+pub struct SecureChannel {
     sk: <X25519HkdfSha256 as hpke::kem::Kem>::PrivateKey,
     pk: <X25519HkdfSha256 as hpke::kem::Kem>::PublicKey,
 }
 
-impl CipherReceiver {
+impl SecureChannel {
     /// Restore a receiver from an existing 32-byte X25519 secret key.
     pub fn new(sk_bytes: [u8; 32]) -> Result<Self, HpkeError> {
         let sk = <X25519HkdfSha256 as hpke::kem::Kem>::PrivateKey::from_bytes(&sk_bytes)?;

@@ -1,4 +1,4 @@
-use crate::enclave::cipher::CipherReceiver;
+use crate::enclave::cipher::SecureChannel;
 use crate::enclave::core::cred::Credential;
 use crate::enclave::core::token::Token;
 use crate::enclave::core::bytes::{Long, Short};
@@ -9,7 +9,7 @@ use redb::Result;
 
 // HPKE receiver living inside the enclave.
 pub struct Enclave {
-    cipher_receiver: CipherReceiver,
+    cipher_receiver: SecureChannel,
     max_tickets: Short,
     sk: Long,
 }
@@ -17,7 +17,7 @@ pub struct Enclave {
 impl Enclave {
     /// Restore a receiver from an existing 32-byte X25519 secret key.
     pub fn new(max_tickets: u32, sk_bytes: Long, cipher_receiver: Long) -> Result<Self, HpkeError> {
-        let cipher_receiver = CipherReceiver::new(cipher_receiver)?;
+        let cipher_receiver = SecureChannel::new(cipher_receiver)?;
 
         let max_tickets: Short = (max_tickets as u64).to_be_bytes();
         Ok(Self { cipher_receiver, max_tickets, sk: sk_bytes })
