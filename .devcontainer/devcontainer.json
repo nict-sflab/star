@@ -1,0 +1,10 @@
+{
+	"build": { "dockerfile": "../thirdparty/teaclave-sgx-sdk/tools/docker/Dockerfile.ubuntu20.04" },
+	"workspaceFolder": "/workspace/star",
+
+	"customizations": {
+    	"vscode": {
+      		"extensions": []
+    	}
+	}
+}
