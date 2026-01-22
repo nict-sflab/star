@@ -8,27 +8,38 @@ use alloc::vec::Vec;
 use rand::{rngs::OsRng, RngCore};
 use constant_time_utils::time::current_period;
 
-use crate::serv::core::{bytes::Short, cred::Credential};
+use crate::{secure_channel::{self, client}, serv::core::{bytes::Short, cred::Credential}};
 
 /// Client-side holder for credentials and token requests.
 pub struct User {
     credential: Option<Credential>,
+    client: secure_channel::client::SecureChannelClient,
     max: u64,
 }
 
 impl User {
     /// Create a user allowed to make an unlimited number of token requests.
     /// Create a user capped at `max` token requests for a credential.
-    pub fn new(max: u64) -> Self {
+    pub fn new(max: u64, client: secure_channel::client::SecureChannelClient) -> Self {
         Self {
             credential: None,
+            client,
             max,
         }
     }
 
+    pub fn request_credential(&self) -> (Vec<u8>, [u8; 32]){
+        self.client.send_shared_key().expect("send shared key error")
+    }
+
+    pub fn receive_credential(&mut self, cipher: &[u8], shared_key: &[u8; 32]) {
+        let cred = self.client.decrypt_with_shared_key(cipher, shared_key).expect("failed to decrypto cred");
+        self.receive_credential_plain(&cred);
+    }
+
     /// Store a freshly issued credential.
-    pub fn receive_credential(&mut self, credential_bytes: &[u8]) {
-        let credential = Credential::from_bytes(credential_bytes);
+    pub fn receive_credential_plain(&mut self, credential_bytes: &[u8]) {
+        let credential: Credential = Credential::from_bytes(credential_bytes);
         self.credential = Some(credential);
     }
 
@@ -60,35 +71,10 @@ impl User {
     pub fn request_auth(
         &mut self,
         counter: u64,
-        receiver_public_key: &[u8],
     ) -> Result<Vec<u8>, hpke::HpkeError> {
         let token_request = self.request_auth_plain(counter);
-        let pk = <X25519HkdfSha256 as hpke::kem::Kem>::PublicKey::from_bytes(
-            receiver_public_key,
-        )?;
+        let cipher = self.client.send_hpke(&token_request)?;
 
-        let mut aad = [0u8; 32];
-        let mut info = [0u8; 32];
-        let mut rng = OsRng;
-        rng.fill_bytes(&mut aad);
-        rng.fill_bytes(&mut info);
-
-        let (enc, mut sender_ctx) =
-            setup_sender::<HpkeChaCha20Poly1305, HkdfSha256, X25519HkdfSha256, _>(
-                &OpModeS::Base,
-                &pk,
-                &info,
-                &mut rng,
-            )?;
-
-        let ciphertext = sender_ctx.seal(&token_request, &aad)?;
-
-        let mut envelope =
-            Vec::with_capacity(aad.len() + info.len() + enc.to_bytes().len() + ciphertext.len());
-        envelope.extend_from_slice(&aad);
-        envelope.extend_from_slice(&info);
-        envelope.extend_from_slice(&enc.to_bytes());
-        envelope.extend_from_slice(&ciphertext);
-        Ok(envelope)
+        Ok(cipher)
     }
 }

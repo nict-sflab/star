@@ -13,12 +13,12 @@ use hpke::{
 };
 
 // HPKE receiver living inside the enclave.
-pub struct SecureChannel {
+pub struct SecureChannelServer {
     sk: <X25519HkdfSha256 as hpke::kem::Kem>::PrivateKey,
     pk: <X25519HkdfSha256 as hpke::kem::Kem>::PublicKey,
 }
 
-impl SecureChannel {
+impl SecureChannelServer {
     /// Restore a receiver from an existing 32-byte X25519 secret key.
     pub fn new(sk_bytes: [u8; 32]) -> Result<Self, HpkeError> {
         let sk = <X25519HkdfSha256 as hpke::kem::Kem>::PrivateKey::from_bytes(&sk_bytes)?;
@@ -35,8 +35,12 @@ impl SecureChannel {
     }
 
     /// Public key for advertising to senders.
-    pub fn public_key(&self) -> Vec<u8> {
-        self.pk.to_bytes().to_vec()
+    pub fn public_key(&self) -> [u8; 32] {
+        let bytes = self.pk.to_bytes();
+        let bytes_ref: &[u8] = bytes.as_ref();
+        bytes_ref
+            .try_into()
+            .expect("public key must be 32 bytes")
     }
 
     /// Decrypt an HPKE ciphertext (X25519 + ChaCha20-Poly1305).
@@ -89,3 +93,4 @@ impl SecureChannel {
         result
     }
 }
+

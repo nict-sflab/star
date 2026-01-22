@@ -1,4 +1,4 @@
-use crate::serv::cipher::SecureChannel;
+use crate::secure_channel::server::SecureChannelServer;
 use crate::serv::core::cred::Credential;
 use crate::serv::core::token::Token;
 use crate::serv::core::bytes::{Long, Short};
@@ -9,7 +9,7 @@ use rand::{rngs::OsRng, RngCore};
 
 // HPKE receiver living inside the enclave.
 pub struct Enclave {
-    cipher_receiver: SecureChannel,
+    cipher_receiver: SecureChannelServer,
     max_tickets: Short,
     sk: Long,
 }
@@ -17,7 +17,7 @@ pub struct Enclave {
 impl Enclave {
     /// Restore a receiver from an existing 32-byte X25519 secret key.
     pub fn new(max_tickets: u32, sk_bytes: Long, cipher_receiver: Long) -> Result<Self, HpkeError> {
-        let cipher_receiver = SecureChannel::new(cipher_receiver)?;
+        let cipher_receiver = SecureChannelServer::new(cipher_receiver)?;
 
         let max_tickets: Short = (max_tickets as u64).to_be_bytes();
         Ok(Self { cipher_receiver, max_tickets, sk: sk_bytes })
@@ -38,7 +38,7 @@ impl Enclave {
     }
 
     /// Public key for advertising to senders.
-    pub fn public_key(&self) -> Vec<u8> {
+    pub fn public_key(&self) -> [u8; 32] {
         self.cipher_receiver.public_key()
     }
 
@@ -94,7 +94,9 @@ impl Enclave {
         let cred = Credential::random(self.sk);
         let plain = cred.to_bytes();
 
-        self.cipher_receiver.respond_cipher(&plain, &cipher[32..])
+        // The HPKE envelope is aad(32) || info(32) || enc(32) || ciphertext.
+        // respond_cipher expects the full envelope to recover the shared key.
+        self.cipher_receiver.respond_cipher(&plain, cipher)
     }
 
     pub fn issue_cred_plain(&self) -> Vec<u8> {

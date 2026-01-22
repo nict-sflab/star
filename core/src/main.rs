@@ -1,5 +1,5 @@
 use rand::{rngs::OsRng, RngCore};
-use star_core::serv::core::token::Token;
+use star_core::secure_channel::client::SecureChannelClient;
 use star_core::serv::enclave::Enclave;
 use star_core::client::User;
 
@@ -19,61 +19,44 @@ fn main() {
             .expect("failed to initialize enclave");
 
     // User setup and credential issuance.
-    let mut user = User::new(max_tokens_per_credential as u64);
-    let credential_bytes = enclave.issue_cred_plain();
-    user.receive_credential(&credential_bytes);
+    let sender = SecureChannelClient::new(enclave.public_key())
+        .expect("failed to initialize sender");
+    let mut user = User::new(max_tokens_per_credential as u64, sender);
+    let (cipher, ck) = user.request_credential();
+    let credential_bytes = enclave.issue_cred(&cipher);
+    user.receive_credential(&credential_bytes, &ck);
     println!(
         "User received credential ({} bytes): {}",
         credential_bytes.len(),
         hex(&credential_bytes)
     );
 
-    // User asks for a token using an HPKE-wrapped request.
-    let envelope1 = user
-        .request_auth(0, &enclave.public_key())
-        .expect("failed to build token request");
-    let token_bytes1 = enclave
-        .issue_token(&envelope1)
-        .expect("token issuance failed");
+    // User asks for tokens using HPKE-wrapped requests.
+    let mut issue_for_period = |period| {
+        let envelope = user
+            .request_auth(period)
+            .expect("failed to build token request");
+        enclave.issue_token(&envelope).expect("token issuance failed")
+    };
 
+    let token_bytes1 = issue_for_period(0);
+    let token_bytes2 = issue_for_period(0);
+    let token_bytes3 = issue_for_period(1);
 
-    let envelope2 = user
-        .request_auth(0, &enclave.public_key())
-        .expect("failed to build token request");
-    let token_bytes2 = enclave
-        .issue_token(&envelope2)
-        .expect("token issuance failed");
+    for (idx, token_bytes) in [token_bytes1.as_slice(), token_bytes2.as_slice(), token_bytes3.as_slice()]
+        .iter()
+        .enumerate()
+    {
+        println!(
+            "Issued token #{} ({} bytes): {}",
+            idx + 1,
+            token_bytes.len(),
+            hex(token_bytes)
+        );
+    }
 
-    let envelope3 = user
-        .request_auth(1, &enclave.public_key())
-        .expect("failed to build token request");
-    let token_bytes3 = enclave
-        .issue_token(&envelope3)
-        .expect("token issuance failed");
-
-
-    println!(
-        "Issued token for period ({} bytes): {}",
-        token_bytes1.len(),
-        hex(&token_bytes1)
-    );
-
-
-    println!(
-        "Issued token for period ({} bytes): {}",
-        token_bytes2.len(),
-        hex(&token_bytes2)
-    );
-    
-    println!(
-        "Issued token for period ({} bytes): {}",
-        token_bytes3.len(),
-        hex(&token_bytes3)
-    );
-
-    assert!(token_bytes1 == token_bytes2);
-    assert!(token_bytes1 != token_bytes3);
-
+    assert_eq!(token_bytes1, token_bytes2);
+    assert_ne!(token_bytes1, token_bytes3);
 }
 
 /// Hex formatter to avoid pulling an extra dependency for the example.
