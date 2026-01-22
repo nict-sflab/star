@@ -83,3 +83,4 @@ dkms.conf
 *.dwo
 bin
 sysroot
+system/serv/enclave/private.pem
