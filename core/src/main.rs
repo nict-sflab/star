@@ -1,11 +1,11 @@
-use rand::RngCore;
+use rand::{rngs::OsRng, RngCore};
 use star_core::serv::core::token::Token;
 use star_core::serv::enclave::Enclave;
 use star_core::client::User;
 
 fn main() {
     // End-to-end demo: issue a credential, request a token over HPKE, and inspect the token.
-    let mut rng = rand::thread_rng();
+    let mut rng = OsRng;
 
     // Bootstrap enclave secrets.
     let mut token_sk = [0u8; 32];

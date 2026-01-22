@@ -3,6 +3,7 @@ use chacha20poly1305::{
     ChaCha20Poly1305,
     Nonce,
 };
+use alloc::vec::Vec;
 use rand::{rngs::OsRng, RngCore};
 use hpke::{
     aead::ChaCha20Poly1305 as HpkeChaCha20Poly1305,

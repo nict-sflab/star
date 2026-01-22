@@ -4,6 +4,7 @@ use hpke::{
     kem::X25519HkdfSha256,
     setup_sender, Deserializable, OpModeS, Serializable,
 };
+use alloc::vec::Vec;
 use rand::{rngs::OsRng, RngCore};
 use constant_time_utils::time::current_period;
 

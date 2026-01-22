@@ -38,10 +38,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "base16ct"
-version = "0.2.0"
+name = "allocator-api2"
+version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c7f02d4ea65f2c1853089ffd8d2787bdbc63de2f0d29dedbcf8ccdfa0ccd4cf"
+checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
 name = "block-buffer"
@@ -100,15 +100,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "const-oid"
-version = "0.9.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
-
-[[package]]
 name = "constant-time-utils"
 version = "0.1.0"
 dependencies = [
+ "sgx_tstd",
  "subtle",
 ]
 
@@ -119,18 +114,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "59ed5838eebb26a2bb2e58f6d5b5316989ae9d08bab10e0e6d103e656d1b0280"
 dependencies = [
  "libc",
-]
-
-[[package]]
-name = "crypto-bigint"
-version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0dc92fb57ca44df6db8059111ab3af99a63d5d0f8375d9972e319a379c6bab76"
-dependencies = [
- "generic-array",
- "rand_core",
- "subtle",
- "zeroize",
 ]
 
 [[package]]
@@ -180,16 +163,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "der"
-version = "0.7.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7c1832837b905bbfb5101e07cc24c8deddf52f93225eee6ead5f4d63d53ddcb"
-dependencies = [
- "const-oid",
- "zeroize",
-]
-
-[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -197,35 +170,6 @@ checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
  "block-buffer",
  "crypto-common",
- "subtle",
-]
-
-[[package]]
-name = "elliptic-curve"
-version = "0.13.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5e6043086bf7973472e0c7dff2142ea0b680d30e18d9cc40f267efbf222bd47"
-dependencies = [
- "base16ct",
- "crypto-bigint",
- "digest",
- "ff",
- "generic-array",
- "group",
- "hkdf",
- "rand_core",
- "sec1",
- "subtle",
- "zeroize",
-]
-
-[[package]]
-name = "ff"
-version = "0.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c0b50bfb653653f9ca9095b427bed08ab8d75a137839d9ad64eb11810d5b6393"
-dependencies = [
- "rand_core",
  "subtle",
 ]
 
@@ -243,7 +187,6 @@ checksum = "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a"
 dependencies = [
  "typenum",
  "version_check",
- "zeroize",
 ]
 
 [[package]]
@@ -268,14 +211,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "group"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0f9ef7462f7c099f518d754361858f86d8a07af53ba9af0fe635bbccb151a63"
+name = "hashbrown_tstd"
+version = "0.14.2"
 dependencies = [
- "ff",
- "rand_core",
- "subtle",
+ "allocator-api2",
 ]
 
 [[package]]
@@ -310,7 +249,6 @@ dependencies = [
  "generic-array",
  "hkdf",
  "hmac",
- "p256",
  "rand_core",
  "sha2",
  "subtle",
@@ -340,16 +278,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
-name = "p256"
-version = "0.13.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9863ad85fa8f4460f9c48cb909d38a0d689dba1f6f6988a5e3e0d31071bcd4b"
-dependencies = [
- "elliptic-curve",
- "primeorder",
-]
-
-[[package]]
 name = "poly1305"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -370,24 +298,6 @@ dependencies = [
  "cpufeatures",
  "opaque-debug",
  "universal-hash",
-]
-
-[[package]]
-name = "ppv-lite86"
-version = "0.2.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85eae3c4ed2f50dcfe72643da4befc30deadb458a9b590d720cde2f2b1e97da9"
-dependencies = [
- "zerocopy",
-]
-
-[[package]]
-name = "primeorder"
-version = "0.13.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "353e1ca18966c16d9deb1c69278edbc5f194139612772bd9537af60ac231e1e6"
-dependencies = [
- "elliptic-curve",
 ]
 
 [[package]]
@@ -414,18 +324,6 @@ version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34af8d1a0e25924bc5b7c43c079c942339d8f0a8b57c39049bef581b46327404"
 dependencies = [
- "libc",
- "rand_chacha",
- "rand_core",
-]
-
-[[package]]
-name = "rand_chacha"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6c10a63a0fa32252be49d21e7709d4d4baf8d231c2dbce1eaa8141b9b127d88"
-dependencies = [
- "ppv-lite86",
  "rand_core",
 ]
 
@@ -445,19 +343,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cfcb3a22ef46e85b45de6ee7e79d063319ebb6594faafcf1c225ea92ab6e9b92"
 dependencies = [
  "semver",
-]
-
-[[package]]
-name = "sec1"
-version = "0.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3e97a565f76233a6003f9f5c54be1d9c5bdfa3eccfb189469f11ec4901c47dc"
-dependencies = [
- "base16ct",
- "der",
- "generic-array",
- "subtle",
- "zeroize",
 ]
 
 [[package]]
@@ -494,6 +379,108 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "sgx_alloc"
+version = "2.0.0"
+
+[[package]]
+name = "sgx_build_helper"
+version = "2.0.0"
+
+[[package]]
+name = "sgx_crypto_sys"
+version = "2.0.0"
+dependencies = [
+ "sgx_build_helper",
+ "sgx_download_prebuilt",
+ "sgx_types",
+]
+
+[[package]]
+name = "sgx_download_prebuilt"
+version = "2.0.0"
+dependencies = [
+ "sgx_build_helper",
+]
+
+[[package]]
+name = "sgx_ffi"
+version = "2.0.0"
+dependencies = [
+ "sgx_types",
+]
+
+[[package]]
+name = "sgx_oc"
+version = "2.0.0"
+dependencies = [
+ "sgx_ffi",
+ "sgx_sync",
+ "sgx_trts",
+ "sgx_types",
+]
+
+[[package]]
+name = "sgx_rsrvmm"
+version = "2.0.0"
+dependencies = [
+ "sgx_sync",
+ "sgx_trts",
+ "sgx_types",
+]
+
+[[package]]
+name = "sgx_sync"
+version = "2.0.0"
+dependencies = [
+ "sgx_trts",
+ "sgx_types",
+]
+
+[[package]]
+name = "sgx_tlibc_sys"
+version = "2.0.0"
+dependencies = [
+ "sgx_build_helper",
+ "sgx_download_prebuilt",
+ "sgx_types",
+]
+
+[[package]]
+name = "sgx_trts"
+version = "2.0.0"
+dependencies = [
+ "sgx_crypto_sys",
+ "sgx_tlibc_sys",
+ "sgx_types",
+]
+
+[[package]]
+name = "sgx_tstd"
+version = "2.0.0"
+dependencies = [
+ "hashbrown_tstd",
+ "sgx_alloc",
+ "sgx_ffi",
+ "sgx_oc",
+ "sgx_rsrvmm",
+ "sgx_sync",
+ "sgx_trts",
+ "sgx_types",
+ "sgx_unwind",
+]
+
+[[package]]
+name = "sgx_types"
+version = "2.0.0"
+
+[[package]]
+name = "sgx_unwind"
+version = "2.0.0"
+dependencies = [
+ "sgx_build_helper",
 ]
 
 [[package]]
@@ -583,26 +570,6 @@ dependencies = [
  "rand_core",
  "serde",
  "zeroize",
-]
-
-[[package]]
-name = "zerocopy"
-version = "0.8.33"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "668f5168d10b9ee831de31933dc111a459c97ec93225beb307aed970d1372dfd"
-dependencies = [
- "zerocopy-derive",
-]
-
-[[package]]
-name = "zerocopy-derive"
-version = "0.8.33"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c7962b26b0a8685668b671ee4b54d007a67d4eaf05fda79ac0ecf41e32270f1"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]

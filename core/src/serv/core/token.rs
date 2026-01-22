@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 use crate::serv::core::bytes::{Long, Short};
 
 pub struct Token {

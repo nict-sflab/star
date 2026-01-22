@@ -3,15 +3,20 @@ name = "star-core"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["std"]
+std = ["constant-time-utils/std"]
+sgx = ["constant-time-utils/sgx"]
+
 [dependencies]
-constant-time-utils = { path = "../thirdparty/constant-time-utils" }
+constant-time-utils = { path = "../thirdparty/constant-time-utils", default-features = false }
 
-x25519-dalek = "2"
-curve25519-dalek = "4"
-hpke = "0.11"
-rand = "0.8"
-hmac = "0.12"
-sha2 = "0.10"
+x25519-dalek = { version = "2", default-features = false, features = ["alloc", "precomputed-tables", "zeroize"] }
+curve25519-dalek = { version = "4", default-features = false, features = ["alloc", "precomputed-tables", "zeroize"] }
+hpke = { version = "0.11", default-features = false, features = ["alloc", "x25519"] }
+rand = { version = "0.8", default-features = false, features = ["getrandom"] }
+hmac = { version = "0.12", default-features = false }
+sha2 = { version = "0.10", default-features = false }
 
-subtle = "2.6.1"
-chacha20poly1305 = "0.10"
+subtle = { version = "2.6.1", default-features = false }
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc", "getrandom"] }

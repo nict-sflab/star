@@ -25,11 +25,10 @@ use sgx_urts::enclave::SgxEnclave;
 static ENCLAVE_FILE: &str = "enclave.signed.so";
 
  extern "C" {
-    pub fn say_something(
+    pub fn public_key(
         eid: EnclaveId,
         retval: *mut SgxStatus,
-        some_string: *const u8,
-        len: usize,
+        public_key: *const u8,
     ) -> SgxStatus;
 }
 
@@ -49,11 +48,12 @@ fn main() {
     let mut retval = SgxStatus::Success;
 
     let result = unsafe {
-        say_something(
+        let pk = [0 as u8; 256];
+
+        public_key(
             enclave.eid(),
             &mut retval,
-            input_string.as_ptr() as *const u8,
-            input_string.len(),
+            pk.as_ptr() as *const u8,
         )
     };
     match result {

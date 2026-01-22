@@ -3,8 +3,9 @@ use crate::serv::core::cred::Credential;
 use crate::serv::core::token::Token;
 use crate::serv::core::bytes::{Long, Short};
 
+use alloc::vec::Vec;
 use hpke::HpkeError;
-use rand::RngCore;
+use rand::{rngs::OsRng, RngCore};
 
 // HPKE receiver living inside the enclave.
 pub struct Enclave {
@@ -24,7 +25,7 @@ impl Enclave {
     
     /// Generate a fresh receiver keypair using curve25519-dalek.
     pub fn default() -> Self {
-        let mut rng = rand::thread_rng();
+        let mut rng = OsRng;
 
         let mut cipher_receiver = [0u8; 32];
         rng.fill_bytes(&mut cipher_receiver);
@@ -67,7 +68,7 @@ impl Enclave {
     /// This is mainly for examples/tests; production callers should use `issue_token` with HPKE-protected payloads.
     pub fn issue_token_plain(&self, request: &[u8]) -> Vec<u8> {
         if request.len() < 80 {
-            return vec![0u8];
+            return alloc::vec![0u8];
         }
 
         let cred = Credential::from_bytes(&request[0..64]);
@@ -75,7 +76,7 @@ impl Enclave {
         let period: Short = request[72..80].try_into().expect("fixed-length slice");
 
         if !cred.is_valid(period, count, self.max_tickets, self.sk) {
-            return vec![0u8];
+            return alloc::vec![0u8];
         }
 
         let token = Token::random(
