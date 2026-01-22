@@ -18,7 +18,7 @@
 [package]
 name = "app"
 version = "1.0.0"
-authors = ["The Teaclave Authors"]
+authors = ["Kosei Akama"]
 edition = "2021"
 
 [features]
@@ -31,3 +31,4 @@ sgx_types = { path = "../../../thirdparty/teaclave-sgx-sdk/sgx_types" }
 sgx_urts = { path = "../../../thirdparty/teaclave-sgx-sdk/sgx_urts" }
 star-core = { path = "../../../core/" }
 constant-time-utils = { path = "../../../thirdparty/constant-time-utils", default-features = false }
+rand = { version = "0.8", default-features = false }

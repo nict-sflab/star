@@ -18,7 +18,7 @@
 [package]
 name = "helloworld"
 version = "1.0.0"
-authors = ["The Teaclave Authors"]
+authors = ["Kosei Akama"]
 edition = "2021"
 
 [lib]
@@ -32,7 +32,7 @@ default = []
 [dependencies]
 constant-time-utils = { path = "../../../thirdparty/constant-time-utils", default-features = false, features = ["sgx"] }
 star-core = { path = "../../../core", default-features = false, features = ["sgx"] }
-
-[target.'cfg(not(target_vendor = "teaclave"))'.dependencies]
+rand = { version = "0.8", default-features = false }
+sgx_trts = { path = "../../../thirdparty/teaclave-sgx-sdk/sgx_trts" }
 sgx_types = { path = "../../../thirdparty/teaclave-sgx-sdk/sgx_types" }
 sgx_tstd = { path = "../../../thirdparty/teaclave-sgx-sdk/sgx_tstd" }

@@ -48,6 +48,7 @@ name = "app"
 version = "1.0.0"
 dependencies = [
  "constant-time-utils",
+ "rand",
  "sgx_types",
  "sgx_urts",
  "star-core",

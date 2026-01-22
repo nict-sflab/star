@@ -18,9 +18,12 @@
 extern crate sgx_types;
 extern crate sgx_urts;
 
+use rand::rngs::OsRng;
 use sgx_types::error::SgxStatus;
 use sgx_types::types::*;
 use sgx_urts::enclave::SgxEnclave;
+use star_core::client::User;
+use star_core::secure_channel::client::SecureChannelClient;
 
 static ENCLAVE_FILE: &str = "enclave.signed.so";
 
@@ -29,14 +32,24 @@ static ENCLAVE_FILE: &str = "enclave.signed.so";
         eid: EnclaveId,
         retval: *mut SgxStatus,
     ) -> SgxStatus;
+    
     pub fn public_key(
         eid: EnclaveId,
         retval: *mut SgxStatus,
         public_key: *mut u8,
     ) -> SgxStatus;
+
+    pub fn issue_cred(
+        eid: EnclaveId,
+        retval: *mut SgxStatus,
+        output: *mut u8,
+        input: *const u8,
+    ) -> SgxStatus;
 }
 
 fn main() {
+    let mut rng = OsRng;
+
     let enclave = match SgxEnclave::create(ENCLAVE_FILE, true) {
         Ok(enclave) => {
             println!("[+] Init Enclave Successful {}!", enclave.eid());
@@ -48,22 +61,19 @@ fn main() {
         }
     };
 
-    let input_string = String::from("This is a normal world string passed into Enclave!\n");
     let mut retval = SgxStatus::Success;
 
     let init_result = unsafe { init(enclave.eid(), &mut retval) };
     if init_result != SgxStatus::Success || retval != SgxStatus::Success {
-        println!(
+        panic!(
             "[-] Enclave init failed {} (retval: {})!",
             init_result.as_str(),
             retval.as_str()
         );
-        return;
     }
 
+    let mut pk: [u8; 32] = [0u8; 32];
     let result = unsafe {
-        let mut pk = [2u8; 32];
-
         let status = public_key(
             enclave.eid(),
             &mut retval,
@@ -71,12 +81,36 @@ fn main() {
         );
 
         println!("{:?}", pk);
-
         status
     };
     match result {
         SgxStatus::Success => println!("[+] ECall Success..."),
-        _ => println!("[-] ECall Enclave Failed {}!", result.as_str()),
+        _ => panic!("[-] ECall Enclave Failed {}!", result.as_str()),
+    }
+
+    let sender = SecureChannelClient::new(pk).unwrap();
+    let mut user = User::new(10, sender);
+    let (req, shared_key) = user.request_credential(&mut rng);
+
+    let mut cipher = [0 as u8; 92];
+
+    let result = unsafe {
+        let status = issue_cred(
+            enclave.eid(),
+            &mut retval,
+            cipher.as_mut_ptr(),
+            (&req).as_ptr(),
+        );
+
+        println!("{:?}", cipher);
+        status
+    };
+
+    user.receive_credential(&cipher, &shared_key);
+
+    match result {
+        SgxStatus::Success => println!("[+] ECall Success..."),
+        _ => panic!("[-] ECall Enclave Failed {}!", result.as_str()),
     }
 
 }

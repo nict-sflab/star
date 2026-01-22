@@ -222,6 +222,8 @@ name = "helloworld"
 version = "1.0.0"
 dependencies = [
  "constant-time-utils",
+ "rand",
+ "sgx_trts",
  "sgx_tstd",
  "sgx_types",
  "star-core",
