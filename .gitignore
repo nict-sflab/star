@@ -84,4 +84,7 @@ dkms.conf
 bin
 sysroot
 system/serv/enclave/private.pem
-system/serv/app/enclave_*
+system/serv/app/enclave_*.c
+system/serv/app/enclave_*.h
+system/serv/enclave/enclave_*.c
+system/serv/enclave/enclave_*.h
