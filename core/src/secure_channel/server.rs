@@ -4,7 +4,7 @@ use chacha20poly1305::{
     Nonce,
 };
 use alloc::vec::Vec;
-use rand::{rngs::OsRng, RngCore};
+use rand::{CryptoRng, RngCore};
 use hpke::{
     aead::ChaCha20Poly1305 as HpkeChaCha20Poly1305,
     kdf::HkdfSha256,
@@ -27,9 +27,11 @@ impl SecureChannelServer {
     }
     
     /// Generate a fresh receiver keypair using curve25519-dalek.
-    pub fn random() -> Self {
-        let mut rng = OsRng;
-        let (sk, pk) = X25519HkdfSha256::gen_keypair(&mut rng);
+    pub fn random<R>(rng: &mut R) -> Self
+    where
+        R: CryptoRng + RngCore,
+    {
+        let (sk, pk) = X25519HkdfSha256::gen_keypair(rng);
 
         Self { sk, pk }
     }
@@ -62,7 +64,10 @@ impl SecureChannelServer {
         ctx.open(ciphertext, aad)
     }
 
-    pub fn respond_cipher(&self, response: &[u8], cipher: &[u8]) -> Vec<u8> {
+    pub fn respond_cipher<R>(&self, response: &[u8], cipher: &[u8], rng: &mut R) -> Vec<u8>
+    where
+        R: RngCore,
+    {
         const AAD_LEN: usize = 32;
         const INFO_LEN: usize = 32;
         const ENC_LEN: usize = 32;
@@ -78,7 +83,7 @@ impl SecureChannelServer {
         let key = self.receive_hpke(enc, info, aad, ciphertext).expect("decryption failed");
 
         let mut nonce_bytes = [0u8; 12];
-        OsRng.fill_bytes(&mut nonce_bytes);
+        rng.fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
 
         let aead = ChaCha20Poly1305::new_from_slice(&key)
@@ -93,4 +98,3 @@ impl SecureChannelServer {
         result
     }
 }
-

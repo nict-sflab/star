@@ -1,5 +1,5 @@
 use alloc::vec::Vec;
-use rand::{rngs::OsRng, RngCore};
+use rand::RngCore;
 
 use crate::serv::core::bytes::{Long, Short};
 
@@ -19,12 +19,14 @@ impl Credential {
         }
     }
 
-    pub fn random(sk: Long) -> Self {
+    pub fn random<R>(sk: Long, rng: &mut R) -> Self
+    where
+        R: RngCore,
+    {
         use hmac::{Hmac, Mac};
         use sha2::Sha256;
         
         // random uid
-        let mut rng = OsRng;
         let mut uid = [0u8; 32];
         rng.fill_bytes(&mut uid);
 

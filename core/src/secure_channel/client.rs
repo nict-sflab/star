@@ -4,7 +4,7 @@ use chacha20poly1305::{
     Nonce,
 };
 use alloc::vec::Vec;
-use rand::{rngs::OsRng, RngCore};
+use rand::{CryptoRng, RngCore};
 use hpke::{
     aead::ChaCha20Poly1305 as HpkeChaCha20Poly1305,
     kdf::HkdfSha256,
@@ -28,10 +28,12 @@ impl SecureChannelClient {
 
     /// Encrypt arbitrary data using HPKE (X25519 + ChaCha20-Poly1305).
     /// Returns a single envelope: aad(32) || info(32) || enc(32) || ciphertext.
-    pub fn send_hpke(&self, plaintext: &[u8]) -> Result<Vec<u8>, HpkeError> {
+    pub fn send_hpke<R>(&self, plaintext: &[u8], rng: &mut R) -> Result<Vec<u8>, HpkeError>
+    where
+        R: CryptoRng + RngCore,
+    {
         let mut aad = [0u8; 32];
         let mut info = [0u8; 32];
-        let mut rng = OsRng;
         rng.fill_bytes(&mut aad);
         rng.fill_bytes(&mut info);
 
@@ -40,7 +42,7 @@ impl SecureChannelClient {
                 &OpModeS::Base,
                 &self.receiver_pk,
                 &info,
-                &mut rng,
+                rng,
             )?;
 
         let ciphertext = sender_ctx.seal(plaintext, &aad)?;
@@ -56,10 +58,13 @@ impl SecureChannelClient {
 
     /// Send a freshly generated 32-byte shared key using HPKE.
     /// Returns (hpke_envelope, shared_key).
-    pub fn send_shared_key(&self) -> Result<(Vec<u8>, [u8; 32]), HpkeError> {
+    pub fn send_shared_key<R>(&self, rng: &mut R) -> Result<(Vec<u8>, [u8; 32]), HpkeError>
+    where
+        R: CryptoRng + RngCore,
+    {
         let mut shared_key = [0u8; 32];
-        OsRng.fill_bytes(&mut shared_key);
-        let envelope = self.send_hpke(&shared_key)?;
+        rng.fill_bytes(&mut shared_key);
+        let envelope = self.send_hpke(&shared_key, rng)?;
         Ok((envelope, shared_key))
     }
 

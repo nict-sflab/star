@@ -5,7 +5,7 @@ use hpke::{
     setup_sender, Deserializable, OpModeS, Serializable,
 };
 use alloc::vec::Vec;
-use rand::{rngs::OsRng, RngCore};
+use rand::{CryptoRng, RngCore};
 use constant_time_utils::time::current_period;
 
 use crate::{secure_channel::{self, client}, serv::core::{bytes::Short, cred::Credential}};
@@ -28,8 +28,13 @@ impl User {
         }
     }
 
-    pub fn request_credential(&self) -> (Vec<u8>, [u8; 32]){
-        self.client.send_shared_key().expect("send shared key error")
+    pub fn request_credential<R>(&self, rng: &mut R) -> (Vec<u8>, [u8; 32])
+    where
+        R: CryptoRng + RngCore,
+    {
+        self.client
+            .send_shared_key(rng)
+            .expect("send shared key error")
     }
 
     pub fn receive_credential(&mut self, cipher: &[u8], shared_key: &[u8; 32]) {
@@ -68,12 +73,16 @@ impl User {
 
     /// Present the credential over HPKE to the enclave.
     /// Returns an encrypted payload ready for `Enclave::issue_token`.
-    pub fn request_auth(
+    pub fn request_auth<R>(
         &mut self,
         counter: u64,
-    ) -> Result<Vec<u8>, hpke::HpkeError> {
+        rng: &mut R,
+    ) -> Result<Vec<u8>, hpke::HpkeError>
+    where
+        R: CryptoRng + RngCore,
+    {
         let token_request = self.request_auth_plain(counter);
-        let cipher = self.client.send_hpke(&token_request)?;
+        let cipher = self.client.send_hpke(&token_request, rng)?;
 
         Ok(cipher)
     }

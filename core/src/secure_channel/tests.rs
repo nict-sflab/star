@@ -1,14 +1,18 @@
 use crate::secure_channel::{server::SecureChannelServer, client::SecureChannelClient};
+use rand::rngs::OsRng;
 
 
 
 #[test]
 fn test() {
-    let receiver = SecureChannelServer::random();
+    let mut rng = OsRng;
+    let receiver = SecureChannelServer::random(&mut rng);
     let receiver_pk = receiver.public_key();
 
     let sender = SecureChannelClient::new(receiver_pk).expect("sender init failed");
-    let (envelope, shared_key) = sender.send_shared_key().expect("send shared key failed");
+    let (envelope, shared_key) = sender
+        .send_shared_key(&mut rng)
+        .expect("send shared key failed");
 
     const AAD_LEN: usize = 32;
     const INFO_LEN: usize = 32;
@@ -27,7 +31,7 @@ fn test() {
     assert_eq!(decrypted_key.as_slice(), &shared_key);
 
     let response = b"hello-from-receiver";
-    let response_cipher = receiver.respond_cipher(response, &envelope);
+    let response_cipher = receiver.respond_cipher(response, &envelope, &mut rng);
     let response_plaintext = sender
         .decrypt_with_shared_key(&response_cipher, &shared_key)
         .expect("sender failed to decrypt receiver response");

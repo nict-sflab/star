@@ -5,7 +5,7 @@ use crate::serv::core::bytes::{Long, Short};
 
 use alloc::vec::Vec;
 use hpke::HpkeError;
-use rand::{rngs::OsRng, RngCore};
+use rand::RngCore;
 
 // HPKE receiver living inside the enclave.
 pub struct Enclave {
@@ -24,9 +24,10 @@ impl Enclave {
     }
     
     /// Generate a fresh receiver keypair using curve25519-dalek.
-    pub fn default() -> Self {
-        let mut rng = OsRng;
-
+    pub fn default<R>(rng: &mut R) -> Self
+    where
+        R: RngCore,
+    {
         let mut cipher_receiver = [0u8; 32];
         rng.fill_bytes(&mut cipher_receiver);
 
@@ -90,17 +91,23 @@ impl Enclave {
     }
 
 
-    pub fn issue_cred(&self, cipher: &[u8]) -> Vec<u8> {
-        let cred = Credential::random(self.sk);
+    pub fn issue_cred<R>(&self, cipher: &[u8], rng: &mut R) -> Vec<u8>
+    where
+        R: RngCore,
+    {
+        let cred = Credential::random(self.sk, rng);
         let plain = cred.to_bytes();
 
         // The HPKE envelope is aad(32) || info(32) || enc(32) || ciphertext.
         // respond_cipher expects the full envelope to recover the shared key.
-        self.cipher_receiver.respond_cipher(&plain, cipher)
+        self.cipher_receiver.respond_cipher(&plain, cipher, rng)
     }
 
-    pub fn issue_cred_plain(&self) -> Vec<u8> {
-        let cred = Credential::random(self.sk);
+    pub fn issue_cred_plain<R>(&self, rng: &mut R) -> Vec<u8>
+    where
+        R: RngCore,
+    {
+        let cred = Credential::random(self.sk, rng);
         cred.to_bytes()
     }
 

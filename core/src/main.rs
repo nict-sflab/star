@@ -22,8 +22,8 @@ fn main() {
     let sender = SecureChannelClient::new(enclave.public_key())
         .expect("failed to initialize sender");
     let mut user = User::new(max_tokens_per_credential as u64, sender);
-    let (cipher, ck) = user.request_credential();
-    let credential_bytes = enclave.issue_cred(&cipher);
+    let (cipher, ck) = user.request_credential(&mut rng);
+    let credential_bytes = enclave.issue_cred(&cipher, &mut rng);
     user.receive_credential(&credential_bytes, &ck);
     println!(
         "User received credential ({} bytes): {}",
@@ -34,7 +34,7 @@ fn main() {
     // User asks for tokens using HPKE-wrapped requests.
     let mut issue_for_period = |period| {
         let envelope = user
-            .request_auth(period)
+            .request_auth(period, &mut rng)
             .expect("failed to build token request");
         enclave.issue_token(&envelope).expect("token issuance failed")
     };
