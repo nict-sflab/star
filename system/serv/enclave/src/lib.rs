@@ -142,3 +142,26 @@ pub unsafe extern "C" fn issue_cred(
     SgxStatus::Success
 }
 
+/// # Safety
+#[no_mangle]
+pub unsafe extern "C" fn issue_token(
+    output: *mut u8,
+    input: *const u8,
+) -> SgxStatus {
+    if output.is_null() || input.is_null() {
+        return SgxStatus::InvalidParameter;
+    };
+
+    let enclave = match ENCLAVE.as_ref() {
+        Some(enclave) => enclave,
+        None => return SgxStatus::InvalidState,
+    };
+
+    let TICKET_REQUEST_LEN =  192;
+    let input_slice = slice::from_raw_parts(input as *const u8, TICKET_REQUEST_LEN);
+    let out = enclave.issue_token(input_slice).unwrap();
+    println!("hello: {}", out.len());
+    ptr::copy_nonoverlapping(out.as_ptr(), output, out.len());
+
+    SgxStatus::Success
+}

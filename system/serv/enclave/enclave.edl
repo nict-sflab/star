@@ -23,5 +23,6 @@ enclave {
         public sgx_status_t init();
         public sgx_status_t public_key([out, size=32] uint8_t* public_key);
         public sgx_status_t issue_cred([out, size=92] uint8_t* output, [in, size=144] const uint8_t* input);
+        public sgx_status_t issue_token([out, size=32] uint8_t* output, [in, size=192] const uint8_t* input);
     };
 };

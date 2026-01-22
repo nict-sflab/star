@@ -45,6 +45,13 @@ static ENCLAVE_FILE: &str = "enclave.signed.so";
         output: *mut u8,
         input: *const u8,
     ) -> SgxStatus;
+
+    pub fn issue_token(
+        eid: EnclaveId,
+        retval: *mut SgxStatus,
+        output: *mut u8,
+        input: *const u8,
+    ) -> SgxStatus;
 }
 
 fn main() {
@@ -105,12 +112,67 @@ fn main() {
         println!("{:?}", cipher);
         status
     };
+    
+    let mut token: [u8; 32] = [0u8; 32];
 
     user.receive_credential(&cipher, &shared_key);
+    let request = user.request_auth(1, &mut rng).unwrap();
 
     match result {
         SgxStatus::Success => println!("[+] ECall Success..."),
         _ => panic!("[-] ECall Enclave Failed {}!", result.as_str()),
     }
 
+    let result = unsafe {
+        let status = issue_token(
+            enclave.eid(),
+            &mut retval,
+            token.as_mut_ptr(),
+            (&request).as_ptr(),
+        );
+
+        println!("token: {:?}", token);
+        status
+    };
+
+    match result {
+        SgxStatus::Success => println!("[+] ECall Success..."),
+        _ => panic!("[-] ECall Enclave Failed {}!", result.as_str()),
+    }
+
+    let result = unsafe {
+        let status = issue_token(
+            enclave.eid(),
+            &mut retval,
+            token.as_mut_ptr(),
+            (&request).as_ptr(),
+        );
+
+        println!("token: {:?}", token);
+        status
+    };
+
+    match result {
+        SgxStatus::Success => println!("[+] ECall Success..."),
+        _ => panic!("[-] ECall Enclave Failed {}!", result.as_str()),
+    }
+    
+    let request = user.request_auth(2, &mut rng).unwrap();
+
+    let result = unsafe {
+        let status = issue_token(
+            enclave.eid(),
+            &mut retval,
+            token.as_mut_ptr(),
+            (&request).as_ptr(),
+        );
+
+        println!("token: {:?}", token);
+        status
+    };
+
+    match result {
+        SgxStatus::Success => println!("[+] ECall Success..."),
+        _ => panic!("[-] ECall Enclave Failed {}!", result.as_str()),
+    }
 }
