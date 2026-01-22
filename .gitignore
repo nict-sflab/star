@@ -84,3 +84,4 @@ dkms.conf
 bin
 sysroot
 system/serv/enclave/private.pem
+system/serv/app/enclave_*
