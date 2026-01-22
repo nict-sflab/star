@@ -1,10 +1,10 @@
 [package]
 name = "star-core"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
-constant-time-utils = { path ="../../constant-time-utils/" }
+constant-time-utils = { path = "../thirdparty/constant-time-utils" }
 
 x25519-dalek = "2"
 curve25519-dalek = "4"

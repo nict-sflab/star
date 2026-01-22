@@ -24,3 +24,5 @@ edition = "2021"
 [dependencies]
 sgx_types = { path = "../../../thirdparty/teaclave-sgx-sdk/sgx_types" }
 sgx_urts = { path = "../../../thirdparty/teaclave-sgx-sdk/sgx_urts" }
+star-core = { path = "../../../core/" }
+constant-time-utils = { path = "../../../thirdparty/constant-time-utils" }

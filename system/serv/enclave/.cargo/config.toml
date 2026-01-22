@@ -1,0 +1,4 @@
+[build]
+# Force serial backend to avoid nightly-only SIMD cfgs on older toolchains.
+rustflags = ["--cfg", "curve25519_dalek_backend=\"serial\""]
+

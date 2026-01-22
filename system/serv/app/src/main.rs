@@ -24,7 +24,7 @@ use sgx_urts::enclave::SgxEnclave;
 
 static ENCLAVE_FILE: &str = "enclave.signed.so";
 
-extern "C" {
+ extern "C" {
     pub fn say_something(
         eid: EnclaveId,
         retval: *mut SgxStatus,
