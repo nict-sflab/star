@@ -28,7 +28,7 @@ static ENCLAVE_FILE: &str = "enclave.signed.so";
     pub fn public_key(
         eid: EnclaveId,
         retval: *mut SgxStatus,
-        public_key: *const u8,
+        public_key: *mut u8,
     ) -> SgxStatus;
 }
 
@@ -48,16 +48,21 @@ fn main() {
     let mut retval = SgxStatus::Success;
 
     let result = unsafe {
-        let pk = [0 as u8; 256];
+        let mut pk = [2u8; 32];
 
-        public_key(
+        let status = public_key(
             enclave.eid(),
             &mut retval,
-            pk.as_ptr() as *const u8,
-        )
+            pk.as_mut_ptr(),
+        );
+
+        println!("{:?}", pk);
+
+        status
     };
     match result {
         SgxStatus::Success => println!("[+] ECall Success..."),
         _ => println!("[-] ECall Enclave Failed {}!", result.as_str()),
     }
+
 }

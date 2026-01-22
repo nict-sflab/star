@@ -23,13 +23,9 @@
 extern crate sgx_tstd as std;
 extern crate sgx_types;
 
+use core::ptr;
 use sgx_types::error::SgxStatus;
-use star_core::serv::cipher;
 use star_core::serv::enclave::Enclave;
-use std::io::{self, Write};
-use std::slice;
-use std::string::String;
-use std::vec::Vec;
 
 
 /// # Safety
@@ -38,21 +34,26 @@ pub unsafe extern "C" fn public_key(
     public_key: *mut u8,
     // out_len: *mut usize,
 ) -> SgxStatus {
+    if public_key.is_null() {
+        return SgxStatus::InvalidParameter;
+    }
+
     // Bootstrap enclave secrets.
-    let mut token_sk = [0u8; 32];
-    let mut hpke_sk = [0u8; 32];
+    let token_sk = [0u8; 32];
+    let hpke_sk = [0u8; 32];
 
     let max_tokens_per_credential = 3u32;
-    // let enclave =
-    //     Enclave::new(max_tokens_per_credential, token_sk, hpke_sk)
-    //         .expect("failed to initialize enclave");
+    let enclave =
+        Enclave::new(max_tokens_per_credential, token_sk, hpke_sk)
+            .expect("failed to initialize enclave");
 
-    // // let pk = enclave.public_key();
-
-    public_key.write_bytes(pk[0], pk.len());
+    let pk = enclave.public_key();
+    ptr::copy_nonoverlapping(pk.as_ptr(), public_key, pk.len());
 
     // // Ocall to normal world for output
     println!("{}", "hello");
+    println!("{:?}", pk);
+    println!("{:?}", *public_key);
 
     SgxStatus::Success
 }
