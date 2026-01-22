@@ -20,6 +20,7 @@ enclave {
     from "sgx_tstd.edl" import *;
 
     trusted {
+        public sgx_status_t init();
         public sgx_status_t public_key([out, size=32] uint8_t* public_key);
     };
 };

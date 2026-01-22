@@ -27,6 +27,28 @@ use core::ptr;
 use sgx_types::error::SgxStatus;
 use star_core::serv::enclave::Enclave;
 
+static mut ENCLAVE: Option<Enclave> = None;
+
+/// # Safety
+#[no_mangle]
+pub unsafe extern "C" fn init() -> SgxStatus {
+    if ENCLAVE.is_some() {
+        return SgxStatus::Success;
+    }
+
+    // Bootstrap enclave secrets.
+    let token_sk = [0u8; 32];
+    let hpke_sk = [0u8; 32];
+    let max_tokens_per_credential = 3u32;
+
+    match Enclave::new(max_tokens_per_credential, token_sk, hpke_sk) {
+        Ok(enclave) => {
+            ENCLAVE = Some(enclave);
+            SgxStatus::Success
+        }
+        Err(_) => SgxStatus::Unexpected,
+    }
+}
 
 /// # Safety
 #[no_mangle]
@@ -38,22 +60,13 @@ pub unsafe extern "C" fn public_key(
         return SgxStatus::InvalidParameter;
     }
 
-    // Bootstrap enclave secrets.
-    let token_sk = [0u8; 32];
-    let hpke_sk = [0u8; 32];
-
-    let max_tokens_per_credential = 3u32;
-    let enclave =
-        Enclave::new(max_tokens_per_credential, token_sk, hpke_sk)
-            .expect("failed to initialize enclave");
+    let enclave = match ENCLAVE.as_ref() {
+        Some(enclave) => enclave,
+        None => return SgxStatus::InvalidState,
+    };
 
     let pk = enclave.public_key();
     ptr::copy_nonoverlapping(pk.as_ptr(), public_key, pk.len());
-
-    // // Ocall to normal world for output
-    println!("{}", "hello");
-    println!("{:?}", pk);
-    println!("{:?}", *public_key);
 
     SgxStatus::Success
 }

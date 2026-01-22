@@ -25,6 +25,10 @@ use sgx_urts::enclave::SgxEnclave;
 static ENCLAVE_FILE: &str = "enclave.signed.so";
 
  extern "C" {
+    pub fn init(
+        eid: EnclaveId,
+        retval: *mut SgxStatus,
+    ) -> SgxStatus;
     pub fn public_key(
         eid: EnclaveId,
         retval: *mut SgxStatus,
@@ -46,6 +50,16 @@ fn main() {
 
     let input_string = String::from("This is a normal world string passed into Enclave!\n");
     let mut retval = SgxStatus::Success;
+
+    let init_result = unsafe { init(enclave.eid(), &mut retval) };
+    if init_result != SgxStatus::Success || retval != SgxStatus::Success {
+        println!(
+            "[-] Enclave init failed {} (retval: {})!",
+            init_result.as_str(),
+            retval.as_str()
+        );
+        return;
+    }
 
     let result = unsafe {
         let mut pk = [2u8; 32];
