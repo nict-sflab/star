@@ -1,5 +1,5 @@
 {
-	"build": { "dockerfile": "../thirdparty/teaclave-sgx-sdk/tools/docker/Dockerfile.ubuntu20.04" },
+	"build": { "dockerfile": "../thirdparty/teaclave-sgx-sdk/dockerfile/Dockerfile.2004.nightly" },
 	"workspaceFolder": "/workspace/star",
 
 	"customizations": {
