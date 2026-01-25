@@ -1,37 +1,79 @@
-use enclave_runner::EnclaveBuilder;
-use sgxs_loaders::isgx::Device;
-use std::path::Path;
+use async_trait::async_trait;
+use std::time::Duration;
 
-const LEN: usize = 32;
-const FUNC_BYTES: u64 = 1;
+use pingora::server::Server;
+use pingora::upstreams::peer::HttpPeer;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut builder = EnclaveBuilder::new(Path::new("../enclave/target/x86_64-fortanix-unknown-sgx/debug/enclave.sgxs"));
-    builder.dummy_signature();
-    let mut device = Device::new()?.build();
-    let enclave = builder.build_library(&mut device)?;
-    
-    let mut input = [0u8; LEN];
-    for (i, b) in input.iter_mut().enumerate() {
-        *b = i as u8;
-    }
-    let mut output = [0u8; LEN];
+use pingora_http::RequestHeader;
+use pingora_proxy::{http_proxy_service, ProxyHttp, Session};
 
-    let (status, _ret2) = unsafe {
-        enclave.call(
-            FUNC_BYTES,
-            input.as_ptr() as u64,
-            output.as_mut_ptr() as u64,
-            LEN as u64,
-            0,
-        )?
-    };
+use pingora_web::{
+    App as WebApp, PingoraHttpRequest, PingoraWebHttpResponse, StatusCode, WebError,
+};
+struct StarProxy;
 
-    if status != 0 {
-        return Err(format!("enclave returned error status={status}").into());
+#[async_trait]
+impl ProxyHttp for StarProxy {
+    type CTX = ();
+
+    fn new_ctx(&self) -> Self::CTX {
+        ()
     }
 
-    println!("in : {:02x?}", input);
-    println!("out: {:02x?}", output);
-    Ok(())
+    async fn request_filter(
+        &self,
+        session: &mut Session,
+        _ctx: &mut Self::CTX,
+    ) -> pingora::Result<bool> { 
+        let target = session.req_header().headers.get("CONNECTION");
+        println!("{:?}", target);
+
+        Ok(false) 
+    }
+
+    async fn upstream_peer(
+        &self,
+        _session: &mut Session,
+        _ctx: &mut Self::CTX,
+    ) -> pingora::Result<Box<HttpPeer>> {
+        let mut peer = HttpPeer::new(("example.com", 80), false, "example.com".to_string());
+        peer.options.connection_timeout = Some(Duration::from_secs(3));
+        peer.options.total_connection_timeout = Some(Duration::from_secs(5));
+        Ok(Box::new(peer))
+    }
+
+//     async fn upstream_request_filter(
+//         &self,
+//         _session: &mut Session,
+//         upstream_request: &mut RequestHeader,
+//         _ctx: &mut Self::CTX,
+//     ) -> pingora::Result<()> {
+//         upstream_request.insert_header("Host", "example.com").unwrap();
+//     Ok(())
+// }
+}
+
+fn main() {
+    env_logger::init();
+
+    let mut server = Server::new(None).unwrap();
+    server.bootstrap();
+
+    let mut api_app = WebApp::default();
+    api_app.get_fn(
+        "/star/register",
+        |_req: PingoraHttpRequest| -> Result<PingoraWebHttpResponse, WebError> {
+            Ok(PingoraWebHttpResponse::text(StatusCode::OK, "ok"))
+        },
+    );
+
+    let mut api_svc = api_app.to_service("api");
+    api_svc.add_tcp("0.0.0.0:8080");
+    server.add_service(api_svc);
+
+    let mut proxy_svc = http_proxy_service(&server.configuration, StarProxy);
+    proxy_svc.add_tcp("0.0.0.0:8081");
+    server.add_service(proxy_svc);
+
+    server.run_forever();
 }
