@@ -4,7 +4,6 @@ use std::time::Duration;
 use pingora::server::Server;
 use pingora::upstreams::peer::HttpPeer;
 
-use pingora_http::RequestHeader;
 use pingora_proxy::{http_proxy_service, ProxyHttp, Session};
 
 use pingora_web::{
@@ -26,9 +25,16 @@ impl ProxyHttp for StarProxy {
         _ctx: &mut Self::CTX,
     ) -> pingora::Result<bool> { 
         let target = session.req_header().headers.get("CONNECTION");
-        println!("{:?}", target);
 
-        Ok(false) 
+        let result = match target {
+            Some(x) => {
+                println!("{:?}", x);
+                false
+            },
+            None => true
+        };
+
+        Ok(result) 
     }
 
     async fn upstream_peer(
@@ -36,21 +42,11 @@ impl ProxyHttp for StarProxy {
         _session: &mut Session,
         _ctx: &mut Self::CTX,
     ) -> pingora::Result<Box<HttpPeer>> {
-        let mut peer = HttpPeer::new(("example.com", 80), false, "example.com".to_string());
+        let mut peer = HttpPeer::new(("0.0.0.0", 3000), false, "0.0.0.0".to_string());
         peer.options.connection_timeout = Some(Duration::from_secs(3));
         peer.options.total_connection_timeout = Some(Duration::from_secs(5));
         Ok(Box::new(peer))
     }
-
-//     async fn upstream_request_filter(
-//         &self,
-//         _session: &mut Session,
-//         upstream_request: &mut RequestHeader,
-//         _ctx: &mut Self::CTX,
-//     ) -> pingora::Result<()> {
-//         upstream_request.insert_header("Host", "example.com").unwrap();
-//     Ok(())
-// }
 }
 
 fn main() {
