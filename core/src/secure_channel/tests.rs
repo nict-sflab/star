@@ -1,10 +1,11 @@
 use crate::secure_channel::{server::SecureChannelServer, client::SecureChannelClient};
-use rand::rngs::OsRng;
 
 
 
 #[test]
 fn test() {
+    use rand::rngs::OsRng;
+
     let mut rng = OsRng;
     let receiver = SecureChannelServer::random(&mut rng);
     let receiver_pk = receiver.public_key();

@@ -1,0 +1,12 @@
+version: '3.8'
+services:
+  aeam:
+    image: fortanix/aesmd
+    # volumes:
+      # - postgres_data:/var/lib/postgresql/data
+
+  serv:
+    build: ./serv
+    working_dir: /star/system/serv
+    volumes:
+      -  ..:/star
