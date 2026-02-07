@@ -1,14 +1,8 @@
-use hpke::{
-    aead::ChaCha20Poly1305 as HpkeChaCha20Poly1305,
-    kdf::HkdfSha256,
-    kem::X25519HkdfSha256,
-    setup_sender, Deserializable, OpModeS, Serializable,
-};
 use alloc::vec::Vec;
 use rand::{CryptoRng, RngCore};
 use constant_time_utils::time::current_period;
 
-use crate::{secure_channel::{self, client}, serv::core::{bytes::Short, cred::Credential}};
+use crate::{secure_channel, serv::core::{bytes::Short, cred::Credential}};
 
 /// Client-side holder for credentials and token requests.
 pub struct User {

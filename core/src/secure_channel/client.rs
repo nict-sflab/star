@@ -8,7 +8,7 @@ use rand::{CryptoRng, RngCore};
 use hpke::{
     aead::ChaCha20Poly1305 as HpkeChaCha20Poly1305,
     kdf::HkdfSha256,
-    kem::{Kem as _, X25519HkdfSha256},
+    kem::X25519HkdfSha256,
     setup_sender, Deserializable, HpkeError, OpModeS, Serializable,
 };
 
