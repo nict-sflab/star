@@ -1,8 +1,8 @@
+use async_trait::async_trait;
 use pingora::upstreams::peer::HttpPeer;
 use pingora_proxy::{ProxyHttp, Session};
-use async_trait::async_trait;
-use std::time::Duration;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 
@@ -12,6 +12,7 @@ use crate::core::ENCLAVE;
 
 pub struct StarProxy<T: FilterBox + Send> {
     pub filter_box: Mutex<T>,
+    pub upstream_addr: String,
 }
 
 #[async_trait]
@@ -41,13 +42,13 @@ impl<T: FilterBox + Send> ProxyHttp for StarProxy<T> {
         let token: Entry = token.as_slice().try_into().unwrap();
 
         let mut filter_box = self.filter_box.lock().unwrap();
-        let has_used = filter_box.test(&token);
+        let is_new = filter_box.test(&token);
 
-        if has_used {
-            return Ok(true);
-        } else {
+        if is_new {
             let _ = filter_box.insert(&token);
-            return Ok(false);
+            Ok(false)
+        } else {
+            Ok(true)
         }
     }
 
@@ -56,7 +57,13 @@ impl<T: FilterBox + Send> ProxyHttp for StarProxy<T> {
         _session: &mut Session,
         _ctx: &mut Self::CTX,
     ) -> pingora::Result<Box<HttpPeer>> {
-        let mut peer = HttpPeer::new(("0.0.0.0", 3000), false, "0.0.0.0".to_string());
+        let sni = self
+            .upstream_addr
+            .split(':')
+            .next()
+            .unwrap_or(self.upstream_addr.as_str())
+            .to_string();
+        let mut peer = HttpPeer::new(self.upstream_addr.as_str(), false, sni);
         peer.options.connection_timeout = Some(Duration::from_secs(3));
         peer.options.total_connection_timeout = Some(Duration::from_secs(5));
         Ok(Box::new(peer))

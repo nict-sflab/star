@@ -22,3 +22,6 @@ base64 = "0.22.1"
 rand = "0.9.2"
 rand_core = "0.6"
 
+[dev-dependencies]
+ureq = "2"
+tiny_http = "0.12"
