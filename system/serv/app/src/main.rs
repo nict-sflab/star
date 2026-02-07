@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use std::{sync::OnceLock, time::Duration};
+use simple_filter_box::bloom_filter::bloom_filter::BloomFilterBox;
+use simple_filter_box::core::{Entry, FilterBox};
+use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
 use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 use pingora::server::Server;
@@ -12,10 +15,12 @@ use star_core::serv::enclave::Enclave;
 
 static ENCLAVE: OnceLock<Enclave> = OnceLock::new();
 
-struct StarProxy;
+struct StarProxy<T: FilterBox + Send> {
+    filter_box: Mutex<T>,
+}
 
 #[async_trait]
-impl ProxyHttp for StarProxy {
+impl<T: FilterBox + Send> ProxyHttp for StarProxy<T> {
     type CTX = ();
 
     fn new_ctx(&self) -> Self::CTX { () }
@@ -29,21 +34,26 @@ impl ProxyHttp for StarProxy {
         // If this never matches, try "connection" instead of "CONNECTION".
         let target = session.req_header().headers.get("CONNECTION");
 
-        let result = match target {
-            Some(x) => {
-                let decoded = URL_SAFE.decode(x).unwrap();
-
-                let enclave = ENCLAVE.get().unwrap();
-                let token = enclave.issue_token(&decoded).unwrap(); // <-- unwrap Result<Vec<u8>, _>
-                let out = URL_SAFE.encode(&token);
-
-                println!("{out}");
-                false
-            }
-            None => true,
+        let x = match target {
+            Some(x) => x,
+            None => { panic!("ok"); },
         };
 
-        Ok(result)
+        let decoded = URL_SAFE.decode(x).unwrap();
+
+        let enclave = ENCLAVE.get().unwrap();
+        let token = enclave.issue_token(&decoded).unwrap();
+        let token: Entry = token.as_slice().try_into().unwrap();
+
+        let mut filter_box = self.filter_box.lock().unwrap();
+        let has_used = filter_box.test(&token);
+
+        if has_used {
+            return Ok(true);
+        } else {
+            let _ = filter_box.insert(&token);
+            return Ok(false);
+        }
     }
 
     async fn upstream_peer(
@@ -95,7 +105,11 @@ fn main() {
     api_svc.add_tcp("0.0.0.0:8080");
     server.add_service(api_svc);
 
-    let mut proxy_svc = http_proxy_service(&server.configuration, StarProxy);
+    let filter_box = BloomFilterBox::with_rate(1, 0.01);
+    let mut proxy_svc = http_proxy_service(
+        &server.configuration,
+        StarProxy { filter_box: Mutex::new(filter_box) },
+    );
     proxy_svc.add_tcp("0.0.0.0:8081");
     server.add_service(proxy_svc);
 

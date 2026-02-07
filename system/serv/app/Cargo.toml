@@ -16,6 +16,7 @@ env_logger = "0.11"
 log = "0.4"
 
 constant-time-utils = { path = "../../../thirdparty/constant-time-utils", default-features = false }
+simple-filter-box = { path = "../../../../simple-filter-box", default-features = false }
 star-core = { path = "../../../core" }
 base64 = "0.22.1"
 rand = "0.9.2"
