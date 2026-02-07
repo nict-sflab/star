@@ -12,7 +12,7 @@ use pingora_web::{App as WebApp};
 
 use rand_core::OsRng;
 
-use crate::api::{issue_api, DEFAULT_REGISTER_API};
+use crate::api::{DEFAULT_PUBLIC_KEY_API, DEFAULT_REGISTER_API, issue_api, public_key_api};
 use crate::core::ENCLAVE;
 
 use crate::proxy::StarProxy;
@@ -39,6 +39,7 @@ fn main() {
 
     let mut api_app = WebApp::default();
     api_app.get_fn(DEFAULT_REGISTER_API, issue_api);
+    api_app.get_fn(DEFAULT_PUBLIC_KEY_API, public_key_api);
 
     let mut api_svc = api_app.to_service("api");
     api_svc.add_tcp("0.0.0.0:8080");
