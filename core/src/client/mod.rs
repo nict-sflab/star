@@ -31,15 +31,17 @@ impl User {
             .expect("send shared key error")
     }
 
-    pub fn receive_credential(&mut self, cipher: &[u8], shared_key: &[u8; 32]) {
+    pub fn receive_credential(&mut self, cipher: &[u8], shared_key: &[u8; 32]) -> Option<Credential> {
         let cred = self.client.decrypt_with_shared_key(cipher, shared_key).expect("failed to decrypto cred");
         self.receive_credential_plain(&cred);
+        self.credential
     }
 
     /// Store a freshly issued credential.
-    pub fn receive_credential_plain(&mut self, credential_bytes: &[u8]) {
+    pub fn receive_credential_plain(&mut self, credential_bytes: &[u8]) -> Option<Credential> {
         let credential: Credential = Credential::from_bytes(credential_bytes);
         self.credential = Some(credential);
+        self.credential
     }
 
     /// Present the credential by building a token request (credential + count + period).

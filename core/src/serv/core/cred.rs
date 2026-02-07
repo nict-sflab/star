@@ -3,6 +3,7 @@ use rand::RngCore;
 
 use crate::serv::core::bytes::{Long, Short};
 
+#[derive(Copy, Clone)]
 pub struct Credential {
     pub uid: Long,
     pub code: Long,
