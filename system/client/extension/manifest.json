@@ -6,7 +6,8 @@
     {
       "matches": [
         "http://localhost:8080/*",
-        "http://localhost:8081/*"
+        "http://localhost:8081/*",
+        "http://localhost:3001/*"
       ],
       "js": [
         "frontend.js"
@@ -19,7 +20,8 @@
   ],
   "host_permissions": [
     "http://localhost:8080/*",
-    "http://localhost:8081/*"
+    "http://localhost:8081/*",
+    "http://localhost:3001/*"
   ],
   "web_accessible_resources": [
     {
@@ -30,7 +32,8 @@
       ],
       "matches": [
         "http://localhost:8080/*",
-        "http://localhost:8081/*"
+        "http://localhost:8081/*",
+        "http://localhost:3001/*"
       ]
     }
   ]

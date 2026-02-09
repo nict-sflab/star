@@ -146,29 +146,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "app"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "base64",
- "constant-time-utils",
- "env_logger",
- "log",
- "pingora",
- "pingora-core",
- "pingora-http",
- "pingora-proxy",
- "pingora_web",
- "rand 0.9.2",
- "rand_core 0.6.4",
- "simple-filter-box",
- "star-core",
- "tiny_http",
- "tokio",
- "ureq",
-]
-
-[[package]]
 name = "arrayvec"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2323,6 +2300,29 @@ dependencies = [
  "sha2",
  "subtle",
  "x25519-dalek",
+]
+
+[[package]]
+name = "star_app"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64",
+ "constant-time-utils",
+ "env_logger",
+ "log",
+ "pingora",
+ "pingora-core",
+ "pingora-http",
+ "pingora-proxy",
+ "pingora_web",
+ "rand 0.9.2",
+ "rand_core 0.6.4",
+ "simple-filter-box",
+ "star-core",
+ "tiny_http",
+ "tokio",
+ "ureq",
 ]
 
 [[package]]

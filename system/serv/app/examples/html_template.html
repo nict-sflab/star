@@ -1,0 +1,21 @@
+<head>
+  <meta charset="utf-8">
+  <title>{{title}}</title>
+</head>
+<body>
+  <h1>{{headline}}</h1>
+  <p>{{body}}</p>
+  <button onclick="submit()">Submit</button>
+  <script>
+    const submit = async () => {
+      const xstar = await authStar();
+      let headers = new Headers({
+        "Content-Type": "text/xml",
+        "X-STAR": xstar,
+      });
+      fetch("http://localhost:8081/", {
+        headers,
+      })
+    }
+  </script>
+</body>
