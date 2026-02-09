@@ -18,10 +18,14 @@ const wasm = {
 let initPromise;
 let registerPromise;
 
-const getStorage = (key) => localStorage.getItem(key);
-const setStorage = (key, value) => localStorage.setItem(key, value);
-const readCounter = () => {
-  const raw = getStorage(STORAGE_KEYS.counter);
+const getStorage = async (key) => {
+  const result = await chrome.storage.local.get(key);
+  const value = result?.[key];
+  return typeof value === "undefined" ? null : value;
+};
+const setStorage = (key, value) => chrome.storage.local.set({ [key]: value });
+const readCounter = async () => {
+  const raw = await getStorage(STORAGE_KEYS.counter);
   return raw === null ? 0n : BigInt(raw);
 };
 
@@ -59,24 +63,24 @@ const runRegister = async () => {
   const credCipher = await regResp.text();
   const cred = wasm.receive_credential(credCipher, commonKey);
 
-  setStorage(STORAGE_KEYS.cred, cred);
-  setStorage(STORAGE_KEYS.counter, "0");
-  setStorage(STORAGE_KEYS.period, Date.now().toString());
+  await setStorage(STORAGE_KEYS.cred, cred);
+  await setStorage(STORAGE_KEYS.counter, "0");
+  await setStorage(STORAGE_KEYS.period, Date.now().toString());
 };
 
 const ensureRegistered = async () => {
   await initStar();
 
-  const existingCred = getStorage(STORAGE_KEYS.cred);
-  const existingCounter = getStorage(STORAGE_KEYS.counter);
+  const existingCred = await getStorage(STORAGE_KEYS.cred);
+  const existingCounter = await getStorage(STORAGE_KEYS.counter);
   if (existingCred && existingCounter !== null) return;
 
   registerPromise ??= runRegister();
   return registerPromise;
 };
 
-const isFirstInstall = () =>
-  getStorage(STORAGE_KEYS.installMarker) !== "1";
+const isFirstInstall = async () =>
+  (await getStorage(STORAGE_KEYS.installMarker)) !== "1";
 
 const injectLibrary = () => {
   if (document.getElementById("star-extension-lib")) return;
@@ -91,9 +95,9 @@ const injectLibrary = () => {
 const boot = async () => {
   try {
     injectLibrary();
-    if (isFirstInstall()) {
+    if (await isFirstInstall()) {
       await ensureRegistered();
-      setStorage(STORAGE_KEYS.installMarker, "1");
+      await setStorage(STORAGE_KEYS.installMarker, "1");
     }
   } catch (err) {
     console.error("STAR init/register failed:", err);
@@ -113,16 +117,16 @@ window.addEventListener("message", async (e) => {
   try {
     await initStar();
 
-    const cred = getStorage(STORAGE_KEYS.cred);
-    const period = getStorage(STORAGE_KEYS.period);
-    const counter = readCounter();
+    const cred = await getStorage(STORAGE_KEYS.cred);
+    const period = await getStorage(STORAGE_KEYS.period);
+    const counter = await readCounter();
 
     if (!cred) {
       throw new Error("STAR credential missing");
     }
 
     const proof = await wasm.request_authenticate(counter, cred);
-    setStorage(STORAGE_KEYS.counter, (counter + 1n).toString());
+    await setStorage(STORAGE_KEYS.counter, (counter + 1n).toString());
 
     console.log("extension:", proof, counter, period, cred);
 
