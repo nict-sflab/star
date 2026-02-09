@@ -3,7 +3,9 @@ const STORAGE_KEYS = {
   cred: "cred",
   counter: "counter",
   period: "period",
+  installMarker: "star_install_marker_v1",
 };
+
 
 const wasm = {
   init: null,
@@ -73,6 +75,9 @@ const ensureRegistered = async () => {
   return registerPromise;
 };
 
+const isFirstInstall = () =>
+  getStorage(STORAGE_KEYS.installMarker) !== "1";
+
 const injectLibrary = () => {
   if (document.getElementById("star-extension-lib")) return;
   const s = document.createElement("script");
@@ -86,7 +91,10 @@ const injectLibrary = () => {
 const boot = async () => {
   try {
     injectLibrary();
-    await ensureRegistered();
+    if (isFirstInstall()) {
+      await ensureRegistered();
+      setStorage(STORAGE_KEYS.installMarker, "1");
+    }
   } catch (err) {
     console.error("STAR init/register failed:", err);
   }
@@ -127,4 +135,3 @@ window.addEventListener("message", async (e) => {
     );
   }
 });
-
