@@ -6,8 +6,20 @@
     "service_worker": "./background.js",
     "type": "module"
   },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://localhost:8080/*",
+        "http://localhost:8081/*"
+      ],
+      "js": [
+        "frontend.js"
+      ]
+    }
+  ],
   "permissions": [
-    "storage"
+    "storage",
+    "nativeMessaging"
   ],
   "host_permissions": [
     "http://localhost:8080/*",

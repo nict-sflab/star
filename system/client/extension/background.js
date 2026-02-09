@@ -1,32 +1,32 @@
-import init, { init_user, request_register, receive_credential } from "./wasm/star_client_wasm.js";
+import init, { init_user, request_register, receive_credential, request_authenticate } from "./wasm/star_client_wasm.js";
 
-const PROXY_HOST = "http://localhost:8081"
 const API_HOST = "http://localhost:8080"
 
-let initPromise = null;
+const one = BigInt(1)
 
-var a = null
+const initStar = async () => {
+  const wasmUrl = chrome.runtime.getURL("wasm/star_client_wasm_bg.wasm");
+  await init(wasmUrl)
 
-function ensureWasmReady() {
-  if (!initPromise) {
-    const wasmUrl = chrome.runtime.getURL("wasm/star_client_wasm_bg.wasm");
-    initPromise = init(wasmUrl);
-  }
-  return initPromise;
-}
-
-chrome.runtime.onInstalled.addListener(async () => {
-  await ensureWasmReady();
   const pkResp = await fetch(`${API_HOST}/star/public_key`)
-  init()
-
-  let publicKey = await pkResp.text()
+  const publicKey = await pkResp.text()
   console.log(publicKey)
 
-  init_user(publicKey)
+  await init_user(publicKey)
 
-  let r = request_register()
-  let [request, commonKey] = r.split(":")
+}
+
+chrome.runtime.onStartup.addListener(
+  async () => {
+    await initStar();
+  }
+)
+
+chrome.runtime.onInstalled.addListener(async () => {
+  await initStar();
+
+  const r = request_register()
+  const [request, commonKey] = r.split(":")
   console.log(request)
   console.log(commonKey)
 
@@ -35,15 +35,40 @@ chrome.runtime.onInstalled.addListener(async () => {
     body: request
   })
 
-  let credCipher = await regResp.text()
+  const credCipher = await regResp.text()
   console.log(credCipher)
 
-  let cred = receive_credential(credCipher, commonKey)
-  console.log(cred)
-  await chrome.storage.local.set({ cred })
-  await chrome.storage.local.set({ publicKey })
+  const credential = receive_credential(credCipher, commonKey)
+  console.log(credential)
 
-  let result = await chrome.storage.local.get(["cred"])
-  console.log("Value is " + result.cred);
+  const counter = 0;
+  const date = Date.now();
+  
+  await chrome.storage.local.set({ credential })
+  await chrome.storage.local.set({ counter })
+  await chrome.storage.local.set({ date })
+
 });
 
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    (async () => {
+        const { credential } = await chrome.storage.local.get(["credential"]);
+        if (!credential) {
+            throw new Error("Missing credential in storage");
+        }
+
+        const { counter: rawCounter } = await chrome.storage.local.get(["counter"]);
+        const counter = BigInt(rawCounter ?? 0);
+
+        const proof = await request_authenticate(counter, credential);
+        const next = counter + one;
+        await chrome.storage.local.set({ counter: next });
+
+        sendResponse( proof );
+    })().catch((err) => {
+        console.error("auth message failed", err);
+        sendResponse({ err });
+    });
+
+    return true;
+});
