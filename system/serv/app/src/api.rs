@@ -5,7 +5,7 @@ use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 use rand_core::OsRng;
 
 use crate::core::ENCLAVE;
-use pingora_web::{Handler, PingoraHttpRequest, PingoraWebHttpResponse, StatusCode, WebError};
+use pingora_web::{PingoraHttpRequest, PingoraWebHttpResponse, StatusCode, WebError};
 
 pub fn issue_api(req: PingoraHttpRequest) -> Result<PingoraWebHttpResponse, WebError> {
     let body = req.body().as_ref();
@@ -20,7 +20,7 @@ pub fn issue_api(req: PingoraHttpRequest) -> Result<PingoraWebHttpResponse, WebE
     Ok(res)
 }
 
-pub fn public_key_api(req: PingoraHttpRequest) -> Result<PingoraWebHttpResponse, WebError> {
+pub fn public_key_api(_req: PingoraHttpRequest) -> Result<PingoraWebHttpResponse, WebError> {
     let enclave = ENCLAVE.get().unwrap();
     let public_key = enclave.public_key();
 

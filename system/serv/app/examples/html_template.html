@@ -13,9 +13,12 @@
         "Content-Type": "text/xml",
         "X-STAR": xstar,
       });
-      fetch("http://localhost:8081/", {
+      const resp = await fetch("http://localhost:8081/", {
+        method: "POST",
         headers,
       })
+
+      console.log(resp)
     }
   </script>
 </body>

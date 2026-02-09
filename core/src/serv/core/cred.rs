@@ -68,6 +68,8 @@ impl Credential {
         let recalculated_code: Long = mac.finalize().into_bytes().into();
         let is_code_valid = recalculated_code == self.code; 
         
+        // panic!("hello: {}: {}: {}", is_current, is_count_valid, is_code_valid);
+
         is_current && is_count_valid && is_code_valid
     }
 

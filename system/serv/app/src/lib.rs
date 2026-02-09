@@ -8,6 +8,7 @@ use std::sync::Mutex;
 
 use crate::{
     api::{DEFAULT_PUBLIC_KEY_API, DEFAULT_REGISTER_API, issue_api, public_key_api},
+    cors::Cors,
     core::ENCLAVE,
     proxy::StarProxy,
 };
@@ -16,6 +17,7 @@ use crate::{
 pub mod core;
 pub mod api;
 pub mod proxy;
+pub mod cors;
 
 
 pub fn build_server(api_addr: &str, proxy_addr: &str, upstream_addr: &str) -> Server {
@@ -32,6 +34,7 @@ pub fn build_server(api_addr: &str, proxy_addr: &str, upstream_addr: &str) -> Se
     server.bootstrap();
 
     let mut api_app = WebApp::default();
+    api_app.use_middleware(Cors::default());
     api_app.get_fn(DEFAULT_PUBLIC_KEY_API, public_key_api);
     api_app.post_fn(DEFAULT_REGISTER_API, issue_api);
 

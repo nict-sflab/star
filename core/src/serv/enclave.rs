@@ -76,7 +76,7 @@ impl Enclave {
         let count: Short = request[64..72].try_into().expect("fixed-length slice");
         let period: Short = request[72..80].try_into().expect("fixed-length slice");
 
-        if !cred.is_valid(period, count, self.max_tickets, self.sk) {
+        if !cred.is_valid(period, count, self.max_tickets, self.sk) {            
             return alloc::vec![0u8];
         }
 
@@ -86,6 +86,8 @@ impl Enclave {
             count,
             self.sk,
         );
+
+        panic!("uid: {:?}\nperiod: {:?}\ncnt: {:?}\nresult: {:?}", cred.uid, period, count, token.to_bytes());
 
         token.to_bytes()
     }

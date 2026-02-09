@@ -18,6 +18,8 @@ const wasm = {
 let initPromise;
 let registerPromise;
 
+const getTimestamp = (date = new Date()) => Math.floor(date.getTime() / 1000);
+
 const getStorage = async (key) => {
   const result = await chrome.storage.local.get(key);
   const value = result?.[key];
@@ -58,14 +60,14 @@ const runRegister = async () => {
   const regResp = await fetch(`${API_HOST}/star/register`, {
     method: "POST",
     body: request,
-  });
+  });   
 
   const credCipher = await regResp.text();
   const cred = wasm.receive_credential(credCipher, commonKey);
 
   await setStorage(STORAGE_KEYS.cred, cred);
   await setStorage(STORAGE_KEYS.counter, "0");
-  await setStorage(STORAGE_KEYS.period, Date.now().toString());
+  await setStorage(STORAGE_KEYS.period, getTimestamp());
 };
 
 const ensureRegistered = async () => {
@@ -117,13 +119,15 @@ window.addEventListener("message", async (e) => {
   try {
     await initStar();
 
-    const cred = await getStorage(STORAGE_KEYS.cred);
-    const period = await getStorage(STORAGE_KEYS.period);
-    const counter = await readCounter();
+    const period = getTimestamp();
 
-    if (!cred) {
-      throw new Error("STAR credential missing");
-    }
+    const cred = await getStorage(STORAGE_KEYS.cred);
+    const last = await getStorage(STORAGE_KEYS.period);
+    let counter = 0n
+    // if (last == period) 
+      counter = await readCounter()
+
+
 
     const proof = await wasm.request_authenticate(counter, cred);
     await setStorage(STORAGE_KEYS.counter, (counter + 1n).toString());
