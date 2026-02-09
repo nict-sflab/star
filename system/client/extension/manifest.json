@@ -2,10 +2,6 @@
   "manifest_version": 3,
   "name": "Rust WASM Background Demo",
   "version": "0.1.0",
-  "background": {
-    "service_worker": "./background.js",
-    "type": "module"
-  },
   "content_scripts": [
     {
       "matches": [
@@ -25,7 +21,16 @@
     "http://localhost:8080/*",
     "http://localhost:8081/*"
   ],
-  "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
-  }
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "wasm/star_client_wasm.js",
+        "wasm/star_client_wasm_bg.wasm"
+      ],
+      "matches": [
+        "http://localhost:8080/*",
+        "http://localhost:8081/*"
+      ]
+    }
+  ]
 }
