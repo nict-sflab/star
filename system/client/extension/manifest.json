@@ -24,6 +24,7 @@
   "web_accessible_resources": [
     {
       "resources": [
+        "lib/star.js",
         "wasm/star_client_wasm.js",
         "wasm/star_client_wasm_bg.wasm"
       ],

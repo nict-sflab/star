@@ -73,23 +73,31 @@ const ensureRegistered = async () => {
   return registerPromise;
 };
 
-window.addEventListener("load", async () => {
+const injectLibrary = () => {
+  if (document.getElementById("star-extension-lib")) return;
+  const s = document.createElement("script");
+  s.id = "star-extension-lib";
+  s.src = chrome.runtime.getURL("lib/star.js");
+  // Avoid module to bypass CORS restrictions and expose globals to the page.
+  s.onload = () => s.remove();
+  (document.head || document.documentElement).append(s);
+};
+
+const boot = async () => {
   try {
+    injectLibrary();
     await ensureRegistered();
   } catch (err) {
     console.error("STAR init/register failed:", err);
   }
-});
+};
 
-// call like here: 
-// window.addEventListener("message", (e) => {
-//   if (e.source !== window) return;
-//   if (e.data?.type !== "STAR_RESULT") return;
-// 
-//   console.log("result!: ", e.data.payload);
-// });
-// 
-// window.postMessage({ type: "STAR", payload: {} }, "*");
+if (document.readyState === "loading") {
+  window.addEventListener("DOMContentLoaded", boot, { once: true });
+} else {
+  boot();
+}
+
 window.addEventListener("message", async (e) => {
   if (e.source !== window) return;
   if (e.data?.type !== "STAR") return;
@@ -119,3 +127,4 @@ window.addEventListener("message", async (e) => {
     );
   }
 });
+
