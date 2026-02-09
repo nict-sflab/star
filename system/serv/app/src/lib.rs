@@ -13,9 +13,9 @@ use crate::{
 };
 
 
-mod core;
-mod api;
-mod proxy;
+pub mod core;
+pub mod api;
+pub mod proxy;
 
 
 pub fn build_server(api_addr: &str, proxy_addr: &str, upstream_addr: &str) -> Server {
