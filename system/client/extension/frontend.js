@@ -1,81 +1,80 @@
-const API_HOST = "http://localhost:8080"
+const API_HOST = "http://localhost:8080";
+const STORAGE_KEYS = {
+  cred: "cred",
+  counter: "counter",
+  period: "period",
+};
 
-const one = BigInt(1)
+const wasm = {
+  init: null,
+  init_user: null,
+  request_register: null,
+  receive_credential: null,
+  request_authenticate: null,
+};
 
-let init;
-let init_user;
-let request_register;
-let receive_credential;
-let request_authenticate;
 let initPromise;
 let registerPromise;
 
-const initStar = async () => {
-  if (initPromise) return 
+const getStorage = (key) => localStorage.getItem(key);
+const setStorage = (key, value) => localStorage.setItem(key, value);
+const readCounter = () => {
+  const raw = getStorage(STORAGE_KEYS.counter);
+  return raw === null ? 0n : BigInt(raw);
+};
 
-  initPromise = (async () => {
-  if (!init) {
+const runInit = async () => {
+  if (!wasm.init) {
     const wasmModuleUrl = chrome.runtime.getURL("wasm/star_client_wasm.js");
     const wasmModule = await import(wasmModuleUrl);
-    ({ default: init, init_user, request_register, receive_credential, request_authenticate } = wasmModule);
-    }
-
-    const wasmUrl = chrome.runtime.getURL("wasm/star_client_wasm_bg.wasm");
-    const wasmResponse = await fetch(wasmUrl);
-    const wasmBytes = await wasmResponse.arrayBuffer();
-    await init({ module_or_path: wasmBytes })
-
-    const pkResp = await fetch(`${API_HOST}/star/public_key`)
-    const publicKey = await pkResp.text()
-    console.log(publicKey)
-
-    await init_user(publicKey)
-  })();
-
-
-    return initPromise;
+    wasm.init = wasmModule.default;
+    wasm.init_user = wasmModule.init_user;
+    wasm.request_register = wasmModule.request_register;
+    wasm.receive_credential = wasmModule.receive_credential;
+    wasm.request_authenticate = wasmModule.request_authenticate;
   }
 
-const register = async () => {
-  const existingCred = localStorage.getItem("cred");
-  const existingCounter = localStorage.getItem("counter");
-  if (existingCred && existingCounter !== null) {
-    return;
-  }
+  const wasmUrl = chrome.runtime.getURL("wasm/star_client_wasm_bg.wasm");
+  const wasmBytes = await (await fetch(wasmUrl)).arrayBuffer();
+  await wasm.init({ module_or_path: wasmBytes });
 
-  if (registerPromise) { return }
-  
-  registerPromise = (async () => {
-    const r = request_register()
-    const [request, commonKey] = r.split(":")
-    console.log(request)
-    console.log(commonKey)
+  const publicKey = await (await fetch(`${API_HOST}/star/public_key`)).text();
+  await wasm.init_user(publicKey);
+};
 
-    const regResp = await fetch(`${API_HOST}/star/register`, {
-    method : "POST",
-    body: request
-    })
+const initStar = () => {
+  initPromise ??= runInit();
+  return initPromise;
+};
 
-    const credCipher = await regResp.text()
-    console.log(credCipher)
+const runRegister = async () => {
+  const [request, commonKey] = wasm.request_register().split(":");
+  const regResp = await fetch(`${API_HOST}/star/register`, {
+    method: "POST",
+    body: request,
+  });
 
-    const cred = receive_credential(credCipher, commonKey)
-    console.log(cred)
+  const credCipher = await regResp.text();
+  const cred = wasm.receive_credential(credCipher, commonKey);
 
-    const counter = 0n;
-    const date = Date.now().toString();
+  setStorage(STORAGE_KEYS.cred, cred);
+  setStorage(STORAGE_KEYS.counter, "0");
+  setStorage(STORAGE_KEYS.period, Date.now().toString());
+};
 
-    localStorage.setItem("cred", cred)
-    localStorage.setItem("counter", counter.toString())
-    localStorage.setItem("period", date)
-    })();
-   return registerPromise;
-}
+const ensureRegistered = async () => {
+  await initStar();
 
+  const existingCred = getStorage(STORAGE_KEYS.cred);
+  const existingCounter = getStorage(STORAGE_KEYS.counter);
+  if (existingCred && existingCounter !== null) return;
 
-window.addEventListener("load", async(e) => {
+  registerPromise ??= runRegister();
+  return registerPromise;
+};
+
+window.addEventListener("load", async () => {
   try {
-    await initStar();
     await ensureRegistered();
   } catch (err) {
     console.error("STAR init/register failed:", err);
@@ -91,34 +90,32 @@ window.addEventListener("load", async(e) => {
 // });
 // 
 // window.postMessage({ type: "STAR", payload: {} }, "*");
-window.addEventListener("message", (e) => {
-    if (e.source !== window) return;
-    if (e.data?.type !== "STAR") return;
+window.addEventListener("message", async (e) => {
+  if (e.source !== window) return;
+  if (e.data?.type !== "STAR") return;
 
-    (async () => {
-        try {
-          await initStar();
+  try {
+    await initStar();
 
-          const cred = localStorage.getItem("cred")
-          const period = localStorage.getItem("period")
-          let counter = localStorage.getItem("counter")
-          counter = BigInt(counter ?? 0);
+    const cred = getStorage(STORAGE_KEYS.cred);
+    const period = getStorage(STORAGE_KEYS.period);
+    const counter = readCounter();
 
-          if (!cred) {
-            throw new Error("STAR credential missing");
-          }
+    if (!cred) {
+      throw new Error("STAR credential missing");
+    }
 
-          const proof = await request_authenticate(counter, cred);
-          localStorage.setItem("counter", (counter + 1n).toString())
+    const proof = await wasm.request_authenticate(counter, cred);
+    setStorage(STORAGE_KEYS.counter, (counter + 1n).toString());
 
-          console.log("extension:", proof, counter, period, cred)
+    console.log("extension:", proof, counter, period, cred);
 
-          window.postMessage({ type: "STAR_RESULT", payload: proof }, "*")
-        } catch (err) {
-          console.error("STAR auth failed:", err);
-          window.postMessage({ type: "STAR_RESULT", error: true, message: String(err?.message ?? err) }, "*")
-        }
-    })()
-
-    return true;
+    window.postMessage({ type: "STAR_RESULT", payload: proof }, "*");
+  } catch (err) {
+    console.error("STAR auth failed:", err);
+    window.postMessage(
+      { type: "STAR_RESULT", error: true, message: String(err?.message ?? err) },
+      "*"
+    );
+  }
 });
