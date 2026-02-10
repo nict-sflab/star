@@ -1,4 +1,4 @@
-use app::build_server;
+use star_app::build_server;
 
 
 fn main() {

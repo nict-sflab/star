@@ -1,6 +1,5 @@
 use alloc::vec::Vec;
 use rand::{CryptoRng, RngCore};
-use constant_time_utils::time::current_period;
 
 use crate::{secure_channel, serv::core::{bytes::Short, cred::Credential}};
 
@@ -45,7 +44,7 @@ impl User {
     }
 
     /// Present the credential by building a token request (credential + count + period).
-    pub fn request_auth_plain(&mut self, counter: u64) -> Vec<u8> {
+    pub fn request_auth_plain(&mut self, counter: u64, period: u64) -> Vec<u8> {
         if counter >= self.max {
             panic!("exceeded max token requests for this credential");
         }
@@ -56,7 +55,7 @@ impl User {
             .expect("credential not received yet");
 
         let count: Short = counter.to_be_bytes();
-        let period: Short = current_period();
+        let period: Short = period.to_be_bytes();
         let credential_bytes = credential.to_bytes();
 
         let mut token_request =
@@ -72,12 +71,13 @@ impl User {
     pub fn request_auth<R>(
         &mut self,
         counter: u64,
+        period: u64,
         rng: &mut R,
     ) -> Result<Vec<u8>, hpke::HpkeError>
     where
         R: CryptoRng + RngCore,
     {
-        let token_request = self.request_auth_plain(counter);
+        let token_request = self.request_auth_plain(counter, period);
         let cipher = self.client.send_hpke(&token_request, rng)?;
 
         Ok(cipher)

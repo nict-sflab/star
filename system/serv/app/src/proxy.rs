@@ -77,19 +77,62 @@ impl<T: FilterBox + Send> ProxyHttp for StarProxy<T> {
             }
         };
 
-        let decoded = URL_SAFE.decode(x).unwrap();
+        let decoded = match URL_SAFE.decode(x) {
+            Ok(v) => v,
+            Err(_) => {
+                let mut header = ResponseHeader::build(400, None).unwrap();
+                with_cors(&mut header, session.req_header())?;
+                session.write_response_header(Box::new(header), true).await?;
+                return Ok(true);
+            }
+        };
+
+        const MIN_HPKE_LEN: usize = 32 + 32 + 32;
+        if decoded.len() < MIN_HPKE_LEN {
+            let mut header = ResponseHeader::build(400, None).unwrap();
+            with_cors(&mut header, session.req_header())?;
+            session.write_response_header(Box::new(header), true).await?;
+            return Ok(true);
+        }
 
         let enclave = ENCLAVE.get().unwrap();
-        let token = enclave.issue_token(&decoded).unwrap();
-        let token = token.as_slice().try_into().unwrap();
+        let current_period = constant_time_utils::time::current_period();
 
-        let mut filter_box = self.filter_box.lock().unwrap();
-        let is_new = filter_box.test(&token);
+        let token_bytes = match enclave.issue_token(&decoded, current_period) {
+            Ok(v) => v,
+            Err(_) => {
+                let mut header = ResponseHeader::build(403, None).unwrap();
+                with_cors(&mut header, session.req_header())?;
+                session.write_response_header(Box::new(header), true).await?;
+                return Ok(true);
+            }
+        };
+
+        let token: Entry = match token_bytes.as_slice().try_into() {
+            Ok(v) => v,
+            Err(_) => {
+                let mut header = ResponseHeader::build(403, None).unwrap();
+                with_cors(&mut header, session.req_header())?;
+                session.write_response_header(Box::new(header), true).await?;
+                return Ok(true);
+            }
+        };
+
+        let is_new = {
+            let mut filter_box = self.filter_box.lock().unwrap();
+            let is_new = filter_box.test(&token);
+            if is_new {
+                let _ = filter_box.insert(&token);
+            }
+            is_new
+        };
 
         if is_new {
-            let _ = filter_box.insert(&token);
             Ok(false)
         } else {
+            let mut header = ResponseHeader::build(403, None).unwrap();
+            with_cors(&mut header, session.req_header())?;
+            session.write_response_header(Box::new(header), true).await?;
             Ok(true)
         }
     }

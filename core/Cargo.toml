@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-constant-time-utils = { path = "../thirdparty/constant-time-utils", default-features = false }
+constant-time-utils = { path = "../../constant-time-utils", default-features = false }
 
 x25519-dalek = { version = "2", default-features = false, features = ["alloc", "precomputed-tables", "zeroize"] }
 curve25519-dalek = { version = "4", default-features = false, features = ["alloc", "precomputed-tables", "zeroize"] }

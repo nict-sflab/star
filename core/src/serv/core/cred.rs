@@ -53,13 +53,14 @@ impl Credential {
         }
     }
 
-    pub fn is_valid(&self, period: Short, count: Short, max_count: Short, sk: Long) -> bool {
+    pub fn is_valid(&self, period: Short, count: Short, current_period: Short, max_count: Short, sk: Long) -> bool {
         use hmac::{Hmac, Mac};
         use sha2::Sha256;
 
-        let current_period = constant_time_utils::time::current_period();
         let is_current = period == current_period;
         let is_count_valid = constant_time_utils::cmp::ct_lt(&count, &max_count);
+        // panic!("hello: {:?}\n{:?}\n{:?}", is_count_valid, count, max_count);
+
 
         // Recalculate code and compare
         let mut mac = Hmac::<Sha256>::new_from_slice(&sk)

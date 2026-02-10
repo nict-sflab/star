@@ -3,6 +3,7 @@ use crate::build_server;
 
 use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE, Engine as _};
+use constant_time_utils::time;
 use pingora::server::{RunArgs, ShutdownSignal, ShutdownSignalWatch};
 use rand_core::OsRng;
 use star_core::client::User;
@@ -45,7 +46,7 @@ fn post_text_retry(url: &str, body: &[u8]) -> String {
 }
 
 fn spawn_upstream() -> (String, thread::JoinHandle<()>) {
-    let server = TinyServer::http("127.0.0.1:0").expect("bind upstream");
+    let server = TinyServer::http("127.0.0.1:3000").expect("bind upstream");
     let addr = server
         .server_addr()
         .to_ip()
@@ -96,12 +97,15 @@ fn test_all() {
     let cred_cipher = URL_SAFE.decode(body.trim()).unwrap();
     user.receive_credential(&cred_cipher, &shared_key);
 
-    let token_request = user.request_auth(0, &mut rng).expect("token request");
+    let current_period = u64::from_be_bytes(time::current_period());
+    let token_request = user
+        .request_auth(0, current_period, &mut rng)
+        .expect("token request");
     let token_b64 = URL_SAFE.encode(token_request);
     let proxy_url = format!("http://{proxy_addr}/");
     let body = retry_request(|| {
         Ok(ureq::get(&proxy_url)
-            .set("CONNECTION", token_b64.as_str())
+            .set("X-STAR", token_b64.as_str())
             .call()?
             .into_string()?)
     });

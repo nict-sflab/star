@@ -15,16 +15,15 @@ impl Token {
         }
     }
 
-    pub fn random(uid: Long, period: Short, cnt: Short, sk: Long) -> Self {
+    pub fn random(uid: Long, period: Short, cnt: Short) -> Self {
         use hmac::{Hmac, Mac};
         use sha2::Sha256;
 
         // calc token ← PRF(cnt||t||uid, sk)
-        let mut prf = Hmac::<Sha256>::new_from_slice(&sk)
+        let mut prf = Hmac::<Sha256>::new_from_slice(&uid)
             .expect("HMAC can take key of any size");
         prf.update(&cnt);
         prf.update(&period);
-        prf.update(&uid);
         let token: Long = prf.finalize().into_bytes().into();
 
         Self {

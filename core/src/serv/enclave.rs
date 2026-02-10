@@ -43,7 +43,7 @@ impl Enclave {
         self.cipher_receiver.public_key()
     }
 
-    pub fn issue_token(&self, cipher: &[u8]) -> Result<Vec<u8>, u8> {
+    pub fn issue_token(&self, cipher: &[u8], current_period: Short) -> Result<Vec<u8>, u8> {
         const AAD_LEN: usize = 32;
         const INFO_LEN: usize = 32;
         const ENC_LEN: usize = 32;
@@ -61,13 +61,13 @@ impl Enclave {
             Err(_) => panic!("decryption failed"),
         };
 
-        let result = self.issue_token_plain(&plain);
+        let result = self.issue_token_plain(&plain, current_period);
         Ok(result)
     }
 
     /// Issue a token from an already decrypted request (credential 64 bytes + count 8 bytes + period 8 bytes).
     /// This is mainly for examples/tests; production callers should use `issue_token` with HPKE-protected payloads.
-    pub fn issue_token_plain(&self, request: &[u8]) -> Vec<u8> {
+    pub fn issue_token_plain(&self, request: &[u8], current_period: Short) -> Vec<u8> {
         if request.len() < 80 {
             return alloc::vec![0u8];
         }
@@ -76,7 +76,7 @@ impl Enclave {
         let count: Short = request[64..72].try_into().expect("fixed-length slice");
         let period: Short = request[72..80].try_into().expect("fixed-length slice");
 
-        if !cred.is_valid(period, count, self.max_tickets, self.sk) {            
+        if !cred.is_valid(period, count, current_period, self.max_tickets, self.sk) {            
             return alloc::vec![0u8];
         }
 
@@ -84,10 +84,9 @@ impl Enclave {
             cred.uid,
             period,
             count,
-            self.sk,
         );
+        // panic!("uid: {:?}\nperiod: {:?}\ncnt: {:?}\nresult: {:?}", cred.uid, period, count, token.to_bytes());
 
-        panic!("uid: {:?}\nperiod: {:?}\ncnt: {:?}\nresult: {:?}", cred.uid, period, count, token.to_bytes());
 
         token.to_bytes()
     }

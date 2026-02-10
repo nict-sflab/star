@@ -18,7 +18,12 @@ const wasm = {
 let initPromise;
 let registerPromise;
 
-const getTimestamp = (date = new Date()) => Math.floor(date.getTime() / 1000);
+const getTimestamp = (date = new Date()) =>  {
+    const secs = date.getTime() / 1000 / 60
+    const floored = Math.floor(secs);
+
+    return BigInt(floored)
+}
 
 const getStorage = async (key) => {
   const result = await chrome.storage.local.get(key);
@@ -67,7 +72,7 @@ const runRegister = async () => {
 
   await setStorage(STORAGE_KEYS.cred, cred);
   await setStorage(STORAGE_KEYS.counter, "0");
-  await setStorage(STORAGE_KEYS.period, getTimestamp());
+  await setStorage(STORAGE_KEYS.period, getTimestamp().toString());
 };
 
 const ensureRegistered = async () => {
@@ -124,13 +129,20 @@ window.addEventListener("message", async (e) => {
     const cred = await getStorage(STORAGE_KEYS.cred);
     const last = await getStorage(STORAGE_KEYS.period);
     let counter = 0n
-    // if (last == period) 
+
+
+    console.log("{} = {}", last, period)
+
+    if (last == period) {
       counter = await readCounter()
+      console.log("read! {}", counter)
+
+    }
 
 
-
-    const proof = await wasm.request_authenticate(counter, cred);
+    const proof = await wasm.request_authenticate(counter, period, cred);
     await setStorage(STORAGE_KEYS.counter, (counter + 1n).toString());
+    await setStorage(STORAGE_KEYS.period, period.toString());
 
     console.log("extension:", proof, counter, period, cred);
 

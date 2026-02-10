@@ -3,6 +3,8 @@ use star_core::secure_channel::client::SecureChannelClient;
 use star_core::serv::enclave::Enclave;
 use star_core::client::User;
 
+const period :u64 = 1;
+
 fn main() {
     // End-to-end demo: issue a credential, request a token over HPKE, and inspect the token.
     let mut rng = OsRng;
@@ -32,16 +34,16 @@ fn main() {
     );
 
     // User asks for tokens using HPKE-wrapped requests.
-    let mut issue_for_period = |period| {
+    let mut issue_for_period = |counter| {
         let envelope = user
-            .request_auth(period, &mut rng)
+            .request_auth(counter, period, &mut rng)
             .expect("failed to build token request");
-        enclave.issue_token(&envelope).expect("token issuance failed")
+        enclave.issue_token(&envelope, period.to_be_bytes()).expect("token issuance failed")
     };
 
+    let token_bytes3 = issue_for_period(1);
     let token_bytes1 = issue_for_period(0);
     let token_bytes2 = issue_for_period(0);
-    let token_bytes3 = issue_for_period(1);
 
     for (idx, token_bytes) in [token_bytes1.as_slice(), token_bytes2.as_slice(), token_bytes3.as_slice()]
         .iter()

@@ -60,7 +60,7 @@ pub fn receive_credential(cipher: &str, shared_key: &str) -> String {
 }
 
 #[wasm_bindgen]
-pub fn request_authenticate(counter: u64, cred: &str) -> String {
+pub fn request_authenticate(counter: u64, period: u64, cred: &str) -> String {
     let cred_decoded = URL_SAFE.decode(cred).unwrap();
     if cred_decoded.len() != 64 {
         panic!("credential must be 64 bytes");
@@ -72,7 +72,7 @@ pub fn request_authenticate(counter: u64, cred: &str) -> String {
     let mut rng = OsRng;
     let credential = with_user(|user| {
         user.receive_credential_plain(&cred_decoded);
-        user.request_auth(counter, &mut rng).unwrap()
+        user.request_auth(counter, period, &mut rng).unwrap()
     });
 
     URL_SAFE.encode(credential)

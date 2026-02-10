@@ -19,6 +19,7 @@ pub mod api;
 pub mod proxy;
 pub mod cors;
 
+const MAX_COUNT : u32 = 10;
 
 pub fn build_server(api_addr: &str, proxy_addr: &str, upstream_addr: &str) -> Server {
     ENCLAVE.get_or_init(|| {
@@ -27,7 +28,7 @@ pub fn build_server(api_addr: &str, proxy_addr: &str, upstream_addr: &str) -> Se
         let mut sk = [0u8; 32];
         rng.fill_bytes(&mut cipher_receiver);
         rng.fill_bytes(&mut sk);
-        Enclave::new(1, sk, cipher_receiver).expect("init enclave")
+        Enclave::new(MAX_COUNT, sk, cipher_receiver).expect("init enclave")
     });
     
     let mut server = Server::new(None).expect("create server");
