@@ -3,6 +3,9 @@ use rand::RngCore;
 
 use crate::serv::core::bytes::{Long, Short};
 
+#[cfg(feature = "timecop")]
+use timecop;
+
 #[derive(Copy, Clone)]
 pub struct Credential {
     pub uid: Long,
@@ -28,14 +31,20 @@ impl Credential {
         use sha2::Sha256;
         
         // random uid
-        let mut uid = [0u8; 32];
+        let mut uid: [u8; 32] = [0u8; 32];
         rng.fill_bytes(&mut uid);
+
+        // #[cfg(feature = "timecop")]
+        // timecop::poison(&uid);
 
         // calc code ← MAC(uid, sk)
         let mut mac = Hmac::<Sha256>::new_from_slice(&sk)
             .expect("HMAC can take key of any size");
         mac.update(&uid);
         let code: Long = mac.finalize().into_bytes().into();
+
+        // #[cfg(feature = "timecop")]
+        // timecop::unpoison(&uid);
 
         Self {
             uid,

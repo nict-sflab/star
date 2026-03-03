@@ -80,6 +80,7 @@ impl SecureChannelServer {
         let enc = &cipher[AAD_LEN + INFO_LEN..AAD_LEN + INFO_LEN + ENC_LEN];
         let ciphertext = &cipher[AAD_LEN + INFO_LEN + ENC_LEN..];
 
+
         let key = self.receive_hpke(enc, info, aad, ciphertext).expect("decryption failed");
 
         let mut nonce_bytes = [0u8; 12];

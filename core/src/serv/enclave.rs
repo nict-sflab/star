@@ -7,6 +7,9 @@ use alloc::vec::Vec;
 use hpke::HpkeError;
 use rand::RngCore;
 
+#[cfg(feature = "timecop")]
+use timecop;
+
 // HPKE receiver living inside the enclave.
 pub struct Enclave {
     cipher_receiver: SecureChannelServer,
@@ -62,6 +65,7 @@ impl Enclave {
         };
 
         let result = self.issue_token_plain(&plain, current_period);
+
         Ok(result)
     }
 
@@ -72,6 +76,9 @@ impl Enclave {
             return alloc::vec![0u8];
         }
 
+        // #[cfg(feature = "timecop")]
+        // timecop::poison(&request);
+
         let cred = Credential::from_bytes(&request[0..64]);
         let count: Short = request[64..72].try_into().expect("fixed-length slice");
         let period: Short = request[72..80].try_into().expect("fixed-length slice");
@@ -79,13 +86,15 @@ impl Enclave {
         if !cred.is_valid(period, count, current_period, self.max_tickets, self.sk) {            
             return alloc::vec![0u8];
         }
-
+    
         let token = Token::random(
             cred.uid,
             period,
             count,
         );
-        // panic!("uid: {:?}\nperiod: {:?}\ncnt: {:?}\nresult: {:?}", cred.uid, period, count, token.to_bytes());
+
+        // #[cfg(feature = "timecop")]
+        // timecop::unpoison(&request);
 
 
         token.to_bytes()
@@ -96,19 +105,23 @@ impl Enclave {
     where
         R: RngCore,
     {
-        let cred = Credential::random(self.sk, rng);
-        let plain = cred.to_bytes();
+        let cred = self.issue_cred(cipher, rng);
 
         // The HPKE envelope is aad(32) || info(32) || enc(32) || ciphertext.
         // respond_cipher expects the full envelope to recover the shared key.
-        self.cipher_receiver.respond_cipher(&plain, cipher, rng)
+        self.cipher_receiver.respond_cipher(&cred, cipher, rng)
     }
 
     pub fn issue_cred_plain<R>(&self, rng: &mut R) -> Vec<u8>
     where
         R: RngCore,
     {
+        // #[cfg(feature = "timecop")]
+        // timecop::poison(&self.sk);
         let cred = Credential::random(self.sk, rng);
+
+        // #[cfg(feature = "timecop")]
+        // timecop::unpoison(&self.sk);
         cred.to_bytes()
     }
 
