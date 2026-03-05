@@ -4,6 +4,7 @@ use chacha20poly1305::{
     Nonce,
 };
 use alloc::vec::Vec;
+use constant_time_utils::time;
 use rand::{CryptoRng, RngCore};
 use hpke::{
     aead::ChaCha20Poly1305 as HpkeChaCha20Poly1305,
@@ -14,8 +15,8 @@ use hpke::{
 
 // HPKE receiver living inside the enclave.
 pub struct SecureChannelServer {
-    sk: <X25519HkdfSha256 as hpke::kem::Kem>::PrivateKey,
-    pk: <X25519HkdfSha256 as hpke::kem::Kem>::PublicKey,
+    pub sk: <X25519HkdfSha256 as hpke::kem::Kem>::PrivateKey,
+    pub pk: <X25519HkdfSha256 as hpke::kem::Kem>::PublicKey,
 }
 
 impl SecureChannelServer {
@@ -81,6 +82,8 @@ impl SecureChannelServer {
         let ciphertext = &cipher[AAD_LEN + INFO_LEN + ENC_LEN..];
 
         let key = self.receive_hpke(enc, info, aad, ciphertext).expect("decryption failed");
+        #[cfg(feature = "timecop")]
+        timecop::poison(&key);
 
         let mut nonce_bytes = [0u8; 12];
         rng.fill_bytes(&mut nonce_bytes);
@@ -95,6 +98,9 @@ impl SecureChannelServer {
         let mut result = Vec::with_capacity(nonce_bytes.len() + ciphertext.len());
         result.extend_from_slice(&nonce_bytes);
         result.extend_from_slice(&ciphertext);
+    
+        #[cfg(feature = "timecop")]
+        timecop::poison(&key);
         result
     }
 }

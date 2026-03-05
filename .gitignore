@@ -88,3 +88,6 @@ system/serv/app/enclave_*.c
 system/serv/app/enclave_*.h
 system/serv/enclave/enclave_*.c
 system/serv/enclave/enclave_*.h
+
+core/analysis/.cargo
+vgcore.*

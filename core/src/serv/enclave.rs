@@ -7,6 +7,9 @@ use alloc::vec::Vec;
 use hpke::HpkeError;
 use rand::RngCore;
 
+#[cfg(feature = "timecop")]
+use timecop;
+
 // HPKE receiver living inside the enclave.
 pub struct Enclave {
     cipher_receiver: SecureChannelServer,
@@ -62,33 +65,37 @@ impl Enclave {
         };
 
         let result = self.issue_token_plain(&plain, current_period);
+
         Ok(result)
     }
 
     /// Issue a token from an already decrypted request (credential 64 bytes + count 8 bytes + period 8 bytes).
     /// This is mainly for examples/tests; production callers should use `issue_token` with HPKE-protected payloads.
     pub fn issue_token_plain(&self, request: &[u8], current_period: Short) -> Vec<u8> {
+        #[cfg(feature = "timecop")]
+        timecop::poison(&request);
+        
         if request.len() < 80 {
             return alloc::vec![0u8];
         }
-
         let cred = Credential::from_bytes(&request[0..64]);
         let count: Short = request[64..72].try_into().expect("fixed-length slice");
         let period: Short = request[72..80].try_into().expect("fixed-length slice");
 
         if !cred.is_valid(period, count, current_period, self.max_tickets, self.sk) {            
             return alloc::vec![0u8];
-        }
-
+        }               
         let token = Token::random(
             cred.uid,
             period,
             count,
         );
-        // panic!("uid: {:?}\nperiod: {:?}\ncnt: {:?}\nresult: {:?}", cred.uid, period, count, token.to_bytes());
+        let result = token.to_bytes();
 
+        #[cfg(feature = "timecop")]
+        timecop::unpoison(&request);
+        return result;
 
-        token.to_bytes()
     }
 
 
@@ -100,15 +107,32 @@ impl Enclave {
 
         // The HPKE envelope is aad(32) || info(32) || enc(32) || ciphertext.
         // respond_cipher expects the full envelope to recover the shared key.
-        self.cipher_receiver.respond_cipher(&cred, cipher, rng)
+        let result = self.cipher_receiver.respond_cipher(&cred, cipher, rng);
+
+        result
     }
 
     pub fn issue_cred_plain<R>(&self, rng: &mut R) -> Vec<u8>
     where
         R: RngCore,
     {
+        #[cfg(feature = "timecop")]
+        timecop::poison(&self.sk);
         let cred = Credential::random(self.sk, rng);
-        cred.to_bytes()
+
+        #[cfg(feature = "timecop")]
+        timecop::poison(&cred.uid);
+    
+        let result = cred.to_bytes();
+
+        #[cfg(feature = "timecop")]
+        timecop::unpoison(&self.sk);
+
+        #[cfg(feature = "timecop")]
+        timecop::unpoison(&cred.uid);
+
+        return result;
+
     }
 
 }
