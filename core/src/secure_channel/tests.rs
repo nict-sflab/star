@@ -3,7 +3,7 @@ use crate::secure_channel::{server::SecureChannelServer, client::SecureChannelCl
 
 
 #[test]
-fn test() {
+fn test_all() {
     use rand::rngs::OsRng;
 
     let mut rng = OsRng;

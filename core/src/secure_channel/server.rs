@@ -14,8 +14,8 @@ use hpke::{
 
 // HPKE receiver living inside the enclave.
 pub struct SecureChannelServer {
-    sk: <X25519HkdfSha256 as hpke::kem::Kem>::PrivateKey,
-    pk: <X25519HkdfSha256 as hpke::kem::Kem>::PublicKey,
+    pub sk: <X25519HkdfSha256 as hpke::kem::Kem>::PrivateKey,
+    pub pk: <X25519HkdfSha256 as hpke::kem::Kem>::PublicKey,
 }
 
 impl SecureChannelServer {

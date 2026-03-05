@@ -1,6 +1,7 @@
 use constant_time_utils::time;
+use hpke::Serializable;
 use rand::{rngs::OsRng, RngCore};
-use star_core::secure_channel::client::SecureChannelClient;
+use star_core::secure_channel::{client::SecureChannelClient, server::SecureChannelServer};
 use star_core::serv::core::token;
 use star_core::serv::enclave::Enclave;
 use star_core::client::User;
@@ -53,5 +54,75 @@ fn main() {
     timecop::unpoison(&hpke_sk);
     timecop::unpoison(&token_sk);
 
+    fail1();
+    fail2();
+
     println!("done");
+}
+
+
+use hpke::{
+    aead::ChaCha20Poly1305,
+    kdf::HkdfSha384,
+    kem::{Kem as KemTrait, X25519HkdfSha256},
+    Deserializable, HpkeError, OpModeR,
+};
+
+fn fail1() {
+    type Aead = ChaCha20Poly1305;
+    type Kdf = HkdfSha384;
+    type Kem = X25519HkdfSha256;
+
+    let (sk_r, _pk_r) = Kem::gen_keypair(&mut OsRng);
+    let bad_enc_bytes = [0u8; 32];
+    timecop::poison(&bad_enc_bytes);
+
+    let bad_encapped_key =
+        <Kem as KemTrait>::EncappedKey::from_bytes(&bad_enc_bytes).expect("bad enc parse failed");
+
+    let info = b"ct-test";
+
+    let res = hpke::setup_receiver::<Aead, Kdf, Kem>(
+        &OpModeR::Base,
+        &sk_r,
+        &bad_encapped_key,
+        info,
+    );
+
+    timecop::unpoison(&bad_enc_bytes);
+}
+
+
+fn fail2() {
+    let mut rng = OsRng;
+    let mut hpke_sk = [0u8; 32];
+    rng.fill_bytes(&mut hpke_sk);
+    timecop::poison(&hpke_sk);
+
+    let receiver = SecureChannelServer::new(hpke_sk).unwrap();
+    let receiver_pk = receiver.public_key();
+
+    let sender = SecureChannelClient::new(receiver_pk).expect("sender init failed");
+    let (envelope, shared_key) = sender
+        .send_shared_key(&mut rng)
+        .expect("send shared key failed");
+
+    let mut envelope = envelope.clone();
+    const AAD_LEN: usize = 32;
+    const INFO_LEN: usize = 32;
+    const ENC_LEN: usize = 32;
+    let min_len = AAD_LEN + INFO_LEN + ENC_LEN;
+    assert!(envelope.len() >= min_len, "HPKE envelope too short");
+
+    envelope[min_len - 1] = !envelope[min_len -1];
+
+    let aad = &envelope[..AAD_LEN];
+    let info = &envelope[AAD_LEN.. AAD_LEN + INFO_LEN];
+    let enc = &envelope[AAD_LEN + INFO_LEN..AAD_LEN + INFO_LEN + ENC_LEN];
+    let ciphertext = &envelope[AAD_LEN + INFO_LEN + ENC_LEN..];
+
+    let decrypted_key = receiver
+        .receive_hpke(enc, info, aad, ciphertext);
+
+    timecop::unpoison(&hpke_sk);
 }
