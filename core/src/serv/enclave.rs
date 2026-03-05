@@ -74,24 +74,22 @@ impl Enclave {
     pub fn issue_token_plain(&self, request: &[u8], current_period: Short) -> Vec<u8> {
         #[cfg(feature = "timecop")]
         timecop::poison(&request);
+        
         if request.len() < 80 {
             return alloc::vec![0u8];
         }
-
         let cred = Credential::from_bytes(&request[0..64]);
         let count: Short = request[64..72].try_into().expect("fixed-length slice");
         let period: Short = request[72..80].try_into().expect("fixed-length slice");
 
         if !cred.is_valid(period, count, current_period, self.max_tickets, self.sk) {            
             return alloc::vec![0u8];
-        }
-
+        }               
         let token = Token::random(
             cred.uid,
             period,
             count,
         );
-
         let result = token.to_bytes();
 
         #[cfg(feature = "timecop")]
@@ -109,7 +107,9 @@ impl Enclave {
 
         // The HPKE envelope is aad(32) || info(32) || enc(32) || ciphertext.
         // respond_cipher expects the full envelope to recover the shared key.
-        self.cipher_receiver.respond_cipher(&cred, cipher, rng)
+        let result = self.cipher_receiver.respond_cipher(&cred, cipher, rng);
+
+        result
     }
 
     pub fn issue_cred_plain<R>(&self, rng: &mut R) -> Vec<u8>
