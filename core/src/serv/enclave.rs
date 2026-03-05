@@ -72,12 +72,11 @@ impl Enclave {
     /// Issue a token from an already decrypted request (credential 64 bytes + count 8 bytes + period 8 bytes).
     /// This is mainly for examples/tests; production callers should use `issue_token` with HPKE-protected payloads.
     pub fn issue_token_plain(&self, request: &[u8], current_period: Short) -> Vec<u8> {
+        #[cfg(feature = "timecop")]
+        timecop::poison(&request);
         if request.len() < 80 {
             return alloc::vec![0u8];
         }
-
-        // #[cfg(feature = "timecop")]
-        // timecop::poison(&request);
 
         let cred = Credential::from_bytes(&request[0..64]);
         let count: Short = request[64..72].try_into().expect("fixed-length slice");
@@ -86,18 +85,19 @@ impl Enclave {
         if !cred.is_valid(period, count, current_period, self.max_tickets, self.sk) {            
             return alloc::vec![0u8];
         }
-    
+
         let token = Token::random(
             cred.uid,
             period,
             count,
         );
 
-        // #[cfg(feature = "timecop")]
-        // timecop::unpoison(&request);
+        let result = token.to_bytes();
 
+        #[cfg(feature = "timecop")]
+        timecop::unpoison(&request);
+        return result;
 
-        token.to_bytes()
     }
 
 
@@ -116,13 +116,23 @@ impl Enclave {
     where
         R: RngCore,
     {
-        // #[cfg(feature = "timecop")]
-        // timecop::poison(&self.sk);
+        #[cfg(feature = "timecop")]
+        timecop::poison(&self.sk);
         let cred = Credential::random(self.sk, rng);
 
-        // #[cfg(feature = "timecop")]
-        // timecop::unpoison(&self.sk);
-        cred.to_bytes()
+        #[cfg(feature = "timecop")]
+        timecop::poison(&cred.uid);
+    
+        let result = cred.to_bytes();
+
+        #[cfg(feature = "timecop")]
+        timecop::unpoison(&self.sk);
+
+        #[cfg(feature = "timecop")]
+        timecop::unpoison(&cred.uid);
+
+        return result;
+
     }
 
 }

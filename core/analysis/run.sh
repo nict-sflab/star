@@ -11,4 +11,4 @@ echo "cargo build -j ${jobs} --bin analysis --features timecop --release"
 cargo build -j "${jobs}" --bin analysis --features timecop --release
 
 echo "valgrind ./target/release/analysis"
-valgrind ./target/release/analysis
+valgrind ./target/release/analysis --leak-check=full
