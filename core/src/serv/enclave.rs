@@ -105,7 +105,7 @@ impl Enclave {
     where
         R: RngCore,
     {
-        let cred = self.issue_cred(cipher, rng);
+        let cred = self.issue_cred_plain(rng);
 
         // The HPKE envelope is aad(32) || info(32) || enc(32) || ciphertext.
         // respond_cipher expects the full envelope to recover the shared key.
