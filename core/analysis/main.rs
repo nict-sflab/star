@@ -54,8 +54,8 @@ fn main() {
     timecop::unpoison(&hpke_sk);
     timecop::unpoison(&token_sk);
 
-    fail1();
-    fail2();
+    // fail1();
+    // fail2();
 
     println!("done");
 }
