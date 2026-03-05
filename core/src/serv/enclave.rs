@@ -96,12 +96,11 @@ impl Enclave {
     where
         R: RngCore,
     {
-        let cred = Credential::random(self.sk, rng);
-        let plain = cred.to_bytes();
+        let cred = self.issue_cred_plain(rng);
 
         // The HPKE envelope is aad(32) || info(32) || enc(32) || ciphertext.
         // respond_cipher expects the full envelope to recover the shared key.
-        self.cipher_receiver.respond_cipher(&plain, cipher, rng)
+        self.cipher_receiver.respond_cipher(&cred, cipher, rng)
     }
 
     pub fn issue_cred_plain<R>(&self, rng: &mut R) -> Vec<u8>
