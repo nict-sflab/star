@@ -1,13 +1,13 @@
 use alloc::vec::Vec;
 use rand::{CryptoRng, RngCore};
 
-use crate::{secure_channel, serv::core::{bytes::Short, cred::Credential}};
+use crate::{secure_channel, serv::core::{bytes::Short, cred::Credential, token::Token}};
 
 /// Client-side holder for credentials and token requests.
 pub struct User {
-    credential: Option<Credential>,
-    client: secure_channel::client::SecureChannelClient,
-    max: u64,
+    pub credential: Option<Credential>,
+    pub client: secure_channel::client::SecureChannelClient,
+    pub max: u64,
 }
 
 impl User {
@@ -65,6 +65,23 @@ impl User {
         token_request.extend_from_slice(&period);
         token_request
     }
+
+    pub fn route(
+        &mut self,
+        counter: u64,
+        period: u64,
+        max: u32,
+    ) -> u32
+    {
+        let count: Short = counter.to_be_bytes();
+        let period: Short = period.to_be_bytes();
+        let token = Token::random(self.credential.unwrap().uid, period, count);
+
+        let route = token.route(max);
+
+        return route;
+    }
+
 
     /// Present the credential over HPKE to the enclave.
     /// Returns an encrypted payload ready for `Enclave::issue_token`.

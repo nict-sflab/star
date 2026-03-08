@@ -4,9 +4,8 @@ const authStar = () => {
         if (e.source !== window) return;
         if (e.data?.type !== "STAR_RESULT") return;
 
-        const result = e.data.payload
-        console.log("star: ", result);
-        resolve(result)
+        console.log("star: ", e.data);
+        resolve(e.data)
       });
 
       window.postMessage({ type: "STAR", payload: {} }, "*")

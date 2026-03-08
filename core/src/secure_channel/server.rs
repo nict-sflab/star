@@ -4,7 +4,6 @@ use chacha20poly1305::{
     Nonce,
 };
 use alloc::vec::Vec;
-use constant_time_utils::time;
 use rand::{CryptoRng, RngCore};
 use hpke::{
     aead::ChaCha20Poly1305 as HpkeChaCha20Poly1305,

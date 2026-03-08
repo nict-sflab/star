@@ -1,4 +1,10 @@
 const API_HOST = "http://localhost:8080";
+
+const ROUTE_MAP = {
+  0: "8081", 
+  1: "8081" 
+}
+
 const STORAGE_KEYS = {
   cred: "cred",
   counter: "counter",
@@ -6,13 +12,13 @@ const STORAGE_KEYS = {
   installMarker: "star_install_marker_v1",
 };
 
-
 const wasm = {
   init: null,
   init_user: null,
   request_register: null,
   receive_credential: null,
   request_authenticate: null,
+  route: null
 };
 
 let initPromise;
@@ -45,6 +51,7 @@ const runInit = async () => {
     wasm.request_register = wasmModule.request_register;
     wasm.receive_credential = wasmModule.receive_credential;
     wasm.request_authenticate = wasmModule.request_authenticate;
+    wasm.route = wasmModule.route;
   }
 
   const wasmUrl = chrome.runtime.getURL("wasm/star_client_wasm_bg.wasm");
@@ -141,12 +148,15 @@ window.addEventListener("message", async (e) => {
 
 
     const proof = await wasm.request_authenticate(counter, period, cred);
+    const routeIndex = await wasm.route(counter, period, cred, 1);
+    const route = ROUTE_MAP[routeIndex];
+    
     await setStorage(STORAGE_KEYS.counter, (counter + 1n).toString());
     await setStorage(STORAGE_KEYS.period, period.toString());
 
     console.log("extension:", proof, counter, period, cred);
 
-    window.postMessage({ type: "STAR_RESULT", payload: proof }, "*");
+    window.postMessage({ type: "STAR_RESULT", proof: proof, route: route }, "*");
   } catch (err) {
     console.error("STAR auth failed:", err);
     window.postMessage(

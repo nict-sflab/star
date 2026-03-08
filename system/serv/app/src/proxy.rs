@@ -3,7 +3,8 @@ use pingora::upstreams::peer::HttpPeer;
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::{ProxyHttp, Session};
 use pingora_web::StatusCode;
-use core::panic;
+use star_core::serv::core::bytes::Long;
+use star_core::serv::core::token::Token;
 use std::collections::HashMap;
 use tokio::sync::Mutex;
 use std::time::Duration;
@@ -78,29 +79,23 @@ impl<T: FilterBox + Send> ProxyHttp for StarProxy<T> {
                 return exit_filter(403, session).await;
             }
         };
-        
-        let prefix = u32::from_be_bytes(token_bytes[0..4].try_into().unwrap());
-        let prefix =  prefix % self.prefix_max;
-        let filter = match self.filters.get(&prefix) {
+
+        let token = Token::new(token_bytes.try_into().unwrap());
+        let route = token.route(self.prefix_max);
+
+        let filter = match self.filters.get(&route) {
             Some(f) => f,
             None => {
-                println!("{}", prefix);
-                return exit_filter(403, session).await;
-            }
-        };
-
-        let token: Entry = match token_bytes.as_slice().try_into() {
-            Ok(v) => v,
-            Err(_) => {
+                println!("{}", route);
                 return exit_filter(403, session).await;
             }
         };
 
         let is_new = {
             let mut filter_box = filter.lock().await;
-            let is_new = filter_box.test(&token);
+            let is_new = filter_box.test(&token.token);
             if is_new {
-                let _ = filter_box.insert(&token);
+                let _ = filter_box.insert(&token.token);
             }
             is_new
         };

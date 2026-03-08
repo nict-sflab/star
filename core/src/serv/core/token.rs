@@ -40,6 +40,13 @@ impl Token {
         }
     }
 
+    pub fn route(&self, max: u32) -> u32 {
+        let prefix = u32::from_be_bytes(self.token[0..4].try_into().unwrap());
+        let route =  prefix % max;
+
+        route
+    }
+
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&self.token);

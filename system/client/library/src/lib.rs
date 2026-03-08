@@ -2,7 +2,7 @@ use wasm_bindgen::prelude::*;
 
 use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 use rand::rngs::OsRng;
-use star_core::{client::User, secure_channel::client::SecureChannelClient};
+use star_core::{client::User, secure_channel::client::SecureChannelClient, serv::core::token::Token};
 use std::sync::{Mutex, OnceLock};
 
 const MAX_COUNT: u64 = 10;
@@ -76,4 +76,21 @@ pub fn request_authenticate(counter: u64, period: u64, cred: &str) -> String {
     });
 
     URL_SAFE.encode(credential)
+}
+
+
+#[wasm_bindgen]
+pub fn route(counter: u64, period: u64, cred: &str, max: u32) -> u32 {
+    let cred_decoded = URL_SAFE.decode(cred).unwrap();
+    if cred_decoded.len() != 64 {
+        panic!("credential must be 64 bytes");
+    }
+    if counter >= MAX_COUNT {
+        panic!("exceeded max token requests for this credential");
+    }
+
+    with_user(|user| {
+        user.receive_credential_plain(&cred_decoded);
+        user.route(counter, period, max)
+    })
 }
