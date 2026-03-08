@@ -9,7 +9,7 @@
   <script>
     const submit = async () => {
       const star = await authStar();
-      let headers = new Headers({
+      const headers = new Headers({
         "Content-Type": "text/xml",
         "X-STAR": star.proof,
       });
@@ -19,6 +19,8 @@
       })
 
       console.log(resp)
+      const text = await resp.text()
+      alert(text)
     }
   </script>
 </body>
