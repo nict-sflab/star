@@ -438,6 +438,7 @@ dependencies = [
  "rand",
  "sha2",
  "subtle",
+ "timecop",
  "x25519-dalek",
 ]
 
@@ -457,6 +458,10 @@ dependencies = [
  "quote",
  "unicode-ident",
 ]
+
+[[package]]
+name = "timecop"
+version = "0.1.0"
 
 [[package]]
 name = "typenum"

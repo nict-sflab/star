@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use pingora::upstreams::peer::HttpPeer;
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::{ProxyHttp, Session};
+use pingora_web::StatusCode;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -10,36 +11,18 @@ use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 use simple_filter_box::core::{Entry, FilterBox};
 
 use crate::core::ENCLAVE;
+use crate::cors::with_cors;
 
 pub struct StarProxy<T: FilterBox + Send> {
     pub filter_box: Mutex<T>,
     pub upstream_addr: String,
 }
 
-fn with_cors(res: &mut ResponseHeader, req: &RequestHeader) -> pingora::Result<()> {
-    res.insert_header("access-control-allow-origin", "*")?;
-    if let Some(req_method) = req
-        .headers
-        .get("access-control-request-method")
-        .and_then(|v| v.to_str().ok())
-        .filter(|v| !v.is_empty())
-    {
-        res.insert_header("access-control-allow-methods", req_method)?;
-    } else {
-        res.insert_header("access-control-allow-methods", "GET, POST, OPTIONS")?;
-    }
-    if let Some(req_headers) = req
-        .headers
-        .get("access-control-request-headers")
-        .and_then(|v| v.to_str().ok())
-        .filter(|v| !v.is_empty())
-    {
-        res.insert_header("access-control-allow-headers", req_headers)?;
-    } else {
-        res.insert_header("access-control-allow-headers", "*")?;
-    }
-    res.insert_header("access-control-max-age", "86400")?;
-    Ok(())
+async fn exit_filter(status: impl TryInto<StatusCode>, session: &mut Session) -> pingora::Result<bool> {
+    let mut header = ResponseHeader::build(status, None).unwrap();
+    with_cors(&mut header, session.req_header())?;
+    session.write_response_header(Box::new(header), true).await?;
+    Ok(true)
 }
 
 #[async_trait]
@@ -56,10 +39,7 @@ impl<T: FilterBox + Send> ProxyHttp for StarProxy<T> {
         println!("method: {}\n", session.req_header().method);
 
         if session.req_header().method == "OPTIONS" {
-            let mut header = ResponseHeader::build(204, None).unwrap();
-            with_cors(&mut header, session.req_header())?;
-            session.write_response_header(Box::new(header), true).await?;
-            return Ok(true);
+            return exit_filter(204, session).await;
         }
 
         let req_headers = &session.req_header().headers;
@@ -70,29 +50,20 @@ impl<T: FilterBox + Send> ProxyHttp for StarProxy<T> {
         let x = match target {
             Some(x) => x,
             None => {
-                let mut header = ResponseHeader::build(400, None).unwrap();
-                with_cors(&mut header, session.req_header())?;
-                session.write_response_header(Box::new(header), true).await?;
-                return Ok(true);
+                return exit_filter(403, session).await;
             }
         };
 
         let decoded = match URL_SAFE.decode(x) {
             Ok(v) => v,
             Err(_) => {
-                let mut header = ResponseHeader::build(400, None).unwrap();
-                with_cors(&mut header, session.req_header())?;
-                session.write_response_header(Box::new(header), true).await?;
-                return Ok(true);
+                return exit_filter(400, session).await;
             }
         };
 
         const MIN_HPKE_LEN: usize = 32 + 32 + 32;
         if decoded.len() < MIN_HPKE_LEN {
-            let mut header = ResponseHeader::build(400, None).unwrap();
-            with_cors(&mut header, session.req_header())?;
-            session.write_response_header(Box::new(header), true).await?;
-            return Ok(true);
+            return exit_filter(400, session).await;
         }
 
         let enclave = ENCLAVE.get().unwrap();
@@ -101,20 +72,14 @@ impl<T: FilterBox + Send> ProxyHttp for StarProxy<T> {
         let token_bytes = match enclave.issue_token(&decoded, current_period) {
             Ok(v) => v,
             Err(_) => {
-                let mut header = ResponseHeader::build(403, None).unwrap();
-                with_cors(&mut header, session.req_header())?;
-                session.write_response_header(Box::new(header), true).await?;
-                return Ok(true);
+                return exit_filter(403, session).await;
             }
         };
 
         let token: Entry = match token_bytes.as_slice().try_into() {
             Ok(v) => v,
             Err(_) => {
-                let mut header = ResponseHeader::build(403, None).unwrap();
-                with_cors(&mut header, session.req_header())?;
-                session.write_response_header(Box::new(header), true).await?;
-                return Ok(true);
+                return exit_filter(403, session).await;
             }
         };
 
@@ -130,10 +95,7 @@ impl<T: FilterBox + Send> ProxyHttp for StarProxy<T> {
         if is_new {
             Ok(false)
         } else {
-            let mut header = ResponseHeader::build(403, None).unwrap();
-            with_cors(&mut header, session.req_header())?;
-            session.write_response_header(Box::new(header), true).await?;
-            Ok(true)
+            return exit_filter(403, session).await;
         }
     }
 

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_web::{
     Handler, Middleware, PingoraHttpRequest, PingoraWebHttpResponse, StatusCode, WebError,
 };
@@ -60,4 +61,31 @@ impl Middleware for Cors {
         Self::apply_headers(&mut res, allow_methods.as_deref(), allow_headers.as_deref());
         Ok(res)
     }
+}
+
+
+pub(crate) fn with_cors(res: &mut ResponseHeader, req: &RequestHeader) -> pingora::Result<()> {
+    res.insert_header("access-control-allow-origin", "*")?;
+    if let Some(req_method) = req
+        .headers
+        .get("access-control-request-method")
+        .and_then(|v| v.to_str().ok())
+        .filter(|v| !v.is_empty())
+    {
+        res.insert_header("access-control-allow-methods", req_method)?;
+    } else {
+        res.insert_header("access-control-allow-methods", "GET, POST, OPTIONS")?;
+    }
+    if let Some(req_headers) = req
+        .headers
+        .get("access-control-request-headers")
+        .and_then(|v| v.to_str().ok())
+        .filter(|v| !v.is_empty())
+    {
+        res.insert_header("access-control-allow-headers", req_headers)?;
+    } else {
+        res.insert_header("access-control-allow-headers", "*")?;
+    }
+    res.insert_header("access-control-max-age", "86400")?;
+    Ok(())
 }
