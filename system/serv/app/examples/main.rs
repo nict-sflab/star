@@ -1,4 +1,4 @@
-use star_app::build_server;
+use star_app::{all_prefix, build_server};
 use std::thread;
 use tiny_http::{Header, Response, Server as TinyServer};
 
@@ -54,6 +54,6 @@ fn spawn_html_server() -> (String, thread::JoinHandle<()>) {
 fn main() {
     let (upstream_addr, _upstream_handle) = spawn_upstream();
     let (_html_addr, _html_handle) = spawn_html_server();
-    let server = build_server("127.0.0.1:8080", "127.0.0.1:8081", &upstream_addr);
+    let server = build_server("127.0.0.1:8080", "127.0.0.1:8081", &upstream_addr, all_prefix(1), 1);
     server.run_forever();
 }

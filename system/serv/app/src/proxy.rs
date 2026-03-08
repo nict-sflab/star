@@ -3,7 +3,9 @@ use pingora::upstreams::peer::HttpPeer;
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::{ProxyHttp, Session};
 use pingora_web::StatusCode;
-use std::sync::Mutex;
+use core::panic;
+use std::collections::HashMap;
+use tokio::sync::Mutex;
 use std::time::Duration;
 
 use base64::{engine::general_purpose::URL_SAFE, Engine as _};
@@ -14,7 +16,8 @@ use crate::core::ENCLAVE;
 use crate::cors::with_cors;
 
 pub struct StarProxy<T: FilterBox + Send> {
-    pub filter_box: Mutex<T>,
+    pub filters: HashMap<u32, Mutex<T>>,
+    pub prefix_max: u32,
     pub upstream_addr: String,
 }
 
@@ -75,6 +78,16 @@ impl<T: FilterBox + Send> ProxyHttp for StarProxy<T> {
                 return exit_filter(403, session).await;
             }
         };
+        
+        let prefix = u32::from_be_bytes(token_bytes[0..4].try_into().unwrap());
+        let prefix =  prefix % self.prefix_max;
+        let filter = match self.filters.get(&prefix) {
+            Some(f) => f,
+            None => {
+                println!("{}", prefix);
+                return exit_filter(403, session).await;
+            }
+        };
 
         let token: Entry = match token_bytes.as_slice().try_into() {
             Ok(v) => v,
@@ -84,7 +97,7 @@ impl<T: FilterBox + Send> ProxyHttp for StarProxy<T> {
         };
 
         let is_new = {
-            let mut filter_box = self.filter_box.lock().unwrap();
+            let mut filter_box = filter.lock().await;
             let is_new = filter_box.test(&token);
             if is_new {
                 let _ = filter_box.insert(&token);

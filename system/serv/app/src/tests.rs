@@ -1,5 +1,5 @@
 use crate::api::{DEFAULT_PUBLIC_KEY_API, DEFAULT_REGISTER_API};
-use crate::build_server;
+use crate::{all_prefix, build_server};
 
 use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE, Engine as _};
@@ -70,7 +70,7 @@ fn test_all() {
 
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let server_handle = thread::spawn(move || {
-        let server = build_server(api_addr, proxy_addr, &upstream_addr);
+        let server = build_server(api_addr, proxy_addr, &upstream_addr, all_prefix(1), 1);
         let shutdown = TestShutdown {
             rx: AsyncMutex::new(shutdown_rx),
         };
