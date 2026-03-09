@@ -1,4 +1,4 @@
-use pingora::server::Server;
+use pingora::{server::Server, tls::listeners::TlsSettings};
 use pingora_proxy::http_proxy_service;
 use pingora_web::App as WebApp;
 use rand::distr::Map;
@@ -7,6 +7,7 @@ use simple_filter_box::{bloom_filter::bloom_filter::BloomFilterBox, core::Filter
 use star_core::serv::enclave::Enclave;
 use tokio::sync::Mutex;
 use std::{collections::HashMap};
+use std::env;
 
 use crate::{
     api::{DEFAULT_PUBLIC_KEY_API, DEFAULT_REGISTER_API, issue_api, public_key_api},
@@ -25,6 +26,10 @@ const MAX_COUNT : u32 = 10;
 
 pub fn all_prefix(max: u32) -> Vec<u32> {
     (0u32..max).collect()
+}
+
+fn env_or_default(name: &str, default: &str) -> String {
+    env::var(name).unwrap_or_else(|_| default.to_string())
 }
 
 pub fn build_server(api_addr: &str, proxy_addr: &str, upstream_addr: &str, prefixes: Vec<u32>, max_prefix: u32) -> Server {
@@ -64,7 +69,20 @@ pub fn build_server(api_addr: &str, proxy_addr: &str, upstream_addr: &str, prefi
             upstream_addr: upstream_addr.to_string(),
         },
     );
-    proxy_svc.add_tcp(proxy_addr);
+
+    let tls_cert_path = env_or_default("TLS_CERT_PATH", "");
+    let tls_key_path = env_or_default("TLS_KEY_PATH", "");
+
+    if tls_cert_path != "" && tls_key_path != "" {
+        println!("use tls");
+        let tls_settings = TlsSettings::intermediate(&tls_cert_path, &tls_key_path).unwrap();
+        proxy_svc.add_tls_with_settings(proxy_addr, None, tls_settings);
+    } else {
+        println!("use plain");
+        proxy_svc.add_tcp(proxy_addr);
+    }
+
+
     server.add_service(proxy_svc);
 
     server

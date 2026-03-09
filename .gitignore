@@ -89,5 +89,6 @@ system/serv/app/enclave_*.h
 system/serv/enclave/enclave_*.c
 system/serv/enclave/enclave_*.h
 
+system/serv/app/examples/certs/
 core/analysis/.cargo
 vgcore.*
