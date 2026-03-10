@@ -32,4 +32,10 @@ required-features = ["timecop"]
 
 [[bench]]
 name = "issue_token"
+path = "benches/enclave.rs"
+harness = false
+
+[[bench]]
+name = "users"
+path = "benches/users.rs"
 harness = false
