@@ -1,28 +1,28 @@
 use pingora::{server::Server, tls::listeners::TlsSettings};
 use pingora_proxy::http_proxy_service;
 use pingora_web::App as WebApp;
-use rand::distr::Map;
 use rand_core::{OsRng, RngCore};
-use simple_filter_box::{bloom_filter::bloom_filter::BloomFilterBox, core::FilterBox};
+use simple_filter_box::bloom_filter::bloom_filter::BloomFilterBox;
 use star_core::serv::enclave::Enclave;
-use tokio::sync::Mutex;
-use std::{collections::HashMap};
+use std::collections::HashMap;
 use std::env;
+use tokio::sync::Mutex;
 
+use crate::filter::StarFilter;
 use crate::{
     api::{DEFAULT_PUBLIC_KEY_API, DEFAULT_REGISTER_API, issue_api, public_key_api},
-    cors::Cors,
     core::ENCLAVE,
+    cors::Cors,
     proxy::StarProxy,
 };
 
-
-pub mod core;
 pub mod api;
-pub mod proxy;
+pub mod core;
 pub mod cors;
+pub mod filter;
+pub mod proxy;
 
-const MAX_COUNT : u32 = 10;
+const MAX_COUNT: u32 = 10;
 
 pub fn all_prefix(max: u32) -> Vec<u32> {
     (0u32..max).collect()
@@ -32,7 +32,13 @@ fn env_or_default(name: &str, default: &str) -> String {
     env::var(name).unwrap_or_else(|_| default.to_string())
 }
 
-pub fn build_server(api_addr: &str, proxy_addr: &str, upstream_addr: &str, prefixes: Vec<u32>, max_prefix: u32) -> Server {
+pub fn build_server(
+    api_addr: &str,
+    proxy_addr: &str,
+    upstream_addr: &str,
+    prefixes: Vec<u32>,
+    max_prefix: u32,
+) -> Server {
     ENCLAVE.get_or_init(|| {
         let mut rng = OsRng;
         let mut cipher_receiver = [0u8; 32];
@@ -41,7 +47,7 @@ pub fn build_server(api_addr: &str, proxy_addr: &str, upstream_addr: &str, prefi
         rng.fill_bytes(&mut sk);
         Enclave::new(MAX_COUNT, sk, cipher_receiver).expect("init enclave")
     });
-    
+
     let mut server = Server::new(None).expect("create server");
     server.bootstrap();
 
@@ -61,11 +67,12 @@ pub fn build_server(api_addr: &str, proxy_addr: &str, upstream_addr: &str, prefi
         filter_boxes.insert(prefix, Mutex::new(filter_box));
     }
 
+    let filter = StarFilter::new(filter_boxes, max_prefix);
+
     let mut proxy_svc = http_proxy_service(
         &server.configuration,
         StarProxy {
-            filters: filter_boxes,
-            prefix_max: max_prefix,
+            filter,
             upstream_addr: upstream_addr.to_string(),
         },
     );
@@ -81,7 +88,6 @@ pub fn build_server(api_addr: &str, proxy_addr: &str, upstream_addr: &str, prefi
         println!("use plain");
         proxy_svc.add_tcp(proxy_addr);
     }
-
 
     server.add_service(proxy_svc);
 

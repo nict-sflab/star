@@ -2,7 +2,7 @@ use crate::api::{DEFAULT_PUBLIC_KEY_API, DEFAULT_REGISTER_API};
 use crate::{all_prefix, build_server};
 
 use async_trait::async_trait;
-use base64::{engine::general_purpose::URL_SAFE, Engine as _};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use constant_time_utils::time;
 use pingora::server::{RunArgs, ShutdownSignal, ShutdownSignalWatch};
 use rand_core::OsRng;
@@ -11,7 +11,7 @@ use star_core::secure_channel::client::SecureChannelClient;
 use std::thread;
 use std::time::Duration;
 use tiny_http::{Response, Server as TinyServer};
-use tokio::sync::{oneshot, Mutex as AsyncMutex};
+use tokio::sync::{Mutex as AsyncMutex, oneshot};
 
 struct TestShutdown {
     rx: AsyncMutex<oneshot::Receiver<()>>,
@@ -60,7 +60,6 @@ fn spawn_upstream() -> (String, thread::JoinHandle<()>) {
     });
     (addr, handle)
 }
-
 
 #[test]
 fn test_all() {

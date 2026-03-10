@@ -19,10 +19,7 @@ impl Cors {
             "access-control-allow-methods",
             allow_methods.unwrap_or("GET, POST, OPTIONS"),
         );
-        res.set_header(
-            "access-control-allow-headers",
-            allow_headers.unwrap_or("*"),
-        );
+        res.set_header("access-control-allow-headers", allow_headers.unwrap_or("*"));
         res.set_header("access-control-max-age", "86400");
     }
 
@@ -62,7 +59,6 @@ impl Middleware for Cors {
         Ok(res)
     }
 }
-
 
 pub(crate) fn with_cors(res: &mut ResponseHeader, req: &RequestHeader) -> pingora::Result<()> {
     res.insert_header("access-control-allow-origin", "*")?;

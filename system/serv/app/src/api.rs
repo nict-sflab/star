@@ -1,7 +1,7 @@
 pub const DEFAULT_REGISTER_API: &str = "/star/register";
 pub const DEFAULT_PUBLIC_KEY_API: &str = "/star/public_key";
 
-use base64::{engine::general_purpose::URL_SAFE, Engine as _};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use rand_core::OsRng;
 
 use crate::core::ENCLAVE;
