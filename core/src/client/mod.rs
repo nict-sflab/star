@@ -1,7 +1,10 @@
 use alloc::vec::Vec;
 use rand::{CryptoRng, RngCore};
 
-use crate::{secure_channel, serv::core::{bytes::Short, cred::Credential, token::Token}};
+use crate::{
+    secure_channel,
+    serv::core::{bytes::Short, cred::Credential, token::Token},
+};
 
 /// Client-side holder for credentials and token requests.
 pub struct User {
@@ -30,8 +33,15 @@ impl User {
             .expect("send shared key error")
     }
 
-    pub fn receive_credential(&mut self, cipher: &[u8], shared_key: &[u8; 32]) -> Option<Credential> {
-        let cred = self.client.decrypt_with_shared_key(cipher, shared_key).expect("failed to decrypto cred");
+    pub fn receive_credential(
+        &mut self,
+        cipher: &[u8],
+        shared_key: &[u8; 32],
+    ) -> Option<Credential> {
+        let cred = self
+            .client
+            .decrypt_with_shared_key(cipher, shared_key)
+            .expect("failed to decrypto cred");
         self.receive_credential_plain(&cred);
         self.credential
     }
@@ -66,13 +76,7 @@ impl User {
         token_request
     }
 
-    pub fn route(
-        &mut self,
-        counter: u64,
-        period: u64,
-        max: u32,
-    ) -> u32
-    {
+    pub fn route(&mut self, counter: u64, period: u64, max: u32) -> u32 {
         let count: Short = counter.to_be_bytes();
         let period: Short = period.to_be_bytes();
         let token = Token::random(self.credential.unwrap().uid, period, count);
@@ -81,7 +85,6 @@ impl User {
 
         return route;
     }
-
 
     /// Present the credential over HPKE to the enclave.
     /// Returns an encrypted payload ready for `Enclave::issue_token`.

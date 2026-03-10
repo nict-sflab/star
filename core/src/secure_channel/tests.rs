@@ -1,6 +1,4 @@
-use crate::secure_channel::{server::SecureChannelServer, client::SecureChannelClient};
-
-
+use crate::secure_channel::{client::SecureChannelClient, server::SecureChannelServer};
 
 #[test]
 fn test_all() {
@@ -22,7 +20,7 @@ fn test_all() {
     assert!(envelope.len() >= min_len, "HPKE envelope too short");
 
     let aad = &envelope[..AAD_LEN];
-    let info = &envelope[AAD_LEN.. AAD_LEN + INFO_LEN];
+    let info = &envelope[AAD_LEN..AAD_LEN + INFO_LEN];
     let enc = &envelope[AAD_LEN + INFO_LEN..AAD_LEN + INFO_LEN + ENC_LEN];
     let ciphertext = &envelope[AAD_LEN + INFO_LEN + ENC_LEN..];
 

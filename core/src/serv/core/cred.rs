@@ -13,14 +13,8 @@ pub struct Credential {
 }
 
 impl Credential {
-    pub fn new(
-        uid: Long,
-        code: Long,
-    ) -> Self {
-        Self {
-            uid,
-            code,
-        }
+    pub fn new(uid: Long, code: Long) -> Self {
+        Self { uid, code }
     }
 
     pub fn random<R>(sk: Long, rng: &mut R) -> Self
@@ -29,7 +23,7 @@ impl Credential {
     {
         use hmac::{Hmac, Mac};
         use sha2::Sha256;
-        
+
         // random uid
         let mut uid: [u8; 32] = [0u8; 32];
         rng.fill_bytes(&mut uid);
@@ -38,31 +32,31 @@ impl Credential {
         timecop::poison(&uid);
 
         // calc code ← MAC(uid, sk)
-        let mut mac = Hmac::<Sha256>::new_from_slice(&sk)
-            .expect("HMAC can take key of any size");
+        let mut mac = Hmac::<Sha256>::new_from_slice(&sk).expect("HMAC can take key of any size");
         mac.update(&uid);
         let code: Long = mac.finalize().into_bytes().into();
 
         #[cfg(feature = "timecop")]
         timecop::unpoison(&uid);
 
-        Self {
-            uid,
-            code,
-        }
+        Self { uid, code }
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Self {
         let uid: Long = bytes[0..32].try_into().expect("fixed-length slice");
         let code: Long = bytes[32..64].try_into().expect("fixed-length slice");
 
-        Self {
-            uid,
-            code,
-        }
+        Self { uid, code }
     }
 
-    pub fn is_valid(&self, period: Short, count: Short, current_period: Short, max_count: Short, sk: Long) -> bool {
+    pub fn is_valid(
+        &self,
+        period: Short,
+        count: Short,
+        current_period: Short,
+        max_count: Short,
+        sk: Long,
+    ) -> bool {
         use hmac::{Hmac, Mac};
         use sha2::Sha256;
 
@@ -70,14 +64,12 @@ impl Credential {
         let is_count_valid = constant_time_utils::cmp::ct_lt(&count, &max_count);
         // panic!("hello: {:?}\n{:?}\n{:?}", is_count_valid, count, max_count);
 
-
         // Recalculate code and compare
-        let mut mac = Hmac::<Sha256>::new_from_slice(&sk)
-            .expect("HMAC can take key of any size");
+        let mut mac = Hmac::<Sha256>::new_from_slice(&sk).expect("HMAC can take key of any size");
         mac.update(&self.uid);
         let recalculated_code: Long = mac.finalize().into_bytes().into();
-        let is_code_valid = recalculated_code == self.code; 
-        
+        let is_code_valid = recalculated_code == self.code;
+
         // panic!("hello: {}: {}: {}", is_current, is_count_valid, is_code_valid);
 
         is_current && is_count_valid && is_code_valid

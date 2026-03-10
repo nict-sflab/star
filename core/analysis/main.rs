@@ -1,12 +1,12 @@
 use constant_time_utils::time;
 use hpke::Serializable;
 use rand::{rngs::OsRng, RngCore};
+use star_core::client::User;
 use star_core::secure_channel::{client::SecureChannelClient, server::SecureChannelServer};
 use star_core::serv::core::token;
 use star_core::serv::enclave::Enclave;
-use star_core::client::User;
 
-const period :u64 = 1;
+const period: u64 = 1;
 
 // #[cfg(feature = "timecop")]
 fn main() {
@@ -23,16 +23,14 @@ fn main() {
     timecop::poison(&token_sk);
 
     let max_tokens_per_credential = 3u32;
-    let enclave =
-        Enclave::new(max_tokens_per_credential, token_sk, hpke_sk)
-            .expect("failed to initialize enclave");
+    let enclave = Enclave::new(max_tokens_per_credential, token_sk, hpke_sk)
+        .expect("failed to initialize enclave");
 
     // User setup and credential issuance.
     let pk = enclave.public_key();
 
     timecop::unpoison(&pk);
-    let sender = SecureChannelClient::new(pk)
-        .expect("failed to initialize sender");
+    let sender = SecureChannelClient::new(pk).expect("failed to initialize sender");
     let mut user = User::new(max_tokens_per_credential as u64, sender);
     let (cipher, ck) = user.request_credential(&mut rng);
     let credential_bytes: Vec<u8> = enclave.issue_cred(&cipher, &mut rng);
@@ -41,9 +39,11 @@ fn main() {
     user.receive_credential(&credential_bytes, &ck);
 
     let envelope = user
-            .request_auth(1, period, &mut rng)
-            .expect("failed to build token request");
-    let token = enclave.issue_token(&envelope, period.to_be_bytes()).expect("token issuance failed");
+        .request_auth(1, period, &mut rng)
+        .expect("failed to build token request");
+    let token = enclave
+        .issue_token(&envelope, period.to_be_bytes())
+        .expect("token issuance failed");
     timecop::unpoison(&token);
 
     let mut token_sk = [0u8; 32];
@@ -59,7 +59,6 @@ fn main() {
 
     println!("done");
 }
-
 
 use hpke::{
     aead::ChaCha20Poly1305,
@@ -82,16 +81,11 @@ fn fail1() {
 
     let info = b"ct-test";
 
-    let res = hpke::setup_receiver::<Aead, Kdf, Kem>(
-        &OpModeR::Base,
-        &sk_r,
-        &bad_encapped_key,
-        info,
-    );
+    let res =
+        hpke::setup_receiver::<Aead, Kdf, Kem>(&OpModeR::Base, &sk_r, &bad_encapped_key, info);
 
     timecop::unpoison(&bad_enc_bytes);
 }
-
 
 fn fail2() {
     let mut rng = OsRng;
@@ -114,15 +108,14 @@ fn fail2() {
     let min_len = AAD_LEN + INFO_LEN + ENC_LEN;
     assert!(envelope.len() >= min_len, "HPKE envelope too short");
 
-    envelope[min_len - 1] = !envelope[min_len -1];
+    envelope[min_len - 1] = !envelope[min_len - 1];
 
     let aad = &envelope[..AAD_LEN];
-    let info = &envelope[AAD_LEN.. AAD_LEN + INFO_LEN];
+    let info = &envelope[AAD_LEN..AAD_LEN + INFO_LEN];
     let enc = &envelope[AAD_LEN + INFO_LEN..AAD_LEN + INFO_LEN + ENC_LEN];
     let ciphertext = &envelope[AAD_LEN + INFO_LEN + ENC_LEN..];
 
-    let decrypted_key = receiver
-        .receive_hpke(enc, info, aad, ciphertext);
+    let decrypted_key = receiver.receive_hpke(enc, info, aad, ciphertext);
 
     timecop::unpoison(&hpke_sk);
 }

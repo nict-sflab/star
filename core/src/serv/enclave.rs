@@ -1,7 +1,7 @@
 use crate::secure_channel::server::SecureChannelServer;
+use crate::serv::core::bytes::{Long, Short};
 use crate::serv::core::cred::Credential;
 use crate::serv::core::token::Token;
-use crate::serv::core::bytes::{Long, Short};
 
 use alloc::vec::Vec;
 use hpke::HpkeError;
@@ -23,9 +23,13 @@ impl Enclave {
         let cipher_receiver = SecureChannelServer::new(cipher_receiver)?;
 
         let max_tickets: Short = (max_tickets as u64).to_be_bytes();
-        Ok(Self { cipher_receiver, max_tickets, sk: sk_bytes })
+        Ok(Self {
+            cipher_receiver,
+            max_tickets,
+            sk: sk_bytes,
+        })
     }
-    
+
     /// Generate a fresh receiver keypair using curve25519-dalek.
     pub fn default<R>(rng: &mut R) -> Self
     where
@@ -38,7 +42,6 @@ impl Enclave {
         rng.fill_bytes(&mut sk);
 
         Self::new(0, sk, cipher_receiver).expect("failed to create enclave")
-
     }
 
     /// Public key for advertising to senders.
@@ -59,7 +62,10 @@ impl Enclave {
         let enc = &cipher[AAD_LEN + INFO_LEN..AAD_LEN + INFO_LEN + ENC_LEN];
         let ciphertext = &cipher[AAD_LEN + INFO_LEN + ENC_LEN..];
 
-        let plain = match self.cipher_receiver.receive_hpke(enc, info, aad, ciphertext) {
+        let plain = match self
+            .cipher_receiver
+            .receive_hpke(enc, info, aad, ciphertext)
+        {
             Ok(p) => p,
             Err(_) => panic!("decryption failed"),
         };
@@ -74,7 +80,7 @@ impl Enclave {
     pub fn issue_token_plain(&self, request: &[u8], current_period: Short) -> Vec<u8> {
         #[cfg(feature = "timecop")]
         timecop::poison(&request);
-        
+
         if request.len() < 80 {
             return alloc::vec![0u8];
         }
@@ -82,22 +88,16 @@ impl Enclave {
         let count: Short = request[64..72].try_into().expect("fixed-length slice");
         let period: Short = request[72..80].try_into().expect("fixed-length slice");
 
-        if !cred.is_valid(period, count, current_period, self.max_tickets, self.sk) {            
+        if !cred.is_valid(period, count, current_period, self.max_tickets, self.sk) {
             return alloc::vec![0u8];
-        }               
-        let token = Token::random(
-            cred.uid,
-            period,
-            count,
-        );
+        }
+        let token = Token::random(cred.uid, period, count);
         let result = token.to_bytes();
 
         #[cfg(feature = "timecop")]
         timecop::unpoison(&request);
         return result;
-
     }
-
 
     pub fn issue_cred<R>(&self, cipher: &[u8], rng: &mut R) -> Vec<u8>
     where
@@ -122,7 +122,7 @@ impl Enclave {
 
         #[cfg(feature = "timecop")]
         timecop::poison(&cred.uid);
-    
+
         let result = cred.to_bytes();
 
         #[cfg(feature = "timecop")]
@@ -132,7 +132,5 @@ impl Enclave {
         timecop::unpoison(&cred.uid);
 
         return result;
-
     }
-
 }

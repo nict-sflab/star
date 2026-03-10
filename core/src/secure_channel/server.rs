@@ -1,16 +1,15 @@
+use alloc::vec::Vec;
 use chacha20poly1305::{
     aead::{Aead, KeyInit},
-    ChaCha20Poly1305,
-    Nonce,
+    ChaCha20Poly1305, Nonce,
 };
-use alloc::vec::Vec;
-use rand::{CryptoRng, RngCore};
 use hpke::{
     aead::ChaCha20Poly1305 as HpkeChaCha20Poly1305,
     kdf::HkdfSha256,
     kem::{Kem as _, X25519HkdfSha256},
     setup_receiver, Deserializable, HpkeError, OpModeR, Serializable,
 };
+use rand::{CryptoRng, RngCore};
 
 // HPKE receiver living inside the enclave.
 pub struct SecureChannelServer {
@@ -25,7 +24,7 @@ impl SecureChannelServer {
         let pk = X25519HkdfSha256::sk_to_pk(&sk);
         Ok(Self { sk, pk })
     }
-    
+
     /// Generate a fresh receiver keypair using curve25519-dalek.
     pub fn random<R>(rng: &mut R) -> Self
     where
@@ -40,9 +39,7 @@ impl SecureChannelServer {
     pub fn public_key(&self) -> [u8; 32] {
         let bytes = self.pk.to_bytes();
         let bytes_ref: &[u8] = bytes.as_ref();
-        bytes_ref
-            .try_into()
-            .expect("public key must be 32 bytes")
+        bytes_ref.try_into().expect("public key must be 32 bytes")
     }
 
     /// Decrypt an HPKE ciphertext (X25519 + ChaCha20-Poly1305).
@@ -80,7 +77,9 @@ impl SecureChannelServer {
         let enc = &cipher[AAD_LEN + INFO_LEN..AAD_LEN + INFO_LEN + ENC_LEN];
         let ciphertext = &cipher[AAD_LEN + INFO_LEN + ENC_LEN..];
 
-        let key = self.receive_hpke(enc, info, aad, ciphertext).expect("decryption failed");
+        let key = self
+            .receive_hpke(enc, info, aad, ciphertext)
+            .expect("decryption failed");
         #[cfg(feature = "timecop")]
         timecop::poison(&key);
 
@@ -88,16 +87,14 @@ impl SecureChannelServer {
         rng.fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
 
-        let aead = ChaCha20Poly1305::new_from_slice(&key)
-            .expect("HPKE response key must be 32 bytes");
-        let ciphertext = aead
-            .encrypt(nonce, response)
-            .expect("encryption failure!");
+        let aead =
+            ChaCha20Poly1305::new_from_slice(&key).expect("HPKE response key must be 32 bytes");
+        let ciphertext = aead.encrypt(nonce, response).expect("encryption failure!");
 
         let mut result = Vec::with_capacity(nonce_bytes.len() + ciphertext.len());
         result.extend_from_slice(&nonce_bytes);
         result.extend_from_slice(&ciphertext);
-    
+
         #[cfg(feature = "timecop")]
         timecop::poison(&key);
         result

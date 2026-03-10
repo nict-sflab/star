@@ -1,16 +1,13 @@
+use alloc::vec::Vec;
 use chacha20poly1305::{
     aead::{Aead, KeyInit},
-    ChaCha20Poly1305,
-    Nonce,
+    ChaCha20Poly1305, Nonce,
 };
-use alloc::vec::Vec;
-use rand::{CryptoRng, RngCore};
 use hpke::{
-    aead::ChaCha20Poly1305 as HpkeChaCha20Poly1305,
-    kdf::HkdfSha256,
-    kem::X25519HkdfSha256,
+    aead::ChaCha20Poly1305 as HpkeChaCha20Poly1305, kdf::HkdfSha256, kem::X25519HkdfSha256,
     setup_sender, Deserializable, HpkeError, OpModeS, Serializable,
 };
+use rand::{CryptoRng, RngCore};
 
 // HPKE sender living outside the enclave.
 pub struct SecureChannelClient {
@@ -20,9 +17,8 @@ pub struct SecureChannelClient {
 impl SecureChannelClient {
     /// Restore a sender from the receiver's 32-byte X25519 public key.
     pub fn new(receiver_pk_bytes: [u8; 32]) -> Result<Self, HpkeError> {
-        let receiver_pk = <X25519HkdfSha256 as hpke::kem::Kem>::PublicKey::from_bytes(
-            &receiver_pk_bytes,
-        )?;
+        let receiver_pk =
+            <X25519HkdfSha256 as hpke::kem::Kem>::PublicKey::from_bytes(&receiver_pk_bytes)?;
         Ok(Self { receiver_pk })
     }
 
@@ -37,13 +33,12 @@ impl SecureChannelClient {
         rng.fill_bytes(&mut aad);
         rng.fill_bytes(&mut info);
 
-        let (enc, mut sender_ctx) =
-            setup_sender::<HpkeChaCha20Poly1305, HkdfSha256, X25519HkdfSha256, _>(
-                &OpModeS::Base,
-                &self.receiver_pk,
-                &info,
-                rng,
-            )?;
+        let (enc, mut sender_ctx) = setup_sender::<
+            HpkeChaCha20Poly1305,
+            HkdfSha256,
+            X25519HkdfSha256,
+            _,
+        >(&OpModeS::Base, &self.receiver_pk, &info, rng)?;
 
         let ciphertext = sender_ctx.seal(plaintext, &aad)?;
 
@@ -82,8 +77,8 @@ impl SecureChannelClient {
 
         let (nonce_bytes, ciphertext) = cipher.split_at(NONCE_LEN);
         let nonce = Nonce::from_slice(nonce_bytes);
-        let aead = ChaCha20Poly1305::new_from_slice(shared_key)
-            .expect("shared key must be 32 bytes");
+        let aead =
+            ChaCha20Poly1305::new_from_slice(shared_key).expect("shared key must be 32 bytes");
         aead.decrypt(nonce, ciphertext)
     }
 }

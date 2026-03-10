@@ -22,6 +22,14 @@ chacha20poly1305 = { version = "0.10", default-features = false, features = ["al
 
 timecop = { path = "../../timecop-rs" }
 
+[dev-dependencies]
+criterion = "0.5"
+
 [[bin]]
 name = "analysis"
 path = "./analysis/main.rs"
+required-features = ["timecop"]
+
+[[bench]]
+name = "issue_token"
+harness = false
