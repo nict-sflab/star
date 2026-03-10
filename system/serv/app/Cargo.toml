@@ -25,3 +25,8 @@ rand_core = "0.6"
 [dev-dependencies]
 ureq = "2"
 tiny_http = "0.12"
+criterion = { version = "0.5", features = ["async_tokio"] }
+
+[[bench]]
+name = "star_filter_throughput"
+harness = false

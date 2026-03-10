@@ -31,7 +31,10 @@ impl<T: FilterBox + Send> StarFilter<T> {
         Ok(())
     }
 
-    fn issue_token_and_route(&self, request: &[u8]) -> Result<(Entry, u32), StarFilterErrorStatus> {
+    pub fn issue_token_and_route(
+        &self,
+        request: &[u8],
+    ) -> Result<(Entry, u32), StarFilterErrorStatus> {
         let enclave = ENCLAVE.get().ok_or(StarFilterErrorStatus::OtherError)?;
         let current_period = constant_time_utils::time::current_period();
 
@@ -52,7 +55,7 @@ impl<T: FilterBox + Send> StarFilter<T> {
         Ok((token.token, route))
     }
 
-    async fn check_duplication(
+    pub async fn check_duplication(
         &self,
         token: &Entry,
         route: u32,

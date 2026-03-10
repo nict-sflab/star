@@ -1,0 +1,141 @@
+use std::{collections::HashMap, sync::Arc, time::Duration};
+
+use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
+use rand_core::{OsRng, RngCore};
+use simple_filter_box::{bloom_filter::bloom_filter::BloomFilterBox, core::Entry};
+use star_app::{core::ENCLAVE, filter::StarFilter};
+use star_core::{
+    client::User, secure_channel::client::SecureChannelClient, serv::enclave::Enclave,
+};
+use tokio::{runtime::Builder, sync::Mutex, task::JoinSet};
+
+type BloomStarFilter = StarFilter<BloomFilterBox>;
+
+const MAX_COUNT: u32 = 1_000_000;
+const PARALLEL_OPS_PER_WORKER: usize = 64;
+const FIXED_PREFIX_MAX: u32 = 4;
+const FIXED_CONCURRENCY: usize = FIXED_PREFIX_MAX as usize;
+
+fn init_enclave() {
+    ENCLAVE.get_or_init(|| {
+        let mut rng = OsRng;
+        let mut cipher_receiver = [0u8; 32];
+        let mut sk = [0u8; 32];
+        rng.fill_bytes(&mut cipher_receiver);
+        rng.fill_bytes(&mut sk);
+        Enclave::new(MAX_COUNT, sk, cipher_receiver).expect("init enclave")
+    });
+}
+
+fn build_filter() -> BloomStarFilter {
+    let mut filters = HashMap::new();
+    for prefix in 0..FIXED_PREFIX_MAX {
+        let filter_box = BloomFilterBox::with_rate(1_000_000, 1e-9);
+        filters.insert(prefix, Mutex::new(filter_box));
+    }
+    StarFilter::new(filters, FIXED_PREFIX_MAX)
+}
+
+fn build_route_only_filter() -> BloomStarFilter {
+    StarFilter::new(HashMap::new(), FIXED_PREFIX_MAX)
+}
+
+fn build_request() -> Vec<u8> {
+    let enclave = ENCLAVE.get().expect("enclave should be initialized");
+    let sender = SecureChannelClient::new(enclave.public_key()).expect("sender init");
+    let mut user = User::new(MAX_COUNT as u64, sender);
+    let mut rng = OsRng;
+
+    let (cred_request, shared_key) = user.request_credential(&mut rng);
+    let cred_cipher = enclave.issue_cred(&cred_request, &mut rng);
+    user.receive_credential(&cred_cipher, &shared_key);
+
+    let period = u64::from_be_bytes(constant_time_utils::time::current_period());
+    user.request_auth(0, period, &mut rng)
+        .expect("token request")
+}
+
+fn token_from_counter(counter: u64) -> Entry {
+    let mut token = [0u8; 32];
+    token[0..8].copy_from_slice(&counter.to_be_bytes());
+    token
+}
+
+fn bench_issue_token_and_route(c: &mut Criterion) {
+    init_enclave();
+
+    let filter = build_route_only_filter();
+    let request = build_request();
+
+    let mut group = c.benchmark_group("star_filter_issue_token_and_route");
+    group.throughput(Throughput::Elements(1));
+    group.bench_function("fixed", |b| {
+        b.iter(|| black_box(filter.issue_token_and_route(black_box(request.as_slice()))))
+    });
+    group.finish();
+}
+
+async fn run_check_duplication_batch(filter: Arc<BloomStarFilter>, batch_start: u64) {
+    let mut joins = JoinSet::new();
+
+    for worker in 0..FIXED_CONCURRENCY {
+        let filter = Arc::clone(&filter);
+        let worker_start = batch_start + (worker * PARALLEL_OPS_PER_WORKER) as u64;
+        joins.spawn(async move {
+            for offset in 0..PARALLEL_OPS_PER_WORKER {
+                let idx = worker_start + offset as u64;
+                let token = token_from_counter(idx);
+                let route = (idx as u32) % FIXED_PREFIX_MAX;
+                let result = filter
+                    .check_duplication(black_box(&token), black_box(route))
+                    .await;
+                let _ = black_box(result);
+            }
+        });
+    }
+
+    while let Some(joined) = joins.join_next().await {
+        joined.expect("join worker");
+    }
+}
+
+fn bench_check_duplication_parallel(c: &mut Criterion) {
+    init_enclave();
+
+    let rt = Builder::new_multi_thread()
+        .worker_threads(FIXED_CONCURRENCY)
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    let filter = Arc::new(build_filter());
+
+    let mut batch_start = 0u64;
+    let batch_ops = (FIXED_CONCURRENCY * PARALLEL_OPS_PER_WORKER) as u64;
+
+    let mut group = c.benchmark_group("star_filter_check_duplication_parallel");
+    group.sample_size(40);
+    group.measurement_time(Duration::from_secs(4));
+    group.throughput(Throughput::Elements(batch_ops));
+
+    group.bench_function("fixed", |b| {
+        let filter = Arc::clone(&filter);
+        b.to_async(&rt).iter(|| {
+            let filter = Arc::clone(&filter);
+            let start = batch_start;
+            batch_start = batch_start.wrapping_add(batch_ops);
+
+            async move {
+                run_check_duplication_batch(filter, start).await;
+            }
+        });
+    });
+
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_issue_token_and_route,
+    bench_check_duplication_parallel
+);
+criterion_main!(benches);
