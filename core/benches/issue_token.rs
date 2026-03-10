@@ -63,43 +63,6 @@ fn bench_issue_token_throughput(c: &mut Criterion) {
             black_box(token);
         });
     });
-    group.bench_function("4_threads_parallel", |b| {
-        let fixture_parallel = Arc::clone(&fixture_parallel);
-        b.iter_custom(|iters| {
-            const THREADS: u64 = 4;
-
-            let per_thread = iters / THREADS;
-            let remainder = iters % THREADS;
-            let start = Instant::now();
-
-            std::thread::scope(|scope| {
-                let mut handles = Vec::with_capacity(THREADS as usize);
-
-                for idx in 0..THREADS {
-                    let runs = per_thread + u64::from(idx < remainder);
-                    let fixture = Arc::clone(&fixture_parallel);
-                    handles.push(scope.spawn(move || {
-                        for _ in 0..runs {
-                            let token = fixture
-                                .enclave
-                                .issue_token(
-                                    black_box(fixture.envelope.as_slice()),
-                                    black_box(fixture.current_period),
-                                )
-                                .expect("token issuance failed");
-                            black_box(token);
-                        }
-                    }));
-                }
-
-                for handle in handles {
-                    handle.join().expect("worker thread panicked");
-                }
-            });
-
-            start.elapsed()
-        });
-    });
     group.finish();
 }
 
