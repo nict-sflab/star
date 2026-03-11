@@ -35,3 +35,7 @@ harness = false
 [[bench]]
 name = "e2e"
 harness = false
+
+[[bin]]
+name = "bench_mock"
+path = "benches/mock/mock_servers.rs"

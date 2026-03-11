@@ -29,7 +29,11 @@ const TLS_KEY_RELATIVE_PATH: &str = "examples/certs/server.key";
 const PREPARED_REQUEST_BUFFER: usize = 1_024 * 16;
 const API_SERVER_THREADS: usize = 1;
 const PROXY_SERVER_THREADS: usize = 2;
-const CLIENT_THREADS: usize = 24;
+const DEFAULT_CLIENT_THREADS: usize = 24;
+const E2E_API_ADDR_ENV: &str = "STAR_E2E_API_ADDR";
+const E2E_PROXY_ADDR_ENV: &str = "STAR_E2E_PROXY_ADDR";
+const E2E_TLS_CERT_PATH_ENV: &str = "STAR_E2E_TLS_CERT_PATH";
+const E2E_CLIENT_THREADS_ENV: &str = "STAR_E2E_CLIENT_THREADS";
 
 #[derive(Debug)]
 struct PinnedServerCertVerifier {
@@ -166,11 +170,15 @@ fn bench_tls_key_path() -> String {
 }
 
 fn proxy_url(proxy_addr: &str) -> String {
-    let port = proxy_addr
-        .rsplit(':')
-        .next()
-        .expect("proxy addr should include a port");
-    format!("https://localhost:{port}/")
+    if proxy_addr.starts_with("https://") || proxy_addr.starts_with("http://") {
+        if proxy_addr.ends_with('/') {
+            proxy_addr.to_string()
+        } else {
+            format!("{proxy_addr}/")
+        }
+    } else {
+        format!("https://{proxy_addr}/")
+    }
 }
 
 fn build_tls_agent(cert_path: &str) -> ureq::Agent {
@@ -203,6 +211,130 @@ struct BenchHarness {
     shutdown_tx: Option<oneshot::Sender<()>>,
     server_handle: Option<thread::JoinHandle<()>>,
     upstream_handle: Option<thread::JoinHandle<()>>,
+}
+
+struct RemoteHarness {
+    api_addr: String,
+    proxy_addr: String,
+    tls_cert_path: String,
+}
+
+enum BenchTarget {
+    Local(BenchHarness),
+    Remote(RemoteHarness),
+}
+
+impl BenchTarget {
+    fn start() -> Self {
+        let api_addr = std::env::var(E2E_API_ADDR_ENV).ok();
+        let proxy_addr = std::env::var(E2E_PROXY_ADDR_ENV).ok();
+
+        match (api_addr, proxy_addr) {
+            (Some(api_addr), Some(proxy_addr)) => {
+                let tls_cert_path =
+                    std::env::var(E2E_TLS_CERT_PATH_ENV).unwrap_or_else(|_| bench_tls_cert_path());
+                wait_for_api_ready(&api_addr);
+                wait_for_proxy_ready(&proxy_addr, &tls_cert_path);
+                println!(
+                    "use remote benchmark server: api={api_addr}, proxy={proxy_addr}, tls_cert_path={tls_cert_path}"
+                );
+                Self::Remote(RemoteHarness {
+                    api_addr,
+                    proxy_addr,
+                    tls_cert_path,
+                })
+            }
+            (None, None) => Self::Local(BenchHarness::start()),
+            _ => panic!(
+                "set both {E2E_API_ADDR_ENV} and {E2E_PROXY_ADDR_ENV} to use remote benchmark server"
+            ),
+        }
+    }
+
+    fn api_addr(&self) -> &str {
+        match self {
+            Self::Local(harness) => harness.api_addr.as_str(),
+            Self::Remote(harness) => harness.api_addr.as_str(),
+        }
+    }
+
+    fn proxy_addr(&self) -> &str {
+        match self {
+            Self::Local(harness) => harness.proxy_addr.as_str(),
+            Self::Remote(harness) => harness.proxy_addr.as_str(),
+        }
+    }
+
+    fn tls_cert_path(&self) -> &str {
+        match self {
+            Self::Local(harness) => harness.tls_cert_path.as_str(),
+            Self::Remote(harness) => harness.tls_cert_path.as_str(),
+        }
+    }
+}
+
+fn wait_for_api_ready(api_addr: &str) {
+    let public_key_url = format!("http://{api_addr}/star/public_key");
+    let mut api_ready = false;
+    let mut last_api_transport_err = None;
+    for _ in 0..STARTUP_RETRIES {
+        match ureq::get(&public_key_url).call() {
+            Ok(_) => {
+                api_ready = true;
+                break;
+            }
+            Err(ureq::Error::Transport(err)) => {
+                last_api_transport_err = Some(err.to_string());
+                thread::sleep(STARTUP_RETRY_DELAY);
+            }
+            Err(ureq::Error::Status(code, _)) => {
+                panic!("server failed to start cleanly: status {code}");
+            }
+        }
+    }
+    if !api_ready {
+        panic!(
+            "API did not become ready within startup timeout, last transport error: {:?}",
+            last_api_transport_err
+        );
+    }
+}
+
+fn wait_for_proxy_ready(proxy_addr: &str, tls_cert_path: &str) {
+    let ready_agent = build_tls_agent(tls_cert_path);
+    let ready_proxy_url = proxy_url(proxy_addr);
+    let mut last_proxy_transport_err = None;
+    for _ in 0..STARTUP_RETRIES {
+        match ready_agent
+            .get(&ready_proxy_url)
+            .set("Connection", "close")
+            .call()
+        {
+            Err(ureq::Error::Status(403, _)) => return,
+            Err(ureq::Error::Transport(err)) => {
+                last_proxy_transport_err = Some(err.to_string());
+                thread::sleep(STARTUP_RETRY_DELAY);
+            }
+            Err(ureq::Error::Status(code, _)) => {
+                panic!("proxy failed to start cleanly: status {code}");
+            }
+            Ok(_) => panic!("expected unauthorized probe request to be rejected"),
+        }
+    }
+
+    panic!(
+        "server did not become ready within startup timeout, last transport error: {:?}",
+        last_proxy_transport_err
+    );
+}
+
+fn e2e_client_threads() -> usize {
+    match std::env::var(E2E_CLIENT_THREADS_ENV) {
+        Ok(raw) => raw.parse::<usize>().unwrap_or_else(|err| {
+            panic!("invalid {E2E_CLIENT_THREADS_ENV} value {raw:?}: {err}")
+        }),
+        Err(_) => DEFAULT_CLIENT_THREADS,
+    }
 }
 
 impl BenchHarness {
@@ -248,70 +380,22 @@ impl BenchHarness {
             server.run(run_args);
         });
 
-        let public_key_url = format!("http://{api_addr}/star/public_key");
-        let mut api_ready = false;
-        let mut last_api_transport_err = None;
-        for _ in 0..STARTUP_RETRIES {
-            match ureq::get(&public_key_url).call() {
-                Ok(_) => {
-                    api_ready = true;
-                    break;
-                }
-                Err(ureq::Error::Transport(err)) => {
-                    last_api_transport_err = Some(err.to_string());
-                    thread::sleep(STARTUP_RETRY_DELAY);
-                }
-                Err(ureq::Error::Status(code, _)) => {
-                    panic!("server failed to start cleanly: status {code}");
-                }
-            }
-        }
-        if !api_ready {
-            panic!(
-                "API did not become ready within startup timeout, last transport error: {:?}",
-                last_api_transport_err
-            );
-        }
+        wait_for_api_ready(&api_addr);
+        wait_for_proxy_ready(&proxy_addr, &tls_cert_path);
 
-        let ready_agent = build_tls_agent(&tls_cert_path);
-        let ready_proxy_url = proxy_url(&proxy_addr);
-        let mut last_proxy_transport_err = None;
-        for _ in 0..STARTUP_RETRIES {
-            match ready_agent
-                .get(&ready_proxy_url)
-                .set("Connection", "close")
-                .call()
-            {
-                Err(ureq::Error::Status(403, _)) => {
-                    return Self {
-                        api_addr,
-                        proxy_addr,
-                        upstream_addr,
-                        tls_cert_path,
-                        prev_tls_cert,
-                        prev_tls_key,
-                        prev_api_threads,
-                        prev_proxy_threads,
-                        shutdown_tx: Some(shutdown_tx),
-                        server_handle: Some(server_handle),
-                        upstream_handle: Some(upstream_handle),
-                    };
-                }
-                Err(ureq::Error::Transport(err)) => {
-                    last_proxy_transport_err = Some(err.to_string());
-                    thread::sleep(STARTUP_RETRY_DELAY);
-                }
-                Err(ureq::Error::Status(code, _)) => {
-                    panic!("proxy failed to start cleanly: status {code}");
-                }
-                Ok(_) => panic!("expected unauthorized probe request to be rejected"),
-            }
+        Self {
+            api_addr,
+            proxy_addr,
+            upstream_addr,
+            tls_cert_path,
+            prev_tls_cert,
+            prev_tls_key,
+            prev_api_threads,
+            prev_proxy_threads,
+            shutdown_tx: Some(shutdown_tx),
+            server_handle: Some(server_handle),
+            upstream_handle: Some(upstream_handle),
         }
-
-        panic!(
-            "server did not become ready within startup timeout, last transport error: {:?}",
-            last_proxy_transport_err
-        );
     }
 }
 
@@ -550,19 +634,20 @@ impl Drop for ClientWorkers {
 }
 
 fn bench_star_e2e_throughput(c: &mut Criterion) {
-    let harness = BenchHarness::start();
+    let target = BenchTarget::start();
+    let client_threads = e2e_client_threads();
     let clients = ClientWorkers::start(
-        &harness.api_addr,
-        &harness.proxy_addr,
-        &harness.tls_cert_path,
-        CLIENT_THREADS,
+        target.api_addr(),
+        target.proxy_addr(),
+        target.tls_cert_path(),
+        client_threads,
     );
     clients.run_batch();
 
     let mut group = c.benchmark_group("star_e2e_proxy_throughput");
     group.sample_size(20);
     group.measurement_time(Duration::from_secs(8));
-    group.throughput(Throughput::Elements(CLIENT_THREADS as u64));
+    group.throughput(Throughput::Elements(client_threads as u64));
     group.bench_function("authenticated_request", |b| {
         b.iter(|| clients.run_batch());
     });
