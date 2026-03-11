@@ -26,10 +26,10 @@ const STARTUP_RETRIES: u32 = 100;
 const STARTUP_RETRY_DELAY: Duration = Duration::from_millis(50);
 const TLS_CERT_RELATIVE_PATH: &str = "examples/certs/server.crt";
 const TLS_KEY_RELATIVE_PATH: &str = "examples/certs/server.key";
-const PREPARED_REQUEST_BUFFER: usize = 1_024;
-const API_SERVER_THREADS: usize = 2;
-const PROXY_SERVER_THREADS: usize = 4;
-const CLIENT_THREADS: usize = 8;
+const PREPARED_REQUEST_BUFFER: usize = 1_024 * 16;
+const API_SERVER_THREADS: usize = 1;
+const PROXY_SERVER_THREADS: usize = 2;
+const CLIENT_THREADS: usize = 24;
 
 #[derive(Debug)]
 struct PinnedServerCertVerifier {
@@ -236,8 +236,8 @@ impl BenchHarness {
                 &server_api_addr,
                 &server_proxy_addr,
                 &server_upstream_addr,
-                all_prefix(1),
-                1,
+                all_prefix(4),
+                4,
             );
             let shutdown = TestShutdown {
                 rx: AsyncMutex::new(shutdown_rx),
