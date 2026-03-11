@@ -1,4 +1,4 @@
-use pingora::{server::Server, tls::listeners::TlsSettings};
+use pingora::{listeners::tls::TlsSettings, server::Server};
 use pingora_proxy::http_proxy_service;
 use pingora_web::App as WebApp;
 use rand_core::{OsRng, RngCore};
@@ -6,6 +6,7 @@ use simple_filter_box::hashmap::HashMapFilterBox;
 use star_core::serv::enclave::Enclave;
 use std::collections::HashMap;
 use std::env;
+use std::sync::Once;
 use tokio::sync::Mutex;
 
 use crate::filter::StarFilter;
@@ -23,6 +24,7 @@ pub mod filter;
 pub mod proxy;
 
 const MAX_COUNT: u32 = 10;
+static RUSTLS_PROVIDER_INIT: Once = Once::new();
 
 pub fn all_prefix(max: u32) -> Vec<u32> {
     (0u32..max).collect()
@@ -32,6 +34,17 @@ fn env_or_default(name: &str, default: &str) -> String {
     env::var(name).unwrap_or_else(|_| default.to_string())
 }
 
+fn env_usize(name: &str) -> Option<usize> {
+    env::var(name).ok()?.parse::<usize>().ok()
+}
+
+fn ensure_rustls_provider() {
+    RUSTLS_PROVIDER_INIT.call_once(|| {
+        // Rustls 0.23 may have multiple providers compiled in transitively; choose one explicitly.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
+
 pub fn build_server(
     api_addr: &str,
     proxy_addr: &str,
@@ -39,6 +52,8 @@ pub fn build_server(
     prefixes: Vec<u32>,
     max_prefix: u32,
 ) -> Server {
+    ensure_rustls_provider();
+
     ENCLAVE.get_or_init(|| {
         let mut rng = OsRng;
         let mut cipher_receiver = [0u8; 32];
@@ -57,6 +72,7 @@ pub fn build_server(
     api_app.post_fn(DEFAULT_REGISTER_API, issue_api);
 
     let mut api_svc = api_app.to_service("api");
+    api_svc.threads = env_usize("STAR_API_THREADS");
     api_svc.add_tcp(api_addr);
     server.add_service(api_svc);
 
@@ -76,6 +92,7 @@ pub fn build_server(
             upstream_addr: upstream_addr.to_string(),
         },
     );
+    proxy_svc.threads = env_usize("STAR_PROXY_THREADS");
 
     let tls_cert_path = env_or_default("TLS_CERT_PATH", "");
     let tls_key_path = env_or_default("TLS_KEY_PATH", "");
