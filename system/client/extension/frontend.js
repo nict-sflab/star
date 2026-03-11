@@ -101,7 +101,6 @@ const injectLibrary = () => {
   const s = document.createElement("script");
   s.id = "star-extension-lib";
   s.src = chrome.runtime.getURL("lib/star.js");
-  // Avoid module to bypass CORS restrictions and expose globals to the page.
   s.onload = () => s.remove();
   (document.head || document.documentElement).append(s);
 };
@@ -138,14 +137,12 @@ window.addEventListener("message", async (e) => {
     let counter = 0n
 
 
-    console.log("{} = {}", last, period)
+    console.log(`period: ${last} = ${period}`)
 
     if (last == period) {
       counter = await readCounter()
-      console.log("read! {}", counter)
-
+      console.log(`counter: ${counter}`)
     }
-
 
     const proof = await wasm.request_authenticate(counter, period, cred);
     const routeIndex = await wasm.route(counter, period, cred, 1);
@@ -154,7 +151,7 @@ window.addEventListener("message", async (e) => {
     await setStorage(STORAGE_KEYS.counter, (counter + 1n).toString());
     await setStorage(STORAGE_KEYS.period, period.toString());
 
-    console.log("extension:", proof, counter, period, cred);
+    // console.log("extension:", proof, counter, period, cred);
 
     window.postMessage({ type: "STAR_RESULT", proof: proof, route: route }, "*");
   } catch (err) {
