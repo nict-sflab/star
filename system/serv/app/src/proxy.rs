@@ -45,8 +45,6 @@ impl<T: FilterBox + Send> ProxyHttp for StarProxy<T> {
         #[cfg(target_feature = "only-proxy")]
         return Ok(true);
 
-        println!("method: {}\n", session.req_header().method);
-
         if session.req_header().method == "OPTIONS" {
             return exit_filter(204, session).await;
         }
