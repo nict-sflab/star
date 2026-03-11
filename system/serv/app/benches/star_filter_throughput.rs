@@ -69,7 +69,7 @@ fn bench_issue_token_and_route(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("star_filter_issue_token_and_route");
     group.throughput(Throughput::Elements(1));
-    group.bench_function("fixed", |b| {
+    group.bench_function("fixed_per_op", |b| {
         b.iter(|| black_box(filter.issue_token_and_route(black_box(request.as_slice()))))
     });
     group.finish();
@@ -133,7 +133,7 @@ fn bench_check_duplication_parallel(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(4));
     group.throughput(Throughput::Elements(batch_ops));
 
-    group.bench_function("fixed", |b| {
+    group.bench_function("fixed_batch_256_ops_per_iter", |b| {
         let filter = Arc::clone(&filter);
         b.to_async(&rt).iter(|| {
             let filter = Arc::clone(&filter);
@@ -156,18 +156,20 @@ fn bench_check_duplication_single_thread(c: &mut Criterion) {
         .enable_all()
         .build()
         .expect("tokio runtime");
-    let filter = Arc::new(build_filter());
+    let batch_filter = Arc::new(build_filter());
+    let per_op_filter = Arc::new(build_filter());
 
     let mut batch_start = 0u64;
     let batch_ops = FIXED_CONCURRENCY * PARALLEL_OPS_PER_WORKER;
+    let mut per_op_start = 0u64;
 
     let mut group = c.benchmark_group("star_filter_check_duplication_single_thread");
     group.sample_size(40);
     group.measurement_time(Duration::from_secs(4));
-    group.throughput(Throughput::Elements(batch_ops as u64));
 
-    group.bench_function("fixed", |b| {
-        let filter = Arc::clone(&filter);
+    group.throughput(Throughput::Elements(batch_ops as u64));
+    group.bench_function("fixed_batch_256_ops_per_iter", |b| {
+        let filter = Arc::clone(&batch_filter);
         b.to_async(&rt).iter(|| {
             let filter = Arc::clone(&filter);
             let start = batch_start;
@@ -175,6 +177,20 @@ fn bench_check_duplication_single_thread(c: &mut Criterion) {
 
             async move {
                 run_check_duplication_single_batch(filter, start, batch_ops).await;
+            }
+        });
+    });
+
+    group.throughput(Throughput::Elements(1));
+    group.bench_function("fixed_per_op", |b| {
+        let filter = Arc::clone(&per_op_filter);
+        b.to_async(&rt).iter(|| {
+            let filter = Arc::clone(&filter);
+            let start = per_op_start;
+            per_op_start = per_op_start.wrapping_add(1);
+
+            async move {
+                run_check_duplication_single_batch(filter, start, 1).await;
             }
         });
     });
