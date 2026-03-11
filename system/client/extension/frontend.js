@@ -2,6 +2,7 @@ const API_HOST = "http://localhost:8080";
 
 const ROUTE_MAP = {
   0: "8081", 
+  1: "8081", 
 }
 
 const STORAGE_KEYS = {

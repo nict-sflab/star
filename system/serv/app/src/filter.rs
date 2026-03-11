@@ -14,6 +14,7 @@ pub struct StarFilter<T: FilterBox + Send> {
 #[derive(Debug)]
 pub enum StarFilterErrorStatus {
     InvalidToken,
+    InvalidRoute,
     DuplicatedToken,
     Internal,
 }
@@ -22,6 +23,7 @@ impl StarFilterErrorStatus {
     pub fn status_code(&self) -> u16 {
         match self {
             Self::InvalidToken => 401,
+            Self::InvalidRoute => 421,
             Self::DuplicatedToken => 429,
             Self::Internal => 500,
         }
@@ -75,7 +77,8 @@ impl<T: FilterBox + Send> StarFilter<T> {
         let filter = self
             .filters
             .get(&route)
-            .ok_or(StarFilterErrorStatus::Internal)?;
+            .ok_or(StarFilterErrorStatus::InvalidRoute)?;
+
         let mut filter_box = filter.lock().await;
         let is_new = filter_box.test(token);
         if is_new {
