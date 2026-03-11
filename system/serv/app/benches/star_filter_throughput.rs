@@ -2,14 +2,14 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 use rand_core::{OsRng, RngCore};
-use simple_filter_box::{bloom_filter::bloom_filter::BloomFilterBox, core::Entry};
+use simple_filter_box::{hashmap::HashMapFilterBox, core::Entry};
 use star_app::{core::ENCLAVE, filter::StarFilter};
 use star_core::{
     client::User, secure_channel::client::SecureChannelClient, serv::enclave::Enclave,
 };
 use tokio::{runtime::Builder, sync::Mutex, task::JoinSet};
 
-type BloomStarFilter = StarFilter<BloomFilterBox>;
+type HashMapStarFilter = StarFilter<HashMapFilterBox>;
 
 const MAX_COUNT: u32 = 1_000_000;
 const PARALLEL_OPS_PER_WORKER: usize = 64;
@@ -27,16 +27,16 @@ fn init_enclave() {
     });
 }
 
-fn build_filter() -> BloomStarFilter {
+fn build_filter() -> HashMapStarFilter {
     let mut filters = HashMap::new();
     for prefix in 0..FIXED_PREFIX_MAX {
-        let filter_box = BloomFilterBox::with_rate(1_000_000, 1e-9);
+        let filter_box = HashMapFilterBox::new();
         filters.insert(prefix, Mutex::new(filter_box));
     }
     StarFilter::new(filters, FIXED_PREFIX_MAX)
 }
 
-fn build_route_only_filter() -> BloomStarFilter {
+fn build_route_only_filter() -> HashMapStarFilter {
     StarFilter::new(HashMap::new(), FIXED_PREFIX_MAX)
 }
 
@@ -75,7 +75,7 @@ fn bench_issue_token_and_route(c: &mut Criterion) {
     group.finish();
 }
 
-async fn run_check_duplication_batch(filter: Arc<BloomStarFilter>, batch_start: u64) {
+async fn run_check_duplication_batch(filter: Arc<HashMapStarFilter>, batch_start: u64) {
     let mut joins = JoinSet::new();
 
     for worker in 0..FIXED_CONCURRENCY {

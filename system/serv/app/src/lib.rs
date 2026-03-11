@@ -2,7 +2,7 @@ use pingora::{server::Server, tls::listeners::TlsSettings};
 use pingora_proxy::http_proxy_service;
 use pingora_web::App as WebApp;
 use rand_core::{OsRng, RngCore};
-use simple_filter_box::bloom_filter::bloom_filter::BloomFilterBox;
+use simple_filter_box::hashmap::HashMapFilterBox;
 use star_core::serv::enclave::Enclave;
 use std::collections::HashMap;
 use std::env;
@@ -63,7 +63,7 @@ pub fn build_server(
     let mut filter_boxes = HashMap::new();
 
     for prefix in prefixes {
-        let filter_box: BloomFilterBox = BloomFilterBox::with_rate(1_000_000, 1e-9);
+        let filter_box = HashMapFilterBox::new();
         filter_boxes.insert(prefix, Mutex::new(filter_box));
     }
 
