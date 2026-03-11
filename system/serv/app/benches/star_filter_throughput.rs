@@ -99,6 +99,22 @@ async fn run_check_duplication_batch(filter: Arc<HashMapStarFilter>, batch_start
     }
 }
 
+async fn run_check_duplication_single_batch(
+    filter: Arc<HashMapStarFilter>,
+    batch_start: u64,
+    batch_ops: usize,
+) {
+    for offset in 0..batch_ops {
+        let idx = batch_start + offset as u64;
+        let token = token_from_counter(idx);
+        let route = (idx as u32) % FIXED_PREFIX_MAX;
+        let result = filter
+            .check_duplication(black_box(&token), black_box(route))
+            .await;
+        let _ = black_box(result);
+    }
+}
+
 fn bench_check_duplication_parallel(c: &mut Criterion) {
     init_enclave();
 
@@ -133,9 +149,43 @@ fn bench_check_duplication_parallel(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_check_duplication_single_thread(c: &mut Criterion) {
+    init_enclave();
+
+    let rt = Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    let filter = Arc::new(build_filter());
+
+    let mut batch_start = 0u64;
+    let batch_ops = FIXED_CONCURRENCY * PARALLEL_OPS_PER_WORKER;
+
+    let mut group = c.benchmark_group("star_filter_check_duplication_single_thread");
+    group.sample_size(40);
+    group.measurement_time(Duration::from_secs(4));
+    group.throughput(Throughput::Elements(batch_ops as u64));
+
+    group.bench_function("fixed", |b| {
+        let filter = Arc::clone(&filter);
+        b.to_async(&rt).iter(|| {
+            let filter = Arc::clone(&filter);
+            let start = batch_start;
+            batch_start = batch_start.wrapping_add(batch_ops as u64);
+
+            async move {
+                run_check_duplication_single_batch(filter, start, batch_ops).await;
+            }
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_issue_token_and_route,
-    bench_check_duplication_parallel
+    bench_check_duplication_parallel,
+    bench_check_duplication_single_thread
 );
 criterion_main!(benches);
