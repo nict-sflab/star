@@ -63,7 +63,7 @@ pub fn build_server(
     let mut filter_boxes = HashMap::new();
 
     for prefix in prefixes {
-        let filter_box: BloomFilterBox = BloomFilterBox::with_rate(1, 1e-9);
+        let filter_box: BloomFilterBox = BloomFilterBox::with_rate(1_000_000, 1e-9);
         filter_boxes.insert(prefix, Mutex::new(filter_box));
     }
 
