@@ -1,19 +1,24 @@
-let hasCalled = false;
+const authStar = () =>
+  new Promise((resolve) => {
+    const requestId = crypto.randomUUID();
 
-const authStar = () => {
-  return new Promise((resolve, reject) => {
     const onMessage = (e) => {
       if (e.source !== window) return;
       if (e.data?.type !== "STAR_RESULT") return;
-      console.log("star: ", e.data);
+      if (e.data?.requestId !== requestId) return;
+
+      window.removeEventListener("message", onMessage);
       resolve(e.data);
     };
 
-    if (!hasCalled) {
-      window.addEventListener("message", onMessage);
-      hasCalled = true;
-    }
+    window.addEventListener("message", onMessage);
 
-    window.postMessage({ type: "STAR", payload: {} }, "*");
+    window.postMessage(
+      {
+        type: "STAR",
+        requestId,
+        payload: {},
+      },
+      "*"
+    );
   });
-};

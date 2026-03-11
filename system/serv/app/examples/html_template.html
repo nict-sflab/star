@@ -9,16 +9,19 @@
   <script>
     const submit = async () => {
       const star = await authStar();
+      console.log("auth headers:", star.proof)
+      
       const headers = new Headers({
         "Content-Type": "text/xml",
         "X-STAR": star.proof,
       });
+
       const resp = await fetch(`http://localhost:${star.route}/`, {
         method: "POST",
         headers,
       })
 
-      console.log(resp)
+      console.log("response:", resp)
       const text = await resp.text()
       alert(text)
     }

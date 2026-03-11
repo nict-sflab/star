@@ -2,7 +2,6 @@ const API_HOST = "http://localhost:8080";
 
 const ROUTE_MAP = {
   0: "8081", 
-  1: "8081" 
 }
 
 const STORAGE_KEYS = {
@@ -126,6 +125,7 @@ if (document.readyState === "loading") {
 window.addEventListener("message", async (e) => {
   if (e.source !== window) return;
   if (e.data?.type !== "STAR") return;
+  
 
   try {
     await initStar();
@@ -153,11 +153,11 @@ window.addEventListener("message", async (e) => {
 
     // console.log("extension:", proof, counter, period, cred);
 
-    window.postMessage({ type: "STAR_RESULT", proof: proof, route: route }, "*");
+    window.postMessage({ type: "STAR_RESULT", proof: proof, route: route, requestId: e.data?.requestId }, "*");
   } catch (err) {
     console.error("STAR auth failed:", err);
     window.postMessage(
-      { type: "STAR_RESULT", error: true, message: String(err?.message ?? err) },
+      { type: "STAR_RESULT", error: true, message: String(err?.message ?? err), requestId: e.data.requestId },
       "*"
     );
   }
