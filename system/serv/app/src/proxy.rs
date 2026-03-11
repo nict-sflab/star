@@ -42,6 +42,9 @@ impl<T: FilterBox + Send> ProxyHttp for StarProxy<T> {
         session: &mut Session,
         _ctx: &mut Self::CTX,
     ) -> pingora::Result<bool> {
+        #[cfg(target_feature = "only-proxy")]
+        return Ok(true);
+
         println!("method: {}\n", session.req_header().method);
 
         if session.req_header().method == "OPTIONS" {
