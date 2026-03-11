@@ -13,7 +13,21 @@ pub struct StarFilter<T: FilterBox + Send> {
 
 #[derive(Debug)]
 pub enum StarFilterErrorStatus {
-    OtherError,
+    InvalidToken,
+    InvalidRoute,
+    DuplicatedToken,
+    Internal,
+}
+
+impl StarFilterErrorStatus {
+    pub fn status_code(&self) -> u16 {
+        match self {
+            Self::InvalidToken => 401,
+            Self::InvalidRoute => 421,
+            Self::DuplicatedToken => 429,
+            Self::Internal => 500,
+        }
+    }
 }
 
 impl<T: FilterBox + Send> StarFilter<T> {
@@ -35,19 +49,19 @@ impl<T: FilterBox + Send> StarFilter<T> {
         &self,
         request: &[u8],
     ) -> Result<(Entry, u32), StarFilterErrorStatus> {
-        let enclave = ENCLAVE.get().ok_or(StarFilterErrorStatus::OtherError)?;
+        let enclave = ENCLAVE.get().ok_or(StarFilterErrorStatus::Internal)?;
         let current_period = constant_time_utils::time::current_period();
 
         let token_bytes = enclave
             .issue_token(request, current_period)
-            .map_err(|_| StarFilterErrorStatus::OtherError)?;
+            .map_err(|_| StarFilterErrorStatus::InvalidToken)?;
         if token_bytes.len() < 32 {
-            return Err(StarFilterErrorStatus::OtherError);
+            return Err(StarFilterErrorStatus::InvalidToken);
         }
 
         let token_entry: Entry = token_bytes[..32]
             .try_into()
-            .map_err(|_| StarFilterErrorStatus::OtherError)?;
+            .map_err(|_| StarFilterErrorStatus::InvalidToken)?;
 
         let token = Token::new(token_entry);
         let route = token.route(self.prefix_max);
@@ -63,19 +77,20 @@ impl<T: FilterBox + Send> StarFilter<T> {
         let filter = self
             .filters
             .get(&route)
-            .ok_or(StarFilterErrorStatus::OtherError)?;
+            .ok_or(StarFilterErrorStatus::InvalidRoute)?;
+
         let mut filter_box = filter.lock().await;
         let is_new = filter_box.test(token);
         if is_new {
             filter_box
                 .insert(token)
-                .map_err(|_| StarFilterErrorStatus::OtherError)?;
+                .map_err(|_| StarFilterErrorStatus::Internal)?;
         }
 
         if is_new {
             Ok(())
         } else {
-            Err(StarFilterErrorStatus::OtherError)
+            Err(StarFilterErrorStatus::DuplicatedToken)
         }
     }
 }

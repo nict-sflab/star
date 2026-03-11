@@ -2,7 +2,7 @@ const API_HOST = "http://localhost:8080";
 
 const ROUTE_MAP = {
   0: "8081", 
-  1: "8081" 
+  1: "8081", 
 }
 
 const STORAGE_KEYS = {
@@ -101,7 +101,6 @@ const injectLibrary = () => {
   const s = document.createElement("script");
   s.id = "star-extension-lib";
   s.src = chrome.runtime.getURL("lib/star.js");
-  // Avoid module to bypass CORS restrictions and expose globals to the page.
   s.onload = () => s.remove();
   (document.head || document.documentElement).append(s);
 };
@@ -127,6 +126,7 @@ if (document.readyState === "loading") {
 window.addEventListener("message", async (e) => {
   if (e.source !== window) return;
   if (e.data?.type !== "STAR") return;
+  
 
   try {
     await initStar();
@@ -138,14 +138,12 @@ window.addEventListener("message", async (e) => {
     let counter = 0n
 
 
-    console.log("{} = {}", last, period)
+    console.log(`period: ${last} = ${period}`)
 
     if (last == period) {
       counter = await readCounter()
-      console.log("read! {}", counter)
-
+      console.log(`counter: ${counter}`)
     }
-
 
     const proof = await wasm.request_authenticate(counter, period, cred);
     const routeIndex = await wasm.route(counter, period, cred, 1);
@@ -154,13 +152,13 @@ window.addEventListener("message", async (e) => {
     await setStorage(STORAGE_KEYS.counter, (counter + 1n).toString());
     await setStorage(STORAGE_KEYS.period, period.toString());
 
-    console.log("extension:", proof, counter, period, cred);
+    // console.log("extension:", proof, counter, period, cred);
 
-    window.postMessage({ type: "STAR_RESULT", proof: proof, route: route }, "*");
+    window.postMessage({ type: "STAR_RESULT", proof: proof, route: route, requestId: e.data?.requestId }, "*");
   } catch (err) {
     console.error("STAR auth failed:", err);
     window.postMessage(
-      { type: "STAR_RESULT", error: true, message: String(err?.message ?? err) },
+      { type: "STAR_RESULT", error: true, message: String(err?.message ?? err), requestId: e.data.requestId },
       "*"
     );
   }

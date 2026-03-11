@@ -110,6 +110,12 @@ fn test_all() {
     });
     assert_eq!(body.trim(), "OK");
 
+    match ureq::get(&proxy_url).set("X-STAR", token_b64.as_str()).call() {
+        Err(ureq::Error::Status(code, _)) => assert_eq!(code, 429),
+        Ok(_) => panic!("expected duplicate STAR token to be rejected"),
+        Err(ureq::Error::Transport(err)) => panic!("http request failed: {err}"),
+    }
+
     let _ = shutdown_tx.send(());
     let _ = server_handle.join();
     let _ = upstream_handle.join();

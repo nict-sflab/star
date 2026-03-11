@@ -70,7 +70,7 @@ impl<T: FilterBox + Send> ProxyHttp for StarProxy<T> {
 
         match self.filter.filter(decoded.as_slice()).await {
             Ok(_) => Ok(false),
-            Err(_) => exit_filter(403, session).await,
+            Err(err) => exit_filter(err.status_code(), session).await,
         }
     }
 
