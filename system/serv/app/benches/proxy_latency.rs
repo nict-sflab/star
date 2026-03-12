@@ -39,6 +39,8 @@ const TLS_KEY_RELATIVE_PATH: &str = "examples/certs/server.key";
 const ENCLAVE_MAX_COUNT: u32 = 1_000_000;
 const MAX_COUNT_PER_CREDENTIAL: u64 = ENCLAVE_MAX_COUNT as u64;
 
+const PROXY_ONLY : bool = false;
+
 type BenchFilter = StarFilter<HashMapFilterBox>;
 
 fn build_star_proxy(upstream_addr: String) -> StarProxy<HashMapFilterBox> {
@@ -91,6 +93,10 @@ impl ProxyHttp for StarLatencyProxy {
     where
         Self::CTX: Send + Sync,
     {
+        if PROXY_ONLY {
+            return Ok(false);
+        }
+
         self.inner.request_filter(session, &mut ctx.inner_ctx).await
     }
 
