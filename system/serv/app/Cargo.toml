@@ -40,7 +40,7 @@ name = "e2e"
 harness = false
 
 [[bench]]
-name = "proxy_latency"
+name = "proxy"
 harness = false
 
 [[bin]]
