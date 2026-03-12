@@ -4,7 +4,6 @@ use pingora_http::ResponseHeader;
 use pingora_proxy::{ProxyHttp, Session};
 use pingora_web::StatusCode;
 use std::time::Duration;
-
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 
 use simple_filter_box::core::FilterBox;
@@ -42,9 +41,6 @@ impl<T: FilterBox + Send> ProxyHttp for StarProxy<T> {
         session: &mut Session,
         _ctx: &mut Self::CTX,
     ) -> pingora::Result<bool> {
-        #[cfg(target_feature = "only-proxy")]
-        return Ok(true);
-
         if session.req_header().method == "OPTIONS" {
             return exit_filter(204, session).await;
         }
