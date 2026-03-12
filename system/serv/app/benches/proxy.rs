@@ -1,7 +1,11 @@
+mod common;
+
 use async_trait::async_trait;
-use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
+use common::retry::{StartupProbe, wait_until_ready};
+use common::tls::{build_pinned_tls_agent, ensure_rustls_ring_provider};
 use constant_time_utils::time as ct_time;
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use pingora::listeners::tls::TlsSettings;
 use pingora::server::Server;
 use pingora::upstreams::peer::HttpPeer;
@@ -16,20 +20,12 @@ use star_core::{
     client::User, secure_channel::client::SecureChannelClient, serv::enclave::Enclave,
 };
 use std::collections::HashMap;
-use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::Arc;
 use std::sync::mpsc;
-use std::sync::Once;
 use std::thread;
 use std::time::{Duration, SystemTime};
 use tokio::sync::Mutex;
-use ureq::rustls::client::danger::{
-    HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier,
-};
-use ureq::rustls::pki_types::pem::PemObject;
-use ureq::rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 
 const STARTUP_RETRIES: u32 = 100;
 const STARTUP_RETRY_DELAY: Duration = Duration::from_millis(50);
@@ -39,7 +35,7 @@ const TLS_KEY_RELATIVE_PATH: &str = "examples/certs/server.key";
 const ENCLAVE_MAX_COUNT: u32 = 1_000_000;
 const MAX_COUNT_PER_CREDENTIAL: u64 = ENCLAVE_MAX_COUNT as u64;
 
-const PROXY_ONLY : bool = false;
+const PROXY_ONLY : bool = true;
 
 type BenchFilter = StarFilter<HashMapFilterBox>;
 
@@ -217,111 +213,12 @@ impl TokenGenerator {
     }
 }
 
-fn ensure_rustls_provider() {
-    static INIT: Once = Once::new();
-    INIT.call_once(|| {
-        let _ = rustls::crypto::ring::default_provider().install_default();
-    });
-}
-
-#[derive(Debug)]
-struct PinnedServerCertVerifier {
-    expected_leaf_der: Vec<u8>,
-}
-
-impl ServerCertVerifier for PinnedServerCertVerifier {
-    fn verify_server_cert(
-        &self,
-        end_entity: &CertificateDer<'_>,
-        _intermediates: &[CertificateDer<'_>],
-        _server_name: &ServerName<'_>,
-        _ocsp_response: &[u8],
-        _now: UnixTime,
-    ) -> Result<ServerCertVerified, ureq::rustls::Error> {
-        if end_entity.as_ref() == self.expected_leaf_der.as_slice() {
-            Ok(ServerCertVerified::assertion())
-        } else {
-            Err(ureq::rustls::Error::General(
-                "unexpected TLS server certificate".to_string(),
-            ))
-        }
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &ureq::rustls::DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, ureq::rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &ureq::rustls::DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, ureq::rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<ureq::rustls::SignatureScheme> {
-        vec![
-            ureq::rustls::SignatureScheme::RSA_PKCS1_SHA1,
-            ureq::rustls::SignatureScheme::RSA_PKCS1_SHA256,
-            ureq::rustls::SignatureScheme::RSA_PKCS1_SHA384,
-            ureq::rustls::SignatureScheme::RSA_PKCS1_SHA512,
-            ureq::rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
-            ureq::rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
-            ureq::rustls::SignatureScheme::ECDSA_NISTP521_SHA512,
-            ureq::rustls::SignatureScheme::RSA_PSS_SHA256,
-            ureq::rustls::SignatureScheme::RSA_PSS_SHA384,
-            ureq::rustls::SignatureScheme::RSA_PSS_SHA512,
-            ureq::rustls::SignatureScheme::ED25519,
-            ureq::rustls::SignatureScheme::ED448,
-        ]
-    }
-}
-
 fn cert_path() -> String {
-    format!("{}/{}", env!("CARGO_MANIFEST_DIR"), TLS_CERT_RELATIVE_PATH)
+    common::manifest_path(TLS_CERT_RELATIVE_PATH)
 }
 
 fn key_path() -> String {
-    format!("{}/{}", env!("CARGO_MANIFEST_DIR"), TLS_KEY_RELATIVE_PATH)
-}
-
-fn load_first_cert_der(path: &str) -> Vec<u8> {
-    let cert_pem = fs::read(path).expect("read TLS cert");
-    let mut certs = CertificateDer::pem_slice_iter(&cert_pem)
-        .collect::<Result<Vec<_>, _>>()
-        .expect("parse TLS cert PEM");
-    certs
-        .drain(..)
-        .next()
-        .expect("TLS cert PEM did not contain any certificates")
-        .as_ref()
-        .to_vec()
-}
-
-fn build_tls_agent(cert_pem_path: &str) -> ureq::Agent {
-    ensure_rustls_provider();
-
-    let verifier = PinnedServerCertVerifier {
-        expected_leaf_der: load_first_cert_der(cert_pem_path),
-    };
-    let tls_config = ureq::rustls::ClientConfig::builder()
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(verifier))
-        .with_no_client_auth();
-
-    ureq::AgentBuilder::new()
-        .tls_config(Arc::new(tls_config))
-        .max_idle_connections(0)
-        .max_idle_connections_per_host(0)
-        .timeout_connect(Duration::from_secs(2))
-        .timeout_read(Duration::from_secs(2))
-        .build()
+    common::manifest_path(TLS_KEY_RELATIVE_PATH)
 }
 
 fn find_headers_end(buf: &[u8]) -> Option<usize> {
@@ -375,7 +272,7 @@ fn spawn_proxy(
     latency_tx: mpsc::Sender<u64>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        ensure_rustls_provider();
+        ensure_rustls_ring_provider();
         let mut server = Server::new(None).expect("create pingora server");
         server.bootstrap();
 
@@ -431,7 +328,7 @@ impl BenchHarness {
         );
 
         let proxy_url = format!("https://{proxy_addr}/");
-        let agent = build_tls_agent(&cert_pem_path);
+        let agent = build_pinned_tls_agent(&cert_pem_path, Duration::from_secs(2));
 
         let mut harness = Self {
             proxy_url,
@@ -469,37 +366,36 @@ impl BenchHarness {
     }
 
     fn wait_until_ready(&mut self) {
-        let mut last_reason = None;
-        for _ in 0..STARTUP_RETRIES {
-            let token = self.token_generator.next_token();
-            let result = self
-                .agent
-                .get(&self.proxy_url)
-                .set("Connection", "close")
-                .set("X-STAR", &token)
-                .call();
-            match result {
-                Ok(response) => {
-                    let body = response.into_string().expect("read startup body");
-                    if body.trim() == "OK" {
-                        let _ = self.latency_rx.recv_timeout(Duration::from_secs(2));
-                        return;
+        wait_until_ready(
+            "proxy benchmark service",
+            STARTUP_RETRIES,
+            STARTUP_RETRY_DELAY,
+            || {
+                let token = self.token_generator.next_token();
+                let result = self
+                    .agent
+                    .get(&self.proxy_url)
+                    .set("Connection", "close")
+                    .set("X-STAR", &token)
+                    .call();
+                match result {
+                    Ok(response) => {
+                        let body = response.into_string().expect("read startup body");
+                        if body.trim() == "OK" {
+                            let _ = self.latency_rx.recv_timeout(Duration::from_secs(2));
+                            StartupProbe::Ready
+                        } else {
+                            StartupProbe::Retry(format!("unexpected startup body: {body:?}"))
+                        }
                     }
-                    last_reason = Some(format!("unexpected startup body: {body:?}"));
+                    Err(ureq::Error::Status(code, _)) => {
+                        StartupProbe::Retry(format!("startup status error: {code}"))
+                    }
+                    Err(ureq::Error::Transport(err)) => {
+                        StartupProbe::Retry(format!("startup transport error: {err}"))
+                    }
                 }
-                Err(ureq::Error::Status(code, _)) => {
-                    last_reason = Some(format!("startup status error: {code}"));
-                }
-                Err(ureq::Error::Transport(err)) => {
-                    last_reason = Some(format!("startup transport error: {err}"));
-                }
-            }
-            thread::sleep(STARTUP_RETRY_DELAY);
-        }
-
-        panic!(
-            "proxy benchmark service did not become ready in time, last reason: {:?}",
-            last_reason
+            },
         );
     }
 
