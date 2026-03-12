@@ -23,7 +23,7 @@ use std::sync::Arc;
 use std::sync::mpsc;
 use std::sync::Once;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use tokio::sync::Mutex;
 use ureq::rustls::client::danger::{
     HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier,
@@ -125,9 +125,25 @@ impl ProxyHttp for StarLatencyProxy {
         Self::CTX: Send + Sync,
     {
         self.inner.logging(session, e, &mut ctx.inner_ctx).await;
-        let elapsed_ns = ctx.start.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
+        let elapsed_ns = downstream_connection_elapsed_ns(session)
+            .unwrap_or_else(|| ctx.start.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64);
         let _ = self.latency_tx.send(elapsed_ns);
     }
+}
+
+fn downstream_connection_elapsed_ns(session: &Session) -> Option<u64> {
+    let established_at = session
+        .as_downstream()
+        .digest()?
+        .timing_digest
+        .iter()
+        .flatten()
+        .map(|timing| timing.established_ts)
+        .filter(|ts| *ts != SystemTime::UNIX_EPOCH)
+        .min()?;
+
+    let elapsed = SystemTime::now().duration_since(established_at).ok()?;
+    Some(elapsed.as_nanos().min(u128::from(u64::MAX)) as u64)
 }
 
 fn init_enclave() {
