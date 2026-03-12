@@ -2,9 +2,16 @@ use async_trait::async_trait;
 use pingora::upstreams::peer::HttpPeer;
 use pingora_http::ResponseHeader;
 use pingora_proxy::{ProxyHttp, Session};
+#[cfg(not(feature = "only-proxy"))]
 use pingora_web::StatusCode;
 use std::time::Duration;
+#[cfg(feature = "benchmark-only")]
+use std::{
+    sync::{Mutex, OnceLock, mpsc::Sender},
+    time::Instant,
+};
 
+#[cfg(not(feature = "only-proxy"))]
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 
 use simple_filter_box::core::FilterBox;
@@ -17,6 +24,32 @@ pub struct StarProxy<T: FilterBox + Send> {
     pub upstream_addr: String,
 }
 
+pub struct StarProxyCtx {
+    #[cfg(feature = "benchmark-only")]
+    start: Instant,
+}
+
+#[cfg(feature = "benchmark-only")]
+static BENCHMARK_LATENCY_SENDER: OnceLock<Mutex<Option<Sender<u64>>>> = OnceLock::new();
+
+#[cfg(feature = "benchmark-only")]
+pub fn set_benchmark_latency_sender(sender: Sender<u64>) {
+    let holder = BENCHMARK_LATENCY_SENDER.get_or_init(|| Mutex::new(None));
+    if let Ok(mut guard) = holder.lock() {
+        *guard = Some(sender);
+    }
+}
+
+#[cfg(feature = "benchmark-only")]
+pub fn clear_benchmark_latency_sender() {
+    if let Some(holder) = BENCHMARK_LATENCY_SENDER.get() {
+        if let Ok(mut guard) = holder.lock() {
+            *guard = None;
+        }
+    }
+}
+
+#[cfg(not(feature = "only-proxy"))]
 async fn exit_filter(
     status: impl TryInto<StatusCode>,
     session: &mut Session,
@@ -31,10 +64,13 @@ async fn exit_filter(
 
 #[async_trait]
 impl<T: FilterBox + Send> ProxyHttp for StarProxy<T> {
-    type CTX = ();
+    type CTX = StarProxyCtx;
 
     fn new_ctx(&self) -> Self::CTX {
-        ()
+        StarProxyCtx {
+            #[cfg(feature = "benchmark-only")]
+            start: Instant::now(),
+        }
     }
 
     async fn request_filter(
@@ -42,34 +78,43 @@ impl<T: FilterBox + Send> ProxyHttp for StarProxy<T> {
         session: &mut Session,
         _ctx: &mut Self::CTX,
     ) -> pingora::Result<bool> {
-        #[cfg(target_feature = "only-proxy")]
-        return Ok(true);
-
-        if session.req_header().method == "OPTIONS" {
-            return exit_filter(204, session).await;
+        #[cfg(feature = "only-proxy")]
+        {
+            let _ = session;
+            return Ok(false);
         }
 
-        let req_headers = &session.req_header().headers;
-        let target = req_headers.get("X-STAR");
-
-        let x = match target {
-            Some(x) => x,
-            None => {
-                return exit_filter(403, session).await;
+        #[cfg(not(feature = "only-proxy"))]
+        {
+            if session.req_header().method == "OPTIONS" {
+                return exit_filter(204, session).await;
             }
-        };
 
-        let decoded = match URL_SAFE.decode(x) {
-            Ok(v) => v,
-            Err(_) => {
-                return exit_filter(400, session).await;
-            }
-        };
+            let req_headers = &session.req_header().headers;
+            let target = req_headers.get("X-STAR");
 
-        match self.filter.filter(decoded.as_slice()).await {
-            Ok(_) => Ok(false),
-            Err(err) => exit_filter(err.status_code(), session).await,
+            let x = match target {
+                Some(x) => x,
+                None => {
+                    return exit_filter(403, session).await;
+                }
+            };
+
+            let decoded = match URL_SAFE.decode(x) {
+                Ok(v) => v,
+                Err(_) => {
+                    return exit_filter(400, session).await;
+                }
+            };
+
+            return match self.filter.filter(decoded.as_slice()).await {
+                Ok(_) => Ok(false),
+                Err(err) => exit_filter(err.status_code(), session).await,
+            };
         }
+
+        #[allow(unreachable_code)]
+        Ok(false)
     }
 
     async fn upstream_peer(
@@ -99,5 +144,29 @@ impl<T: FilterBox + Send> ProxyHttp for StarProxy<T> {
         Self::CTX: Send + Sync,
     {
         with_cors(upstream_response, session.req_header())
+    }
+
+    async fn logging(
+        &self,
+        _session: &mut Session,
+        _e: Option<&pingora::Error>,
+        ctx: &mut Self::CTX,
+    ) where
+        Self::CTX: Send + Sync,
+    {
+        #[cfg(feature = "benchmark-only")]
+        {
+            let elapsed_ns = ctx.start.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
+            if let Some(holder) = BENCHMARK_LATENCY_SENDER.get() {
+                if let Ok(guard) = holder.lock() {
+                    if let Some(sender) = guard.as_ref() {
+                        let _ = sender.send(elapsed_ns);
+                    }
+                }
+            }
+        }
+
+        #[cfg(not(feature = "benchmark-only"))]
+        let _ = ctx;
     }
 }

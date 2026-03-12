@@ -26,6 +26,7 @@ rand_core = "0.6"
 [features]
 default = []
 only-proxy = []
+benchmark-only = []
 
 [dev-dependencies]
 ureq = "2"
@@ -39,6 +40,11 @@ harness = false
 [[bench]]
 name = "e2e"
 harness = false
+
+[[bench]]
+name = "proxy_latency"
+harness = false
+required-features = ["benchmark-only"]
 
 [[bin]]
 name = "bench_mock"
