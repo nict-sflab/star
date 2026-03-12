@@ -1,16 +1,17 @@
+use async_trait::async_trait;
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use constant_time_utils::time as ct_time;
 use pingora::listeners::tls::TlsSettings;
 use pingora::server::Server;
-use pingora_proxy::http_proxy_service;
+use pingora::upstreams::peer::HttpPeer;
+use pingora_http::ResponseHeader;
+use pingora_proxy::{ProxyHttp, Session, http_proxy_service};
 use rand_core::{OsRng, RngCore};
 use simple_filter_box::hashmap::HashMapFilterBox;
 use star_app::core::ENCLAVE;
 use star_app::filter::StarFilter;
-use star_app::proxy::{
-    StarProxy, clear_benchmark_latency_sender, set_benchmark_latency_sender,
-};
+use star_app::proxy::StarProxy;
 use star_core::{
     client::User, secure_channel::client::SecureChannelClient, serv::enclave::Enclave,
 };
@@ -47,6 +48,85 @@ fn build_star_proxy(upstream_addr: String) -> StarProxy<HashMapFilterBox> {
     StarProxy {
         filter,
         upstream_addr,
+    }
+}
+
+struct StarLatencyProxy {
+    inner: StarProxy<HashMapFilterBox>,
+    latency_tx: mpsc::Sender<u64>,
+}
+
+struct StarLatencyCtx {
+    start: std::time::Instant,
+    inner_ctx: (),
+}
+
+#[async_trait]
+impl ProxyHttp for StarLatencyProxy {
+    type CTX = StarLatencyCtx;
+
+    fn new_ctx(&self) -> Self::CTX {
+        Self::CTX {
+            start: std::time::Instant::now(),
+            inner_ctx: self.inner.new_ctx(),
+        }
+    }
+
+    async fn early_request_filter(
+        &self,
+        session: &mut Session,
+        ctx: &mut Self::CTX,
+    ) -> pingora::Result<()>
+    where
+        Self::CTX: Send + Sync,
+    {
+        self.inner.early_request_filter(session, &mut ctx.inner_ctx).await
+    }
+
+    async fn request_filter(
+        &self,
+        session: &mut Session,
+        ctx: &mut Self::CTX,
+    ) -> pingora::Result<bool>
+    where
+        Self::CTX: Send + Sync,
+    {
+        self.inner.request_filter(session, &mut ctx.inner_ctx).await
+    }
+
+    async fn upstream_peer(
+        &self,
+        session: &mut Session,
+        ctx: &mut Self::CTX,
+    ) -> pingora::Result<Box<HttpPeer>> {
+        self.inner.upstream_peer(session, &mut ctx.inner_ctx).await
+    }
+
+    async fn response_filter(
+        &self,
+        session: &mut Session,
+        upstream_response: &mut ResponseHeader,
+        ctx: &mut Self::CTX,
+    ) -> pingora::Result<()>
+    where
+        Self::CTX: Send + Sync,
+    {
+        self.inner
+            .response_filter(session, upstream_response, &mut ctx.inner_ctx)
+            .await
+    }
+
+    async fn logging(
+        &self,
+        session: &mut Session,
+        e: Option<&pingora::Error>,
+        ctx: &mut Self::CTX,
+    ) where
+        Self::CTX: Send + Sync,
+    {
+        self.inner.logging(session, e, &mut ctx.inner_ctx).await;
+        let elapsed_ns = ctx.start.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
+        let _ = self.latency_tx.send(elapsed_ns);
     }
 }
 
@@ -274,11 +354,16 @@ fn spawn_proxy(
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         ensure_rustls_provider();
-        set_benchmark_latency_sender(latency_tx);
         let mut server = Server::new(None).expect("create pingora server");
         server.bootstrap();
 
-        let mut proxy_svc = http_proxy_service(&server.configuration, build_star_proxy(upstream_addr));
+        let mut proxy_svc = http_proxy_service(
+            &server.configuration,
+            StarLatencyProxy {
+                inner: build_star_proxy(upstream_addr),
+                latency_tx,
+            },
+        );
         proxy_svc.threads = Some(1);
 
         let tls_settings = TlsSettings::intermediate(&cert_pem_path, &key_pem_path)
@@ -404,12 +489,6 @@ impl BenchHarness {
 
     fn drain_latencies(&self) {
         while self.latency_rx.try_recv().is_ok() {}
-    }
-}
-
-impl Drop for BenchHarness {
-    fn drop(&mut self) {
-        clear_benchmark_latency_sender();
     }
 }
 
