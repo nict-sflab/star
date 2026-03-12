@@ -1,8 +1,29 @@
-use star_app::{all_prefix, build_server};
+#[path = "../common/latency_proxy.rs"]
+mod latency_proxy;
+#[path = "../common/rustls_provider.rs"]
+mod rustls_provider;
+
+use latency_proxy::StarLatencyProxy;
+use pingora::{listeners::tls::TlsSettings, server::Server};
+use pingora_proxy::http_proxy_service;
+use pingora_web::App as WebApp;
+use rand_core::{OsRng, RngCore};
+use simple_filter_box::hashmap::HashMapFilterBox;
+use star_app::api::{DEFAULT_PUBLIC_KEY_API, DEFAULT_REGISTER_API, issue_api, public_key_api};
+use star_app::core::ENCLAVE;
+use star_app::cors::Cors;
+use star_app::filter::StarFilter;
+use star_app::proxy::StarProxy;
+use star_app::all_prefix;
+use star_core::serv::enclave::Enclave;
+use std::collections::HashMap;
 use std::env;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::mpsc;
 use std::thread;
+use rustls_provider::ensure_rustls_ring_provider;
+use tokio::sync::Mutex;
 
 const E2E_API_ADDR_ENV: &str = "STAR_E2E_API_ADDR";
 const E2E_PROXY_ADDR_ENV: &str = "STAR_E2E_PROXY_ADDR";
@@ -19,6 +40,12 @@ const DEFAULT_UPSTREAM_ADDR: &str = "127.0.0.1:3000";
 const DEFAULT_MAX_PREFIX: u32 = 4;
 const DEFAULT_API_THREADS: usize = 1;
 const DEFAULT_PROXY_THREADS: usize = 2;
+const TLS_CERT_RELATIVE_PATH: &str = "examples/certs/server.crt";
+const TLS_KEY_RELATIVE_PATH: &str = "examples/certs/server.key";
+const MAX_COUNT: u32 = 10;
+const ONLY_PROXY: bool = false;
+
+type BenchFilter = StarFilter<HashMapFilterBox>;
 
 fn env_or_default(name: &str, default: &str) -> String {
     env::var(name).unwrap_or_else(|_| default.to_string())
@@ -42,12 +69,79 @@ fn parse_env_usize(name: &str, default: usize) -> usize {
     }
 }
 
+fn manifest_path(relative_path: &str) -> String {
+    format!("{}/{}", env!("CARGO_MANIFEST_DIR"), relative_path)
+}
+
 fn default_tls_cert_path() -> String {
-    format!("{}/examples/certs/server.crt", env!("CARGO_MANIFEST_DIR"))
+    manifest_path(TLS_CERT_RELATIVE_PATH)
 }
 
 fn default_tls_key_path() -> String {
-    format!("{}/examples/certs/server.key", env!("CARGO_MANIFEST_DIR"))
+    manifest_path(TLS_KEY_RELATIVE_PATH)
+}
+
+fn build_server_with_latency(
+    api_addr: &str,
+    proxy_addr: &str,
+    upstream_addr: &str,
+    prefixes: Vec<u32>,
+    max_prefix: u32,
+    api_threads: usize,
+    proxy_threads: usize,
+    tls_cert_path: &str,
+    tls_key_path: &str,
+    latency_tx: mpsc::Sender<u64>,
+) -> Server {
+    ensure_rustls_ring_provider();
+
+    ENCLAVE.get_or_init(|| {
+        let mut rng = OsRng;
+        let mut cipher_receiver = [0u8; 32];
+        let mut sk = [0u8; 32];
+        rng.fill_bytes(&mut cipher_receiver);
+        rng.fill_bytes(&mut sk);
+        Enclave::new(MAX_COUNT, sk, cipher_receiver).expect("init enclave")
+    });
+
+    let mut server = Server::new(None).expect("create server");
+    server.bootstrap();
+
+    let mut api_app = WebApp::default();
+    api_app.use_middleware(Cors::default());
+    api_app.get_fn(DEFAULT_PUBLIC_KEY_API, public_key_api);
+    api_app.post_fn(DEFAULT_REGISTER_API, issue_api);
+
+    let mut api_svc = api_app.to_service("api");
+    api_svc.threads = Some(api_threads);
+    api_svc.add_tcp(api_addr);
+    server.add_service(api_svc);
+
+    let mut filters: HashMap<u32, Mutex<HashMapFilterBox>> = HashMap::new();
+    for prefix in prefixes {
+        filters.insert(prefix, Mutex::new(HashMapFilterBox::new()));
+    }
+    let filter = BenchFilter::new(filters, max_prefix);
+
+    let mut proxy_svc = http_proxy_service(
+        &server.configuration,
+        StarLatencyProxy {
+            inner: StarProxy {
+                filter,
+                upstream_addr: upstream_addr.to_string(),
+            },
+            latency_tx,
+            bypass_request_filter: ONLY_PROXY,
+        },
+    );
+    proxy_svc.threads = Some(proxy_threads);
+
+    let tls_settings =
+        TlsSettings::intermediate(tls_cert_path, tls_key_path).expect("build pingora TLS settings");
+    proxy_svc.add_tls_with_settings(proxy_addr, None, tls_settings);
+
+    server.add_service(proxy_svc);
+    server
 }
 
 fn respond_ok(mut stream: TcpStream) {
@@ -83,24 +177,23 @@ fn main() {
     let tls_cert_path = env::var(E2E_TLS_CERT_PATH_ENV).unwrap_or_else(|_| default_tls_cert_path());
     let tls_key_path = env::var(E2E_TLS_KEY_PATH_ENV).unwrap_or_else(|_| default_tls_key_path());
 
-    unsafe {
-        env::set_var("TLS_CERT_PATH", &tls_cert_path);
-        env::set_var("TLS_KEY_PATH", &tls_key_path);
-        env::set_var("STAR_API_THREADS", api_threads.to_string());
-        env::set_var("STAR_PROXY_THREADS", proxy_threads.to_string());
-    }
-
     let _upstream = spawn_upstream(&upstream_addr);
     println!(
         "starting e2e benchmark server: api={api_addr}, proxy={proxy_addr}, upstream={upstream_addr}, max_prefix={max_prefix}, api_threads={api_threads}, proxy_threads={proxy_threads}, tls_cert_path={tls_cert_path}"
     );
 
-    let server = build_server(
+    let (latency_tx, _latency_rx) = mpsc::channel::<u64>();
+    let server = build_server_with_latency(
         &api_addr,
         &proxy_addr,
         &upstream_addr,
         all_prefix(max_prefix),
         max_prefix,
+        api_threads,
+        proxy_threads,
+        &tls_cert_path,
+        &tls_key_path,
+        latency_tx,
     );
     server.run_forever();
 }

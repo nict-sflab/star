@@ -1,16 +1,16 @@
 mod common;
+#[path = "common/latency_proxy.rs"]
+mod latency_proxy;
 
-use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use common::retry::{StartupProbe, wait_until_ready};
 use common::tls::{build_pinned_tls_agent, ensure_rustls_ring_provider};
 use constant_time_utils::time as ct_time;
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use latency_proxy::StarLatencyProxy;
 use pingora::listeners::tls::TlsSettings;
 use pingora::server::Server;
-use pingora::upstreams::peer::HttpPeer;
-use pingora_http::ResponseHeader;
-use pingora_proxy::{ProxyHttp, Session, http_proxy_service};
+use pingora_proxy::http_proxy_service;
 use rand_core::{OsRng, RngCore};
 use simple_filter_box::hashmap::HashMapFilterBox;
 use star_app::core::ENCLAVE;
@@ -24,7 +24,7 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc;
 use std::thread;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 use tokio::sync::Mutex;
 
 const STARTUP_RETRIES: u32 = 100;
@@ -35,7 +35,7 @@ const TLS_KEY_RELATIVE_PATH: &str = "examples/certs/server.key";
 const ENCLAVE_MAX_COUNT: u32 = 1_000_000;
 const MAX_COUNT_PER_CREDENTIAL: u64 = ENCLAVE_MAX_COUNT as u64;
 
-const PROXY_ONLY : bool = true;
+const PROXY_ONLY: bool = false;
 
 type BenchFilter = StarFilter<HashMapFilterBox>;
 
@@ -47,105 +47,6 @@ fn build_star_proxy(upstream_addr: String) -> StarProxy<HashMapFilterBox> {
         filter,
         upstream_addr,
     }
-}
-
-struct StarLatencyProxy {
-    inner: StarProxy<HashMapFilterBox>,
-    latency_tx: mpsc::Sender<u64>,
-}
-
-struct StarLatencyCtx {
-    start: std::time::Instant,
-    inner_ctx: (),
-}
-
-#[async_trait]
-impl ProxyHttp for StarLatencyProxy {
-    type CTX = StarLatencyCtx;
-
-    fn new_ctx(&self) -> Self::CTX {
-        Self::CTX {
-            start: std::time::Instant::now(),
-            inner_ctx: self.inner.new_ctx(),
-        }
-    }
-
-    async fn early_request_filter(
-        &self,
-        session: &mut Session,
-        ctx: &mut Self::CTX,
-    ) -> pingora::Result<()>
-    where
-        Self::CTX: Send + Sync,
-    {
-        self.inner.early_request_filter(session, &mut ctx.inner_ctx).await
-    }
-
-    async fn request_filter(
-        &self,
-        session: &mut Session,
-        ctx: &mut Self::CTX,
-    ) -> pingora::Result<bool>
-    where
-        Self::CTX: Send + Sync,
-    {
-        if PROXY_ONLY {
-            return Ok(false);
-        }
-
-        self.inner.request_filter(session, &mut ctx.inner_ctx).await
-    }
-
-    async fn upstream_peer(
-        &self,
-        session: &mut Session,
-        ctx: &mut Self::CTX,
-    ) -> pingora::Result<Box<HttpPeer>> {
-        self.inner.upstream_peer(session, &mut ctx.inner_ctx).await
-    }
-
-    async fn response_filter(
-        &self,
-        session: &mut Session,
-        upstream_response: &mut ResponseHeader,
-        ctx: &mut Self::CTX,
-    ) -> pingora::Result<()>
-    where
-        Self::CTX: Send + Sync,
-    {
-        self.inner
-            .response_filter(session, upstream_response, &mut ctx.inner_ctx)
-            .await
-    }
-
-    async fn logging(
-        &self,
-        session: &mut Session,
-        e: Option<&pingora::Error>,
-        ctx: &mut Self::CTX,
-    ) where
-        Self::CTX: Send + Sync,
-    {
-        self.inner.logging(session, e, &mut ctx.inner_ctx).await;
-        let elapsed_ns = downstream_connection_elapsed_ns(session)
-            .unwrap_or_else(|| ctx.start.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64);
-        let _ = self.latency_tx.send(elapsed_ns);
-    }
-}
-
-fn downstream_connection_elapsed_ns(session: &Session) -> Option<u64> {
-    let established_at = session
-        .as_downstream()
-        .digest()?
-        .timing_digest
-        .iter()
-        .flatten()
-        .map(|timing| timing.established_ts)
-        .filter(|ts| *ts != SystemTime::UNIX_EPOCH)
-        .min()?;
-
-    let elapsed = SystemTime::now().duration_since(established_at).ok()?;
-    Some(elapsed.as_nanos().min(u128::from(u64::MAX)) as u64)
 }
 
 fn init_enclave() {
@@ -281,6 +182,7 @@ fn spawn_proxy(
             StarLatencyProxy {
                 inner: build_star_proxy(upstream_addr),
                 latency_tx,
+                bypass_request_filter: PROXY_ONLY,
             },
         );
         proxy_svc.threads = Some(1);
