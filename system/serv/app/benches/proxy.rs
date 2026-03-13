@@ -1,13 +1,11 @@
 mod common;
-#[path = "common/latency_proxy.rs"]
-mod latency_proxy;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
+use common::latency_proxy::StarLatencyProxy;
 use common::retry::{StartupProbe, wait_until_ready};
 use common::tls::{build_pinned_tls_agent, ensure_rustls_ring_provider};
 use constant_time_utils::time as ct_time;
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
-use latency_proxy::StarLatencyProxy;
 use pingora::listeners::tls::TlsSettings;
 use pingora::server::Server;
 use pingora_proxy::http_proxy_service;
@@ -319,14 +317,11 @@ fn bench_pingora_proxy_basic_latency_tls(c: &mut Criterion) {
     group.sample_size(40);
     group.measurement_time(Duration::from_secs(6));
     group.throughput(Throughput::Elements(1));
-    group.bench_function("single_thread_tls_original_process", |b| {
+    group.bench_function("single_thread_tls_process_cpu", |b| {
         b.iter_custom(|iters| {
-            let mut total_ns = 0u128;
-            for _ in 0..iters {
-                total_ns += u128::from(harness.one_internal_latency_ns());
-            }
-            let total_ns = total_ns.min(u128::from(u64::MAX)) as u64;
-            Duration::from_nanos(total_ns)
+            common::measure_process_cpu_time(iters, || {
+                let _ = harness.one_internal_latency_ns();
+            })
         });
     });
     group.finish();
