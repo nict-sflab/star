@@ -1,13 +1,11 @@
 mod common;
-#[path = "common/latency_proxy.rs"]
-mod latency_proxy;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
+use common::latency_proxy::StarLatencyProxy;
 use common::retry::{StartupProbe, wait_until_ready};
 use common::tls::{build_pinned_tls_agent, ensure_rustls_ring_provider};
 use constant_time_utils::time as ct_time;
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
-use latency_proxy::StarLatencyProxy;
 use pingora::listeners::tls::TlsSettings;
 use pingora::server::Server;
 use pingora_proxy::http_proxy_service;

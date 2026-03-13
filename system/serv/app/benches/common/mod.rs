@@ -1,4 +1,5 @@
 pub mod http;
+pub mod latency_proxy;
 pub mod retry;
 pub mod tls;
 
