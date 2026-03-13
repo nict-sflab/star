@@ -317,14 +317,11 @@ fn bench_pingora_proxy_basic_latency_tls(c: &mut Criterion) {
     group.sample_size(40);
     group.measurement_time(Duration::from_secs(6));
     group.throughput(Throughput::Elements(1));
-    group.bench_function("single_thread_tls_original_process", |b| {
+    group.bench_function("single_thread_tls_process_cpu", |b| {
         b.iter_custom(|iters| {
-            let mut total_ns = 0u128;
-            for _ in 0..iters {
-                total_ns += u128::from(harness.one_internal_latency_ns());
-            }
-            let total_ns = total_ns.min(u128::from(u64::MAX)) as u64;
-            Duration::from_nanos(total_ns)
+            common::measure_process_cpu_time(iters, || {
+                let _ = harness.one_internal_latency_ns();
+            })
         });
     });
     group.finish();

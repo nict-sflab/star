@@ -2,7 +2,6 @@ mod common;
 
 use common::retry::{StartupProbe, wait_until_ready};
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
-use cpu_time::ThreadTime;
 use reqwest::blocking::Client;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -131,14 +130,8 @@ fn bench_client_http_request(c: &mut Criterion) {
     group.sample_size(40);
     group.measurement_time(Duration::from_secs(6));
     group.throughput(Throughput::Elements(1));
-    group.bench_function("reqwest_blocking_get_localhost_thread_cpu", |b| {
-        b.iter_custom(|iters| {
-            let start = ThreadTime::now();
-            for _ in 0..iters {
-                harness.send_request();
-            }
-            start.elapsed()
-        });
+    group.bench_function("reqwest_blocking_get_localhost_process_cpu", |b| {
+        b.iter_custom(|iters| common::measure_process_cpu_time(iters, || harness.send_request()));
     });
     group.finish();
 }
