@@ -5,7 +5,10 @@ use common::http::{get_text, post_text};
 use common::retry::{StartupProbe, wait_until_ready};
 use common::tls::build_pinned_tls_agent;
 use constant_time_utils::time;
-use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{
+    AxisScale, BenchmarkId, Criterion, PlotConfiguration, Throughput, criterion_group,
+    criterion_main,
+};
 use rand_core::OsRng;
 use star_core::client::User;
 use star_core::secure_channel::client::SecureChannelClient;
@@ -18,7 +21,7 @@ const MAX_COUNT_PER_CREDENTIAL: u64 = 10;
 const STARTUP_RETRIES: u32 = 100;
 const STARTUP_RETRY_DELAY: Duration = Duration::from_millis(50);
 const TLS_CERT_RELATIVE_PATH: &str = "examples/certs/server.crt";
-const PREPARED_REQUEST_BUFFER: usize = 1_024 * 32;
+const PREPARED_REQUEST_BUFFER: usize = 2_048;
 const DEFAULT_CLIENT_THREADS: usize = 24;
 const DEFAULT_API_ADDR: &str = "127.0.0.1:8080";
 const DEFAULT_PROXY_ADDR: &str = "127.0.0.1:8443";
@@ -26,6 +29,7 @@ const E2E_API_ADDR_ENV: &str = "STAR_E2E_API_ADDR";
 const E2E_PROXY_ADDR_ENV: &str = "STAR_E2E_PROXY_ADDR";
 const E2E_TLS_CERT_PATH_ENV: &str = "STAR_E2E_TLS_CERT_PATH";
 const E2E_CLIENT_THREADS_ENV: &str = "STAR_E2E_CLIENT_THREADS";
+const E2E_CLIENT_SWEEP_ENV: &str = "STAR_E2E_CLIENT_SWEEP";
 
 fn bench_tls_cert_path() -> String {
     common::manifest_path(TLS_CERT_RELATIVE_PATH)
@@ -82,6 +86,52 @@ fn e2e_client_threads() -> usize {
         }),
         Err(_) => DEFAULT_CLIENT_THREADS,
     }
+}
+
+fn default_client_sweep() -> Vec<usize> {
+    let baseline = e2e_client_threads().max(1);
+    let mut sweep = vec![1usize];
+    let mut next = 2usize;
+    while next < baseline {
+        sweep.push(next);
+        next = next.saturating_mul(2);
+    }
+    if !sweep.contains(&baseline) {
+        sweep.push(baseline);
+    }
+    let extended = baseline.saturating_mul(2);
+    if !sweep.contains(&extended) {
+        sweep.push(extended);
+    }
+    sweep
+}
+
+fn e2e_client_sweep() -> Vec<usize> {
+    let mut sweep = match std::env::var(E2E_CLIENT_SWEEP_ENV) {
+        Ok(raw) => raw
+            .split(',')
+            .map(str::trim)
+            .filter(|entry| !entry.is_empty())
+            .map(|entry| {
+                entry.parse::<usize>().unwrap_or_else(|err| {
+                    panic!("invalid {E2E_CLIENT_SWEEP_ENV} item {entry:?}: {err}")
+                })
+            })
+            .collect::<Vec<_>>(),
+        Err(_) => default_client_sweep(),
+    };
+
+    if sweep.is_empty() {
+        panic!("{E2E_CLIENT_SWEEP_ENV} resolved to an empty client list");
+    }
+
+    if let Some(invalid) = sweep.iter().find(|&&value| value == 0) {
+        panic!("{E2E_CLIENT_SWEEP_ENV} entries must be > 0, got {invalid}");
+    }
+
+    sweep.sort_unstable();
+    sweep.dedup();
+    sweep
 }
 
 struct RemoteTarget {
@@ -154,7 +204,7 @@ impl BenchClient {
         let user = Self::register_user(api_addr, &mut rng);
         let agent = build_pinned_tls_agent(tls_cert_path, Duration::from_secs(5));
 
-        let mut client = Self {
+        let client = Self {
             api_addr: api_addr.to_string(),
             proxy_url: proxy_url(proxy_addr),
             user,
@@ -164,7 +214,6 @@ impl BenchClient {
             agent,
             prepared_tokens: VecDeque::with_capacity(PREPARED_REQUEST_BUFFER),
         };
-        client.prepare_tokens(PREPARED_REQUEST_BUFFER);
         client
     }
 
@@ -203,12 +252,14 @@ impl BenchClient {
     }
 
     fn take_prepared_token(&mut self) -> String {
-        self.prepared_tokens
-            .pop_front()
-            .expect("prepared token queue is empty; prepare tokens before measurement")
+        self.refresh_prepared_period();
+        match self.prepared_tokens.pop_front() {
+            Some(token) => token,
+            None => self.build_token(),
+        }
     }
 
-    fn request_with_token(&mut self, token: &str) {
+    fn request_with_token(&mut self, token: &str) -> Result<(), u16> {
         let response = self
             .agent
             .get(&self.proxy_url)
@@ -220,9 +271,10 @@ impl BenchClient {
             Ok(resp) => {
                 let body = resp.into_string().expect("read proxy body");
                 assert_eq!(body.trim(), "OK");
+                Ok(())
             }
             Err(ureq::Error::Status(code, _)) => {
-                panic!("unexpected proxy status during benchmark: {code}");
+                Err(code)
             }
             Err(ureq::Error::Transport(err)) => {
                 panic!("proxy request transport error: {err}");
@@ -273,7 +325,23 @@ impl ClientWorkers {
                         }
                         ClientWorkerCommand::Run(done_tx) => {
                             let token = client.take_prepared_token();
-                            client.request_with_token(&token);
+                            match client.request_with_token(&token) {
+                                Ok(()) => {}
+                                Err(401) => {
+                                    // Tokens can expire when period rolls between preparation and send.
+                                    // Retry once with a freshly generated token for the current period.
+                                    client.refresh_prepared_period();
+                                    let retry_token = client.build_token();
+                                    if let Err(code) = client.request_with_token(&retry_token) {
+                                        panic!(
+                                            "unexpected proxy status during benchmark after 401 retry: {code}"
+                                        );
+                                    }
+                                }
+                                Err(code) => {
+                                    panic!("unexpected proxy status during benchmark: {code}");
+                                }
+                            }
                             let _ = done_tx.send(());
                         }
                         ClientWorkerCommand::Shutdown => break,
@@ -331,34 +399,61 @@ impl Drop for ClientWorkers {
     }
 }
 
+fn timed_request_batches(clients: &ClientWorkers, batches: usize) -> Duration {
+    let mut remaining = batches;
+    let mut elapsed = Duration::ZERO;
+
+    while remaining > 0 {
+        let chunk = remaining.min(PREPARED_REQUEST_BUFFER);
+        clients.prepare_for_batches(chunk);
+
+        let start = Instant::now();
+        for _ in 0..chunk {
+            clients.run_batch();
+        }
+        elapsed += start.elapsed();
+        remaining -= chunk;
+    }
+
+    elapsed
+}
+
 fn bench_star_e2e_throughput(c: &mut Criterion) {
     let target = RemoteTarget::from_env();
-    let client_threads = e2e_client_threads();
-    let clients = ClientWorkers::start(
-        &target.api_addr,
-        &target.proxy_addr,
-        &target.tls_cert_path,
-        client_threads,
+    let client_sweep = e2e_client_sweep();
+    println!(
+        "criterion report path: target/criterion/star_e2e_proxy_throughput/report/index.html"
     );
-    clients.prepare_for_batches(1);
-    clients.run_batch();
 
     let mut group = c.benchmark_group("star_e2e_proxy_throughput");
     group.sample_size(20);
     group.measurement_time(Duration::from_secs(8));
-    group.throughput(Throughput::Elements(client_threads as u64));
-    group.bench_function("authenticated_request", |b| {
-        b.iter_custom(|iters| {
-            let batches = usize::try_from(iters).expect("iteration count should fit in usize");
-            clients.prepare_for_batches(batches);
+    group.plot_config(
+        PlotConfiguration::default().summary_scale(AxisScale::Linear),
+    );
+    for client_threads in client_sweep {
+        let clients = ClientWorkers::start(
+            &target.api_addr,
+            &target.proxy_addr,
+            &target.tls_cert_path,
+            client_threads,
+        );
+        clients.prepare_for_batches(1);
+        clients.run_batch();
 
-            let start = Instant::now();
-            for _ in 0..batches {
-                clients.run_batch();
-            }
-            start.elapsed()
-        });
-    });
+        group.throughput(Throughput::Elements(client_threads as u64));
+        group.bench_with_input(
+            BenchmarkId::new("authenticated_request", client_threads),
+            &client_threads,
+            |b, &_client_threads| {
+                b.iter_custom(|iters| {
+                    let batches =
+                        usize::try_from(iters).expect("iteration count should fit in usize");
+                    timed_request_batches(&clients, batches)
+                });
+            },
+        );
+    }
     group.finish();
 }
 
