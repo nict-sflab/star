@@ -73,7 +73,7 @@ use rand::{rngs::StdRng, SeedableRng};
 
 pub fn run_stdio() -> io::Result<()> {
     let rng = StdRng::seed_from_u64(10);
-    let mut app = EnclaveApp::init(3, rng).unwrap();
+    let mut app = EnclaveApp::init(3000000000, rng).unwrap();
 
     utils::child::run_stdio(&mut app)
 }
