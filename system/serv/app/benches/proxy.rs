@@ -2,6 +2,7 @@ mod common;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use common::latency_proxy::StarLatencyProxy;
+use common::local_http::{reserve_local_addr, spawn_ok_server};
 use common::retry::{StartupProbe, wait_until_ready};
 use common::tls::{build_pinned_tls_agent, ensure_rustls_ring_provider};
 use constant_time_utils::time as ct_time;
@@ -15,8 +16,6 @@ use star_app::enclave::{EnclaveRuntime, EnclaveRuntimes};
 use star_app::filter::StarFilter;
 use star_app::proxy::StarProxy;
 use star_core::{client::User, secure_channel::client::SecureChannelClient};
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
@@ -28,6 +27,10 @@ const WARMUP_REQUESTS: usize = 128;
 const TLS_CERT_RELATIVE_PATH: &str = "examples/certs/server.crt";
 const TLS_KEY_RELATIVE_PATH: &str = "examples/certs/server.key";
 const MAX_COUNT_PER_CREDENTIAL: u64 = 3;
+const PROXY_AGENT_READ_TIMEOUT: Duration = Duration::from_secs(2);
+const LATENCY_RECV_TIMEOUT: Duration = Duration::from_secs(2);
+const BENCH_GROUP_NAME: &str = "pingora_proxy_basic_latency_tls";
+const BENCH_FUNCTION_NAME: &str = "single_thread_tls_process_cpu";
 
 const PROXY_ONLY: bool = false;
 
@@ -85,12 +88,17 @@ impl TokenGenerator {
         self.counter = 0;
     }
 
-    fn next_token(&mut self) -> String {
+    fn refresh_period(&mut self) {
         let current_period = u64::from_be_bytes(ct_time::current_period());
         if current_period != self.period {
             self.period = current_period;
             self.rotate_credential();
         }
+    }
+
+    fn next_token(&mut self) -> String {
+        self.refresh_period();
+
         if self.counter >= MAX_COUNT_PER_CREDENTIAL {
             self.rotate_credential();
         }
@@ -112,47 +120,9 @@ fn key_path() -> String {
     common::manifest_path(TLS_KEY_RELATIVE_PATH)
 }
 
-fn find_headers_end(buf: &[u8]) -> Option<usize> {
-    buf.windows(4).position(|window| window == b"\r\n\r\n")
-}
-
-fn handle_upstream_connection(mut stream: TcpStream) {
-    let _ = stream.set_nodelay(true);
-    let mut read_buf = [0u8; 4096];
-    let mut pending = Vec::with_capacity(8192);
-
-    loop {
-        let read = match stream.read(&mut read_buf) {
-            Ok(0) => return,
-            Ok(n) => n,
-            Err(_) => return,
-        };
-        pending.extend_from_slice(&read_buf[..read]);
-
-        while let Some(end) = find_headers_end(&pending) {
-            let _ = pending.split_off(end + 4);
-            let response = b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nOK";
-            if stream.write_all(response).is_err() {
-                return;
-            }
-            if stream.flush().is_err() {
-                return;
-            }
-            return;
-        }
-    }
-}
-
 fn spawn_upstream(bind_addr: &str) -> thread::JoinHandle<()> {
-    let listener = TcpListener::bind(bind_addr).expect("bind benchmark upstream");
-    thread::spawn(move || {
-        for incoming in listener.incoming() {
-            match incoming {
-                Ok(stream) => handle_upstream_connection(stream),
-                Err(err) => eprintln!("upstream accept error: {err}"),
-            }
-        }
-    })
+    let (_, handle) = spawn_ok_server(bind_addr, "upstream");
+    handle
 }
 
 fn spawn_proxy(
@@ -186,13 +156,6 @@ fn spawn_proxy(
     })
 }
 
-fn reserve_local_addr() -> String {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("reserve local port");
-    let addr = listener.local_addr().expect("read reserved local port");
-    drop(listener);
-    addr.to_string()
-}
-
 struct BenchHarness {
     proxy_url: String,
     agent: ureq::Agent,
@@ -220,7 +183,7 @@ impl BenchHarness {
         );
 
         let proxy_url = format!("https://{proxy_addr}/");
-        let agent = build_pinned_tls_agent(&cert_pem_path, Duration::from_secs(2));
+        let agent = build_pinned_tls_agent(&cert_pem_path, PROXY_AGENT_READ_TIMEOUT);
 
         let mut harness = Self {
             proxy_url,
@@ -253,7 +216,7 @@ impl BenchHarness {
         let token = self.token_generator.next_token();
         self.send_request(&token);
         self.latency_rx
-            .recv_timeout(Duration::from_secs(2))
+            .recv_timeout(LATENCY_RECV_TIMEOUT)
             .expect("wait internal proxy latency")
     }
 
@@ -274,7 +237,7 @@ impl BenchHarness {
                     Ok(response) => {
                         let body = response.into_string().expect("read startup body");
                         if body.trim() == "OK" {
-                            let _ = self.latency_rx.recv_timeout(Duration::from_secs(2));
+                            let _ = self.latency_rx.recv_timeout(LATENCY_RECV_TIMEOUT);
                             StartupProbe::Ready
                         } else {
                             StartupProbe::Retry(format!("unexpected startup body: {body:?}"))
@@ -305,11 +268,11 @@ impl BenchHarness {
 fn bench_pingora_proxy_basic_latency_tls(c: &mut Criterion) {
     let mut harness = BenchHarness::start();
 
-    let mut group = c.benchmark_group("pingora_proxy_basic_latency_tls");
+    let mut group = c.benchmark_group(BENCH_GROUP_NAME);
     group.sample_size(40);
     group.measurement_time(Duration::from_secs(6));
     group.throughput(Throughput::Elements(1));
-    group.bench_function("single_thread_tls_process_cpu", |b| {
+    group.bench_function(BENCH_FUNCTION_NAME, |b| {
         b.iter_custom(|iters| {
             common::measure_process_cpu_time(iters, || {
                 let _ = harness.one_internal_latency_ns();

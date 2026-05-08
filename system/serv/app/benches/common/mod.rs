@@ -1,5 +1,7 @@
 pub mod http;
 pub mod latency_proxy;
+#[allow(dead_code)]
+pub mod local_http;
 pub mod retry;
 pub mod tls;
 
