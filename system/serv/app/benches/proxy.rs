@@ -11,7 +11,7 @@ use pingora::server::Server;
 use pingora_proxy::http_proxy_service;
 use rand_core::OsRng;
 use simple_filter_box::dashmap::DashMapFilterBox;
-use star_app::core::EnclaveRuntime;
+use star_app::enclave::{EnclaveRuntime, EnclaveRuntimes};
 use star_app::filter::StarFilter;
 use star_app::proxy::StarProxy;
 use star_core::{client::User, secure_channel::client::SecureChannelClient};
@@ -38,7 +38,7 @@ fn build_star_proxy(upstream_addr: String) -> StarProxy<DashMapFilterBox> {
         DashMapFilterBox::new(),
         vec![0],
         1,
-        EnclaveRuntime::from_env(),
+        EnclaveRuntimes::from_env(10).expect("filter enclave pool"),
     );
     StarProxy {
         filter: Mutex::new(filter),
@@ -56,16 +56,19 @@ struct TokenGenerator {
 
 impl TokenGenerator {
     fn register_user(issue_enclave: &mut EnclaveRuntime, rng: &mut OsRng) -> User {
-        let sender = SecureChannelClient::new(issue_enclave.public_key()).expect("secure channel");
+        let sender = SecureChannelClient::new(issue_enclave.public_key().expect("public key"))
+            .expect("secure channel");
         let mut user = User::new(MAX_COUNT_PER_CREDENTIAL, sender);
         let (cred_request, shared_key) = user.request_credential(rng);
-        let cred_cipher = issue_enclave.issue_cred(&cred_request);
+        let cred_cipher = issue_enclave
+            .issue_cred(&cred_request)
+            .expect("issue credential");
         user.receive_credential(&cred_cipher, &shared_key);
         user
     }
 
     fn new() -> Self {
-        let mut issue_enclave = EnclaveRuntime::from_env();
+        let mut issue_enclave = EnclaveRuntime::from_env().expect("issue enclave");
         let mut rng = OsRng;
         let user = Self::register_user(&mut issue_enclave, &mut rng);
         Self {

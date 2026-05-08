@@ -3,7 +3,10 @@ use std::{sync::Arc, time::Duration};
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 use rand_core::OsRng;
 use simple_filter_box::{core::Entry, dashmap::DashMapFilterBox};
-use star_app::{core::EnclaveRuntime, filter::StarFilter};
+use star_app::{
+    enclave::{EnclaveRuntime, EnclaveRuntimes},
+    filter::StarFilter,
+};
 use star_core::{client::User, secure_channel::client::SecureChannelClient};
 use tokio::{runtime::Builder, sync::Mutex, task::JoinSet};
 
@@ -21,7 +24,7 @@ fn fixed_prefixes() -> Vec<u32> {
 
 fn build_filter() -> HashMapStarFilter {
     let filter_box = DashMapFilterBox::new();
-    let enclave = EnclaveRuntime::from_env();
+    let enclave = EnclaveRuntimes::from_env(10).expect("filter enclave pool");
 
     StarFilter::new(filter_box, fixed_prefixes(), FIXED_PREFIX_MAX, enclave)
 }
@@ -31,13 +34,14 @@ fn build_route_only_filter() -> HashMapStarFilter {
 }
 
 fn build_request() -> Vec<u8> {
-    let mut enclave = EnclaveRuntime::from_env();
-    let sender = SecureChannelClient::new(enclave.public_key()).expect("sender init");
+    let mut enclave = EnclaveRuntime::from_env().expect("issue enclave");
+    let sender =
+        SecureChannelClient::new(enclave.public_key().expect("public key")).expect("sender init");
     let mut user = User::new(MAX_COUNT as u64, sender);
     let mut rng = OsRng;
 
     let (cred_request, shared_key) = user.request_credential(&mut rng);
-    let cred_cipher = enclave.issue_cred(&cred_request);
+    let cred_cipher = enclave.issue_cred(&cred_request).expect("issue credential");
     user.receive_credential(&cred_cipher, &shared_key);
 
     let period = u64::from_be_bytes(constant_time_utils::time::current_period());
@@ -52,13 +56,31 @@ fn token_from_counter(counter: u64) -> Entry {
 }
 
 fn bench_issue_token_and_route(c: &mut Criterion) {
-    let mut filter = build_route_only_filter();
-    let request = build_request();
+    let rt = Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    let filter = Arc::new(Mutex::new(build_route_only_filter()));
+    let request = Arc::new(build_request());
 
     let mut group = c.benchmark_group("star_filter_issue_token_and_route");
     group.throughput(Throughput::Elements(1));
     group.bench_function("fixed_per_op", |b| {
-        b.iter(|| black_box(filter.issue_token_and_route(black_box(request.as_slice()))))
+        let filter = Arc::clone(&filter);
+        let request = Arc::clone(&request);
+        b.to_async(&rt).iter(|| {
+            let filter = Arc::clone(&filter);
+            let request = Arc::clone(&request);
+            async move {
+                let result = filter
+                    .lock()
+                    .await
+                    .issue_token_and_route(black_box(request.as_slice()))
+                    .await
+                    .expect("issue token and route");
+                black_box(result);
+            }
+        })
     });
     group.finish();
 }

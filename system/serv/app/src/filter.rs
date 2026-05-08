@@ -1,16 +1,13 @@
-use std::collections::HashMap;
-
 use simple_filter_box::core::{Entry, FilterBox};
 use star_core::serv::core::token::Token;
-use tokio::sync::Mutex;
 
-use crate::core::EnclaveRuntime;
+use crate::enclave::EnclaveRuntimes;
 
 pub struct StarFilter<T: FilterBox + Send> {
     pub filter: T,
     pub prefix_max: u32,
     pub prefixes: Vec<u32>,
-    pub enclave: EnclaveRuntime
+    pub enclaves: EnclaveRuntimes,
 }
 
 #[derive(Debug)]
@@ -33,43 +30,56 @@ impl StarFilterErrorStatus {
 }
 
 impl<T: FilterBox + Send> StarFilter<T> {
-    pub fn new(filter: T, prefixes: Vec<u32>, prefix_max: u32, enclave: EnclaveRuntime) -> Self {
+    pub fn new(filter: T, prefixes: Vec<u32>, prefix_max: u32, enclaves: EnclaveRuntimes) -> Self {
         Self {
             filter,
             prefixes,
             prefix_max,
-            enclave
+            enclaves,
         }
     }
 
     pub async fn filter(&mut self, request: &[u8]) -> Result<(), StarFilterErrorStatus> {
-        let (token, route) = self.issue_token_and_route(request)?;
+        let (token, route) = self.issue_token_and_route(request).await?;
         self.check_duplication(&token, route).await?;
 
         Ok(())
     }
 
-    pub fn issue_token_and_route(
+    pub async fn issue_token_and_route(
         &mut self,
         request: &[u8],
     ) -> Result<(Entry, u32), StarFilterErrorStatus> {
         let current_period = constant_time_utils::time::current_period();
 
-        let token_bytes = self.enclave
-            .issue_token(request, current_period);
+        let mut enclave = self
+            .enclaves
+            .pick()
+            .await
+            .ok_or(StarFilterErrorStatus::Internal)?;
 
-        if token_bytes.len() < 32 {
-            return Err(StarFilterErrorStatus::InvalidToken);
-        }
+        let result = (|| {
+            let token_bytes = enclave
+                .issue_token(request, current_period)
+                .map_err(|_| StarFilterErrorStatus::Internal)?;
 
-        let token_entry: Entry = token_bytes[..32]
-            .try_into()
-            .map_err(|_| StarFilterErrorStatus::InvalidToken)?;
+            if token_bytes.len() < 32 {
+                return Err(StarFilterErrorStatus::InvalidToken);
+            }
 
-        let token = Token::new(token_entry);
-        let route = token.route(self.prefix_max);
+            let token_entry: Entry = token_bytes[..32]
+                .try_into()
+                .map_err(|_| StarFilterErrorStatus::InvalidToken)?;
 
-        Ok((token.token, route))
+            let token = Token::new(token_entry);
+            let route = token.route(self.prefix_max);
+
+            Ok((token.token, route))
+        })();
+
+        self.enclaves.release(enclave).await;
+
+        result
     }
 
     pub async fn check_duplication(
@@ -78,7 +88,7 @@ impl<T: FilterBox + Send> StarFilter<T> {
         route: u32,
     ) -> Result<(), StarFilterErrorStatus> {
         if !self.prefixes.contains(&route) {
-            return Err(StarFilterErrorStatus::InvalidRoute)
+            return Err(StarFilterErrorStatus::InvalidRoute);
         }
 
         let is_new = self.filter.test(token);

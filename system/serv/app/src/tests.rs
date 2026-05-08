@@ -69,7 +69,8 @@ fn test_all() {
 
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let server_handle = thread::spawn(move || {
-        let server = build_server(api_addr, proxy_addr, &upstream_addr, all_prefix(1), 1);
+        let server = build_server(api_addr, proxy_addr, &upstream_addr, all_prefix(1), 1)
+            .expect("build test server");
         let shutdown = TestShutdown {
             rx: AsyncMutex::new(shutdown_rx),
         };
