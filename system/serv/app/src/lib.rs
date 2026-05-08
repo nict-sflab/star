@@ -3,20 +3,22 @@ use pingora_proxy::http_proxy_service;
 use pingora_web::App as WebApp;
 use simple_filter_box::dashmap::DashMapFilterBox;
 use std::env;
+use std::error::Error;
 use std::sync::{Arc, Once};
-use tokio::sync::{Mutex};
+use tokio::sync::Mutex;
 
+use crate::enclave::EnclaveRuntime;
 use crate::filter::StarFilter;
 use crate::{
     api::{DEFAULT_PUBLIC_KEY_API, DEFAULT_REGISTER_API},
-    core::{EnclaveRuntime},
     cors::Cors,
+    enclave::EnclaveRuntimes,
     proxy::StarProxy,
 };
 
 pub mod api;
-pub mod core;
 pub mod cors;
+pub mod enclave;
 pub mod filter;
 pub mod proxy;
 
@@ -27,7 +29,10 @@ pub fn all_prefix(max: u32) -> Vec<u32> {
 }
 
 fn env_or_default(name: &str, default: &str) -> String {
-    env::var(name).unwrap_or_else(|_| default.to_string())
+    match env::var(name) {
+        Ok(value) => value,
+        Err(_) => default.to_string(),
+    }
 }
 
 fn env_usize(name: &str) -> Option<usize> {
@@ -47,23 +52,21 @@ pub fn build_server(
     upstream_addr: &str,
     prefixes: Vec<u32>,
     max_prefix: u32,
-) -> Server {
+) -> Result<Server, Box<dyn Error>> {
     ensure_rustls_provider();
-    let mut filter_enclave = EnclaveRuntime::from_env();
-    let mut issue_enclave = EnclaveRuntime::from_env();
-
+    let filter_enclave = EnclaveRuntimes::from_env(10)?;
+    let mut issue_enclave = EnclaveRuntime::from_env()?;
 
     let filter_box = DashMapFilterBox::new();
     let filter = StarFilter::new(filter_box, prefixes, max_prefix, filter_enclave);
 
-    let mut server = Server::new(None).expect("create server");
+    let mut server = Server::new(None)?;
     server.bootstrap();
 
     let mut api_app = WebApp::default();
     api_app.use_middleware(Cors::default());
 
-
-    let public_key_api = api::PublicKeyApi::init(&mut issue_enclave);
+    let public_key_api = api::PublicKeyApi::init(&mut issue_enclave)?;
     let issue_api = api::IssueApi::init(issue_enclave);
 
     api_app.get(DEFAULT_PUBLIC_KEY_API, Arc::new(public_key_api));
@@ -78,7 +81,7 @@ pub fn build_server(
         &server.configuration,
         StarProxy {
             upstream_addr: upstream_addr.to_string(),
-            filter: Mutex::new(filter)
+            filter: Mutex::new(filter),
         },
     );
     proxy_svc.threads = env_usize("STAR_PROXY_THREADS");
@@ -88,7 +91,7 @@ pub fn build_server(
 
     if tls_cert_path != "" && tls_key_path != "" {
         println!("use tls");
-        let tls_settings = TlsSettings::intermediate(&tls_cert_path, &tls_key_path).unwrap();
+        let tls_settings = TlsSettings::intermediate(&tls_cert_path, &tls_key_path)?;
         proxy_svc.add_tls_with_settings(proxy_addr, None, tls_settings);
     } else {
         println!("use plain");
@@ -97,7 +100,7 @@ pub fn build_server(
 
     server.add_service(proxy_svc);
 
-    server
+    Ok(server)
 }
 
 #[cfg(test)]

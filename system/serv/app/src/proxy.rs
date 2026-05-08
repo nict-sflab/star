@@ -4,9 +4,8 @@ use pingora::upstreams::peer::HttpPeer;
 use pingora_http::ResponseHeader;
 use pingora_proxy::{ProxyHttp, Session};
 use pingora_web::StatusCode;
-use tokio::sync::{Mutex, RwLock};
-use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Mutex;
 
 use simple_filter_box::core::FilterBox;
 
@@ -22,7 +21,7 @@ async fn exit_filter(
     status: impl TryInto<StatusCode>,
     session: &mut Session,
 ) -> pingora::Result<bool> {
-    let mut header = ResponseHeader::build(status, None).unwrap();
+    let mut header = ResponseHeader::build(status, None)?;
     with_cors(&mut header, session.req_header())?;
     session
         .write_response_header(Box::new(header), true)
@@ -75,12 +74,11 @@ impl<T: FilterBox + Send> ProxyHttp for StarProxy<T> {
         _session: &mut Session,
         _ctx: &mut Self::CTX,
     ) -> pingora::Result<Box<HttpPeer>> {
-        let sni = self
-            .upstream_addr
-            .split(':')
-            .next()
-            .unwrap_or(self.upstream_addr.as_str())
-            .to_string();
+        let sni = match self.upstream_addr.split(':').next() {
+            Some(host) => host,
+            None => self.upstream_addr.as_str(),
+        }
+        .to_string();
         let mut peer = HttpPeer::new(self.upstream_addr.as_str(), false, sni);
         peer.options.connection_timeout = Some(Duration::from_secs(3));
         peer.options.total_connection_timeout = Some(Duration::from_secs(5));

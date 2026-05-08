@@ -1,4 +1,6 @@
-use std::{io::{self, BufReader}, process::{Child, ChildStdin, ChildStdout, Command, Stdio}, sync::Mutex};
+use std::fmt;
+use std::io::{self, BufReader};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use crate::io as utilsio;
 use crate::core;
@@ -6,48 +8,77 @@ use crate::core;
 
 #[derive(Debug)]
 pub enum SubprocessError {
+    Spawn(io::Error),
+    MissingStdin,
+    MissingStdout,
+    Io(io::Error),
     Remote { status: u8, payload: Vec<u8> },
 }
 
+impl fmt::Display for SubprocessError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Spawn(err) => write!(f, "failed to spawn subprocess: {err}"),
+            Self::MissingStdin => write!(f, "subprocess stdin was not available"),
+            Self::MissingStdout => write!(f, "subprocess stdout was not available"),
+            Self::Io(err) => write!(f, "subprocess IO failed: {err}"),
+            Self::Remote { status, payload } => write!(
+                f,
+                "subprocess returned status {status} with {} bytes",
+                payload.len()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for SubprocessError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Spawn(err) | Self::Io(err) => Some(err),
+            Self::MissingStdin | Self::MissingStdout | Self::Remote { .. } => None,
+        }
+    }
+}
+
 pub struct Subprocess {
-    child: Child,
+    _child: Child,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
 }
 
 impl Subprocess {
-    pub fn init(bin: &str) -> Self {
+    pub fn init(bin: &str) -> Result<Self, SubprocessError> {
         let mut child = Command::new(&bin)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()
-            .unwrap();
+            .map_err(SubprocessError::Spawn)?;
 
         let stdin = child
             .stdin
             .take()
-            .unwrap();
+            .ok_or(SubprocessError::MissingStdin)?;
         let stdout = child
             .stdout
             .take()
-            .unwrap();
+            .ok_or(SubprocessError::MissingStdout)?;
 
         let runtime = Subprocess {
-            child,
+            _child: child,
             stdin,
             stdout: BufReader::new(stdout),
         };
 
-        return runtime;
+        Ok(runtime)
     }
 
     pub fn call(&mut self, op: u8, payload: &[u8]) -> Result<Vec<u8>, SubprocessError> {
         let stdin = &mut self.stdin;
         let stdout = &mut self.stdout;
 
-        utilsio::write_request(stdin, op, payload).unwrap();
-        let response = utilsio::read_response(stdout).unwrap();
+        utilsio::write_request(stdin, op, payload).map_err(SubprocessError::Io)?;
+        let response = utilsio::read_response(stdout).map_err(SubprocessError::Io)?;
 
         if response.status == core::STATUS_OK {
             Ok(response.payload)
@@ -57,10 +88,5 @@ impl Subprocess {
                 payload: response.payload,
             })
         }
-    }
-
-    pub fn call_or_panic(&mut self, op: u8, payload: &[u8]) -> Vec<u8> {
-        self.call(op, payload)
-            .unwrap_or_else(|err| panic!("enclave stdio {op}: {:?}", err))
     }
 }

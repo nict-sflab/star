@@ -15,11 +15,16 @@ impl Cors {
         allow_headers: Option<&str>,
     ) {
         res.set_header("access-control-allow-origin", "*");
-        res.set_header(
-            "access-control-allow-methods",
-            allow_methods.unwrap_or("GET, POST, OPTIONS"),
-        );
-        res.set_header("access-control-allow-headers", allow_headers.unwrap_or("*"));
+        let methods = match allow_methods {
+            Some(methods) => methods,
+            None => "GET, POST, OPTIONS",
+        };
+        let headers = match allow_headers {
+            Some(headers) => headers,
+            None => "*",
+        };
+        res.set_header("access-control-allow-methods", methods);
+        res.set_header("access-control-allow-headers", headers);
         res.set_header("access-control-max-age", "86400");
     }
 

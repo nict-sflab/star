@@ -11,11 +11,12 @@ use rustls_provider::ensure_rustls_ring_provider;
 use simple_filter_box::dashmap::DashMapFilterBox;
 use star_app::all_prefix;
 use star_app::api::{DEFAULT_PUBLIC_KEY_API, DEFAULT_REGISTER_API, IssueApi, PublicKeyApi};
-use star_app::core::EnclaveRuntime;
 use star_app::cors::Cors;
+use star_app::enclave::{EnclaveRuntime, EnclaveRuntimes};
 use star_app::filter::StarFilter;
 use star_app::proxy::StarProxy;
 use std::env;
+use std::error::Error;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, mpsc};
@@ -88,17 +89,17 @@ fn build_server_with_latency(
     tls_cert_path: &str,
     tls_key_path: &str,
     latency_tx: mpsc::Sender<u64>,
-) -> Server {
+) -> Result<Server, Box<dyn Error>> {
     ensure_rustls_ring_provider();
-    let mut issue_enclave = EnclaveRuntime::from_env();
-    let filter_enclave = EnclaveRuntime::from_env();
+    let mut issue_enclave = EnclaveRuntime::from_env()?;
+    let filter_enclave = EnclaveRuntimes::from_env(10)?;
 
     let mut server = Server::new(None).expect("create server");
     server.bootstrap();
 
     let mut api_app = WebApp::default();
     api_app.use_middleware(Cors::default());
-    let public_key_api = PublicKeyApi::init(&mut issue_enclave);
+    let public_key_api = PublicKeyApi::init(&mut issue_enclave)?;
     let issue_api = IssueApi::init(issue_enclave);
     api_app.get(DEFAULT_PUBLIC_KEY_API, Arc::new(public_key_api));
     api_app.post(DEFAULT_REGISTER_API, Arc::new(issue_api));
@@ -133,7 +134,7 @@ fn build_server_with_latency(
     proxy_svc.add_tls_with_settings(proxy_addr, None, tls_settings);
 
     server.add_service(proxy_svc);
-    server
+    Ok(server)
 }
 
 fn respond_ok(mut stream: TcpStream) {
@@ -157,7 +158,7 @@ fn spawn_upstream(bind_addr: &str) -> thread::JoinHandle<()> {
     })
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn Error>> {
     env_logger::init();
 
     let api_addr = env_or_default(E2E_API_ADDR_ENV, DEFAULT_API_ADDR);
@@ -186,6 +187,6 @@ fn main() {
         &tls_cert_path,
         &tls_key_path,
         latency_tx,
-    );
-    server.run_forever();
+    )?;
+    server.run_forever()
 }
