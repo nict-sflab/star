@@ -1,29 +1,79 @@
-#![allow(unused)]
-use core::{ptr, slice};
+use rand::{rngs::OsRng, Rng, RngCore};
+use star_core::serv::enclave::Enclave;
+use std::io;
+use utils::io::{
+    OP_ISSUE_CRED, OP_ISSUE_TOKEN, OP_PUBLIC_KEY,
+    STATUS_BAD_REQUEST, STATUS_OK, STATUS_PANIC,
+};
 
-const LEN: usize = 32;
-const FUNC_ECHO: u64 = 0;
+use hpke::HpkeError;
 
+const INIT_PAYLOAD_LEN: usize = 4;
+const PERIOD_LEN: usize = 8;
 
-#[no_mangle]
-pub extern "C" fn entry(p1: u64, p2: u64, p3: u64, p4: u64, _p5: u64, _p6: u64) -> u64 {
-    if p4 != LEN as u64 {
-        return 1; // bad length
-    }
-    if p1 != FUNC_ECHO {
-        return 2; // unknown func
-    }
-
-    unsafe {
-        let in_ptr = p2 as *const u8;
-        let out_ptr = p3 as *mut u8;
-
-        let input = slice::from_raw_parts(in_ptr, LEN);
-        let output = slice::from_raw_parts_mut(out_ptr, LEN);
-        output.copy_from_slice(input);
-    }
-
-    0
+struct EnclaveApp {
+    enclave: Enclave,
+    rng: OsRng,
 }
 
-fn main() {}
+impl EnclaveApp {
+    fn new(enclave: Enclave) -> Self {
+        Self {
+            enclave,
+            rng: OsRng,
+        }
+    }
+
+    fn init<T: Rng>(max: u32, mut rng: T) -> Result<Self, HpkeError> {
+        let mut sk = [0u8; 32];
+        let mut cipher_receiver = [0u8; 32];
+        rng.fill_bytes(&mut sk);
+        rng.fill_bytes(&mut cipher_receiver);
+
+        let enclave = Enclave::new(max, sk, cipher_receiver)?;
+
+        Ok(Self::new(enclave))
+    }
+
+    fn public_key(&self, _: &[u8]) -> (u8, Vec<u8>) {
+        (STATUS_OK, self.enclave.public_key().to_vec())
+    }
+
+    fn issue_cred(&mut self, payload: &[u8]) -> (u8, Vec<u8>) {
+        let cred = self.enclave.issue_cred(payload, &mut self.rng);
+        (STATUS_OK, cred)
+    }
+
+    fn issue_token(&self, payload: &[u8]) -> (u8, Vec<u8>) {
+        if payload.len() < PERIOD_LEN {
+            return (STATUS_BAD_REQUEST, b"issue_token missing period".to_vec());
+        }
+
+        let current_period = payload[..PERIOD_LEN].try_into().expect("fixed slice");
+        let cipher = &payload[PERIOD_LEN..];
+
+        match self.enclave.issue_token(cipher, current_period) {
+            Ok(token) => (STATUS_OK, token),
+            Err(_) => (STATUS_PANIC, b"issue_token panicked".to_vec()),
+        }
+    }
+}
+
+impl utils::child::Commands for EnclaveApp {
+    fn handle(&mut self, op: u8, payload: &[u8]) -> (u8, Vec<u8>) {
+        match op {
+            OP_PUBLIC_KEY => self.public_key(payload),
+            OP_ISSUE_CRED => self.issue_cred(payload),
+            OP_ISSUE_TOKEN => self.issue_token(payload),
+            _ => (STATUS_BAD_REQUEST, b"unknown operation".to_vec()),
+        }
+    }
+}
+use rand::{rngs::StdRng, SeedableRng};
+
+pub fn run_stdio() -> io::Result<()> {
+    let rng = StdRng::seed_from_u64(10);
+    let mut app = EnclaveApp::init(3, rng).unwrap();
+
+    utils::child::run_stdio(&mut app)
+}

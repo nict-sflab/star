@@ -7,22 +7,19 @@ use latency_proxy::StarLatencyProxy;
 use pingora::{listeners::tls::TlsSettings, server::Server};
 use pingora_proxy::http_proxy_service;
 use pingora_web::App as WebApp;
-use rand_core::{OsRng, RngCore};
-use simple_filter_box::hashmap::HashMapFilterBox;
-use star_app::api::{DEFAULT_PUBLIC_KEY_API, DEFAULT_REGISTER_API, issue_api, public_key_api};
-use star_app::core::ENCLAVE;
+use rustls_provider::ensure_rustls_ring_provider;
+use simple_filter_box::dashmap::DashMapFilterBox;
+use star_app::all_prefix;
+use star_app::api::{DEFAULT_PUBLIC_KEY_API, DEFAULT_REGISTER_API, IssueApi, PublicKeyApi};
+use star_app::core::EnclaveRuntime;
 use star_app::cors::Cors;
 use star_app::filter::StarFilter;
 use star_app::proxy::StarProxy;
-use star_app::all_prefix;
-use star_core::serv::enclave::Enclave;
-use std::collections::HashMap;
 use std::env;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::thread;
-use rustls_provider::ensure_rustls_ring_provider;
 use tokio::sync::Mutex;
 
 const E2E_API_ADDR_ENV: &str = "STAR_E2E_API_ADDR";
@@ -42,10 +39,9 @@ const DEFAULT_API_THREADS: usize = 1;
 const DEFAULT_PROXY_THREADS: usize = 2;
 const TLS_CERT_RELATIVE_PATH: &str = "examples/certs/server.crt";
 const TLS_KEY_RELATIVE_PATH: &str = "examples/certs/server.key";
-const MAX_COUNT: u32 = 10;
 const ONLY_PROXY: bool = false;
 
-type BenchFilter = StarFilter<HashMapFilterBox>;
+type BenchFilter = StarFilter<DashMapFilterBox>;
 
 fn env_or_default(name: &str, default: &str) -> String {
     env::var(name).unwrap_or_else(|_| default.to_string())
@@ -94,40 +90,36 @@ fn build_server_with_latency(
     latency_tx: mpsc::Sender<u64>,
 ) -> Server {
     ensure_rustls_ring_provider();
-
-    ENCLAVE.get_or_init(|| {
-        let mut rng = OsRng;
-        let mut cipher_receiver = [0u8; 32];
-        let mut sk = [0u8; 32];
-        rng.fill_bytes(&mut cipher_receiver);
-        rng.fill_bytes(&mut sk);
-        Enclave::new(MAX_COUNT, sk, cipher_receiver).expect("init enclave")
-    });
+    let mut issue_enclave = EnclaveRuntime::from_env();
+    let filter_enclave = EnclaveRuntime::from_env();
 
     let mut server = Server::new(None).expect("create server");
     server.bootstrap();
 
     let mut api_app = WebApp::default();
     api_app.use_middleware(Cors::default());
-    api_app.get_fn(DEFAULT_PUBLIC_KEY_API, public_key_api);
-    api_app.post_fn(DEFAULT_REGISTER_API, issue_api);
+    let public_key_api = PublicKeyApi::init(&mut issue_enclave);
+    let issue_api = IssueApi::init(issue_enclave);
+    api_app.get(DEFAULT_PUBLIC_KEY_API, Arc::new(public_key_api));
+    api_app.post(DEFAULT_REGISTER_API, Arc::new(issue_api));
 
     let mut api_svc = api_app.to_service("api");
     api_svc.threads = Some(api_threads);
     api_svc.add_tcp(api_addr);
     server.add_service(api_svc);
 
-    let mut filters: HashMap<u32, Mutex<HashMapFilterBox>> = HashMap::new();
-    for prefix in prefixes {
-        filters.insert(prefix, Mutex::new(HashMapFilterBox::new()));
-    }
-    let filter = BenchFilter::new(filters, max_prefix);
+    let filter = BenchFilter::new(
+        DashMapFilterBox::new(),
+        prefixes,
+        max_prefix,
+        filter_enclave,
+    );
 
     let mut proxy_svc = http_proxy_service(
         &server.configuration,
         StarLatencyProxy {
             inner: StarProxy {
-                filter,
+                filter: Mutex::new(filter),
                 upstream_addr: upstream_addr.to_string(),
             },
             latency_tx,

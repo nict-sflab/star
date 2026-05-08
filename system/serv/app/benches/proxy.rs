@@ -9,15 +9,12 @@ use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use pingora::listeners::tls::TlsSettings;
 use pingora::server::Server;
 use pingora_proxy::http_proxy_service;
-use rand_core::{OsRng, RngCore};
-use simple_filter_box::hashmap::HashMapFilterBox;
-use star_app::core::ENCLAVE;
+use rand_core::OsRng;
+use simple_filter_box::dashmap::DashMapFilterBox;
+use star_app::core::EnclaveRuntime;
 use star_app::filter::StarFilter;
 use star_app::proxy::StarProxy;
-use star_core::{
-    client::User, secure_channel::client::SecureChannelClient, serv::enclave::Enclave,
-};
-use std::collections::HashMap;
+use star_core::{client::User, secure_channel::client::SecureChannelClient};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc;
@@ -30,35 +27,27 @@ const STARTUP_RETRY_DELAY: Duration = Duration::from_millis(50);
 const WARMUP_REQUESTS: usize = 128;
 const TLS_CERT_RELATIVE_PATH: &str = "examples/certs/server.crt";
 const TLS_KEY_RELATIVE_PATH: &str = "examples/certs/server.key";
-const ENCLAVE_MAX_COUNT: u32 = 1_000_000;
-const MAX_COUNT_PER_CREDENTIAL: u64 = ENCLAVE_MAX_COUNT as u64;
+const MAX_COUNT_PER_CREDENTIAL: u64 = 3;
 
 const PROXY_ONLY: bool = false;
 
-type BenchFilter = StarFilter<HashMapFilterBox>;
+type BenchFilter = StarFilter<DashMapFilterBox>;
 
-fn build_star_proxy(upstream_addr: String) -> StarProxy<HashMapFilterBox> {
-    let mut filters: HashMap<u32, Mutex<HashMapFilterBox>> = HashMap::new();
-    filters.insert(0, Mutex::new(HashMapFilterBox::new()));
-    let filter = BenchFilter::new(filters, 1);
+fn build_star_proxy(upstream_addr: String) -> StarProxy<DashMapFilterBox> {
+    let filter = BenchFilter::new(
+        DashMapFilterBox::new(),
+        vec![0],
+        1,
+        EnclaveRuntime::from_env(),
+    );
     StarProxy {
-        filter,
+        filter: Mutex::new(filter),
         upstream_addr,
     }
 }
 
-fn init_enclave() {
-    ENCLAVE.get_or_init(|| {
-        let mut rng = OsRng;
-        let mut cipher_receiver = [0u8; 32];
-        let mut sk = [0u8; 32];
-        rng.fill_bytes(&mut cipher_receiver);
-        rng.fill_bytes(&mut sk);
-        Enclave::new(ENCLAVE_MAX_COUNT, sk, cipher_receiver).expect("init enclave")
-    });
-}
-
 struct TokenGenerator {
+    issue_enclave: EnclaveRuntime,
     user: User,
     counter: u64,
     period: u64,
@@ -66,21 +55,21 @@ struct TokenGenerator {
 }
 
 impl TokenGenerator {
-    fn register_user(rng: &mut OsRng) -> User {
-        let enclave = ENCLAVE.get().expect("enclave initialized");
-        let sender = SecureChannelClient::new(enclave.public_key()).expect("secure channel");
+    fn register_user(issue_enclave: &mut EnclaveRuntime, rng: &mut OsRng) -> User {
+        let sender = SecureChannelClient::new(issue_enclave.public_key()).expect("secure channel");
         let mut user = User::new(MAX_COUNT_PER_CREDENTIAL, sender);
         let (cred_request, shared_key) = user.request_credential(rng);
-        let cred_cipher = enclave.issue_cred(&cred_request, rng);
+        let cred_cipher = issue_enclave.issue_cred(&cred_request);
         user.receive_credential(&cred_cipher, &shared_key);
         user
     }
 
     fn new() -> Self {
-        init_enclave();
+        let mut issue_enclave = EnclaveRuntime::from_env();
         let mut rng = OsRng;
-        let user = Self::register_user(&mut rng);
+        let user = Self::register_user(&mut issue_enclave, &mut rng);
         Self {
+            issue_enclave,
             user,
             counter: 0,
             period: u64::from_be_bytes(ct_time::current_period()),
@@ -89,7 +78,7 @@ impl TokenGenerator {
     }
 
     fn rotate_credential(&mut self) {
-        self.user = Self::register_user(&mut self.rng);
+        self.user = Self::register_user(&mut self.issue_enclave, &mut self.rng);
         self.counter = 0;
     }
 

@@ -1,18 +1,15 @@
 use pingora::{listeners::tls::TlsSettings, server::Server};
 use pingora_proxy::http_proxy_service;
 use pingora_web::App as WebApp;
-use rand_core::{OsRng, RngCore};
-use simple_filter_box::hashmap::HashMapFilterBox;
-use star_core::serv::enclave::Enclave;
-use std::collections::HashMap;
+use simple_filter_box::dashmap::DashMapFilterBox;
 use std::env;
-use std::sync::Once;
-use tokio::sync::Mutex;
+use std::sync::{Arc, Once};
+use tokio::sync::{Mutex};
 
 use crate::filter::StarFilter;
 use crate::{
-    api::{DEFAULT_PUBLIC_KEY_API, DEFAULT_REGISTER_API, issue_api, public_key_api},
-    core::ENCLAVE,
+    api::{DEFAULT_PUBLIC_KEY_API, DEFAULT_REGISTER_API},
+    core::{EnclaveRuntime},
     cors::Cors,
     proxy::StarProxy,
 };
@@ -23,7 +20,6 @@ pub mod cors;
 pub mod filter;
 pub mod proxy;
 
-const MAX_COUNT: u32 = 10;
 static RUSTLS_PROVIDER_INIT: Once = Once::new();
 
 pub fn all_prefix(max: u32) -> Vec<u32> {
@@ -53,43 +49,36 @@ pub fn build_server(
     max_prefix: u32,
 ) -> Server {
     ensure_rustls_provider();
+    let mut filter_enclave = EnclaveRuntime::from_env();
+    let mut issue_enclave = EnclaveRuntime::from_env();
 
-    ENCLAVE.get_or_init(|| {
-        let mut rng = OsRng;
-        let mut cipher_receiver = [0u8; 32];
-        let mut sk = [0u8; 32];
-        rng.fill_bytes(&mut cipher_receiver);
-        rng.fill_bytes(&mut sk);
-        Enclave::new(MAX_COUNT, sk, cipher_receiver).expect("init enclave")
-    });
+
+    let filter_box = DashMapFilterBox::new();
+    let filter = StarFilter::new(filter_box, prefixes, max_prefix, filter_enclave);
 
     let mut server = Server::new(None).expect("create server");
     server.bootstrap();
 
     let mut api_app = WebApp::default();
     api_app.use_middleware(Cors::default());
-    api_app.get_fn(DEFAULT_PUBLIC_KEY_API, public_key_api);
-    api_app.post_fn(DEFAULT_REGISTER_API, issue_api);
+
+
+    let public_key_api = api::PublicKeyApi::init(&mut issue_enclave);
+    let issue_api = api::IssueApi::init(issue_enclave);
+
+    api_app.get(DEFAULT_PUBLIC_KEY_API, Arc::new(public_key_api));
+    api_app.post(DEFAULT_REGISTER_API, Arc::new(issue_api));
 
     let mut api_svc = api_app.to_service("api");
     api_svc.threads = env_usize("STAR_API_THREADS");
     api_svc.add_tcp(api_addr);
     server.add_service(api_svc);
 
-    let mut filter_boxes = HashMap::new();
-
-    for prefix in prefixes {
-        let filter_box = HashMapFilterBox::new();
-        filter_boxes.insert(prefix, Mutex::new(filter_box));
-    }
-
-    let filter = StarFilter::new(filter_boxes, max_prefix);
-
     let mut proxy_svc = http_proxy_service(
         &server.configuration,
         StarProxy {
-            filter,
             upstream_addr: upstream_addr.to_string(),
+            filter: Mutex::new(filter)
         },
     );
     proxy_svc.threads = env_usize("STAR_PROXY_THREADS");

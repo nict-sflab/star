@@ -49,20 +49,26 @@ fn proxy_url(proxy_addr: &str) -> String {
 
 fn wait_for_api_ready(api_addr: &str) {
     let public_key_url = format!("http://{api_addr}/star/public_key");
-    wait_until_ready("API", STARTUP_RETRIES, STARTUP_RETRY_DELAY, || {
-        match ureq::get(&public_key_url).call() {
+    wait_until_ready(
+        "API",
+        STARTUP_RETRIES,
+        STARTUP_RETRY_DELAY,
+        || match ureq::get(&public_key_url).call() {
             Ok(_) => StartupProbe::Ready,
             Err(ureq::Error::Transport(err)) => StartupProbe::Retry(err.to_string()),
             Err(ureq::Error::Status(code, _)) => StartupProbe::Fatal(format!("status {code}")),
-        }
-    });
+        },
+    );
 }
 
 fn wait_for_proxy_ready(proxy_addr: &str, tls_cert_path: &str) {
     let ready_agent = build_pinned_tls_agent(tls_cert_path, Duration::from_secs(5));
     let ready_proxy_url = proxy_url(proxy_addr);
-    wait_until_ready("proxy", STARTUP_RETRIES, STARTUP_RETRY_DELAY, || {
-        match ready_agent
+    wait_until_ready(
+        "proxy",
+        STARTUP_RETRIES,
+        STARTUP_RETRY_DELAY,
+        || match ready_agent
             .get(&ready_proxy_url)
             .set("Connection", "close")
             .call()
@@ -71,8 +77,8 @@ fn wait_for_proxy_ready(proxy_addr: &str, tls_cert_path: &str) {
             Err(ureq::Error::Transport(err)) => StartupProbe::Retry(err.to_string()),
             Err(ureq::Error::Status(code, _)) => StartupProbe::Fatal(format!("status {code}")),
             Ok(_) => StartupProbe::Fatal("expected unauthorized probe request".to_string()),
-        }
-    });
+        },
+    );
 }
 
 fn env_or_default(name: &str, default: &str) -> String {
@@ -81,9 +87,9 @@ fn env_or_default(name: &str, default: &str) -> String {
 
 fn e2e_client_threads() -> usize {
     match std::env::var(E2E_CLIENT_THREADS_ENV) {
-        Ok(raw) => raw.parse::<usize>().unwrap_or_else(|err| {
-            panic!("invalid {E2E_CLIENT_THREADS_ENV} value {raw:?}: {err}")
-        }),
+        Ok(raw) => raw
+            .parse::<usize>()
+            .unwrap_or_else(|err| panic!("invalid {E2E_CLIENT_THREADS_ENV} value {raw:?}: {err}")),
         Err(_) => DEFAULT_CLIENT_THREADS,
     }
 }
@@ -273,9 +279,7 @@ impl BenchClient {
                 assert_eq!(body.trim(), "OK");
                 Ok(())
             }
-            Err(ureq::Error::Status(code, _)) => {
-                Err(code)
-            }
+            Err(ureq::Error::Status(code, _)) => Err(code),
             Err(ureq::Error::Transport(err)) => {
                 panic!("proxy request transport error: {err}");
             }
@@ -298,12 +302,7 @@ struct ClientWorkers {
 }
 
 impl ClientWorkers {
-    fn start(
-        api_addr: &str,
-        proxy_addr: &str,
-        tls_cert_path: &str,
-        worker_count: usize,
-    ) -> Self {
+    fn start(api_addr: &str, proxy_addr: &str, tls_cert_path: &str, worker_count: usize) -> Self {
         let mut senders = Vec::with_capacity(worker_count);
         let mut handles = Vec::with_capacity(worker_count);
 
@@ -383,7 +382,9 @@ impl ClientWorkers {
         }
 
         for done_rx in done_rxs {
-            done_rx.recv().expect("wait for benchmark request completion");
+            done_rx
+                .recv()
+                .expect("wait for benchmark request completion");
         }
     }
 }
@@ -421,16 +422,12 @@ fn timed_request_batches(clients: &ClientWorkers, batches: usize) -> Duration {
 fn bench_star_e2e_throughput(c: &mut Criterion) {
     let target = RemoteTarget::from_env();
     let client_sweep = e2e_client_sweep();
-    println!(
-        "criterion report path: target/criterion/star_e2e_proxy_throughput/report/index.html"
-    );
+    println!("criterion report path: target/criterion/star_e2e_proxy_throughput/report/index.html");
 
     let mut group = c.benchmark_group("star_e2e_proxy_throughput");
     group.sample_size(20);
     group.measurement_time(Duration::from_secs(8));
-    group.plot_config(
-        PlotConfiguration::default().summary_scale(AxisScale::Linear),
-    );
+    group.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Linear));
     for client_threads in client_sweep {
         let clients = ClientWorkers::start(
             &target.api_addr,

@@ -1,53 +1,43 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
-use rand_core::{OsRng, RngCore};
-use simple_filter_box::{hashmap::HashMapFilterBox, core::Entry};
-use star_app::{core::ENCLAVE, filter::StarFilter};
-use star_core::{
-    client::User, secure_channel::client::SecureChannelClient, serv::enclave::Enclave,
-};
+use rand_core::OsRng;
+use simple_filter_box::{core::Entry, dashmap::DashMapFilterBox};
+use star_app::{core::EnclaveRuntime, filter::StarFilter};
+use star_core::{client::User, secure_channel::client::SecureChannelClient};
 use tokio::{runtime::Builder, sync::Mutex, task::JoinSet};
 
-type HashMapStarFilter = StarFilter<HashMapFilterBox>;
+type HashMapStarFilter = StarFilter<DashMapFilterBox>;
+type SharedStarFilter = Arc<Mutex<HashMapStarFilter>>;
 
 const MAX_COUNT: u32 = 1_000_000;
 const PARALLEL_OPS_PER_WORKER: usize = 64;
 const FIXED_PREFIX_MAX: u32 = 4;
 const FIXED_CONCURRENCY: usize = FIXED_PREFIX_MAX as usize;
 
-fn init_enclave() {
-    ENCLAVE.get_or_init(|| {
-        let mut rng = OsRng;
-        let mut cipher_receiver = [0u8; 32];
-        let mut sk = [0u8; 32];
-        rng.fill_bytes(&mut cipher_receiver);
-        rng.fill_bytes(&mut sk);
-        Enclave::new(MAX_COUNT, sk, cipher_receiver).expect("init enclave")
-    });
+fn fixed_prefixes() -> Vec<u32> {
+    (0..FIXED_PREFIX_MAX).collect()
 }
 
 fn build_filter() -> HashMapStarFilter {
-    let mut filters = HashMap::new();
-    for prefix in 0..FIXED_PREFIX_MAX {
-        let filter_box = HashMapFilterBox::new();
-        filters.insert(prefix, Mutex::new(filter_box));
-    }
-    StarFilter::new(filters, FIXED_PREFIX_MAX)
+    let filter_box = DashMapFilterBox::new();
+    let enclave = EnclaveRuntime::from_env();
+
+    StarFilter::new(filter_box, fixed_prefixes(), FIXED_PREFIX_MAX, enclave)
 }
 
 fn build_route_only_filter() -> HashMapStarFilter {
-    StarFilter::new(HashMap::new(), FIXED_PREFIX_MAX)
+    build_filter()
 }
 
 fn build_request() -> Vec<u8> {
-    let enclave = ENCLAVE.get().expect("enclave should be initialized");
+    let mut enclave = EnclaveRuntime::from_env();
     let sender = SecureChannelClient::new(enclave.public_key()).expect("sender init");
     let mut user = User::new(MAX_COUNT as u64, sender);
     let mut rng = OsRng;
 
     let (cred_request, shared_key) = user.request_credential(&mut rng);
-    let cred_cipher = enclave.issue_cred(&cred_request, &mut rng);
+    let cred_cipher = enclave.issue_cred(&cred_request);
     user.receive_credential(&cred_cipher, &shared_key);
 
     let period = u64::from_be_bytes(constant_time_utils::time::current_period());
@@ -62,9 +52,7 @@ fn token_from_counter(counter: u64) -> Entry {
 }
 
 fn bench_issue_token_and_route(c: &mut Criterion) {
-    init_enclave();
-
-    let filter = build_route_only_filter();
+    let mut filter = build_route_only_filter();
     let request = build_request();
 
     let mut group = c.benchmark_group("star_filter_issue_token_and_route");
@@ -75,7 +63,7 @@ fn bench_issue_token_and_route(c: &mut Criterion) {
     group.finish();
 }
 
-async fn run_check_duplication_batch(filter: Arc<HashMapStarFilter>, batch_start: u64) {
+async fn run_check_duplication_batch(filter: SharedStarFilter, batch_start: u64) {
     let mut joins = JoinSet::new();
 
     for worker in 0..FIXED_CONCURRENCY {
@@ -87,6 +75,8 @@ async fn run_check_duplication_batch(filter: Arc<HashMapStarFilter>, batch_start
                 let token = token_from_counter(idx);
                 let route = (idx as u32) % FIXED_PREFIX_MAX;
                 let result = filter
+                    .lock()
+                    .await
                     .check_duplication(black_box(&token), black_box(route))
                     .await;
                 let _ = black_box(result);
@@ -100,7 +90,7 @@ async fn run_check_duplication_batch(filter: Arc<HashMapStarFilter>, batch_start
 }
 
 async fn run_check_duplication_single_batch(
-    filter: Arc<HashMapStarFilter>,
+    filter: SharedStarFilter,
     batch_start: u64,
     batch_ops: usize,
 ) {
@@ -109,6 +99,8 @@ async fn run_check_duplication_single_batch(
         let token = token_from_counter(idx);
         let route = (idx as u32) % FIXED_PREFIX_MAX;
         let result = filter
+            .lock()
+            .await
             .check_duplication(black_box(&token), black_box(route))
             .await;
         let _ = black_box(result);
@@ -116,14 +108,12 @@ async fn run_check_duplication_single_batch(
 }
 
 fn bench_check_duplication_parallel(c: &mut Criterion) {
-    init_enclave();
-
     let rt = Builder::new_multi_thread()
         .worker_threads(FIXED_CONCURRENCY)
         .enable_all()
         .build()
         .expect("tokio runtime");
-    let filter = Arc::new(build_filter());
+    let filter = Arc::new(Mutex::new(build_filter()));
 
     let mut batch_start = 0u64;
     let batch_ops = (FIXED_CONCURRENCY * PARALLEL_OPS_PER_WORKER) as u64;
@@ -150,14 +140,12 @@ fn bench_check_duplication_parallel(c: &mut Criterion) {
 }
 
 fn bench_check_duplication_single_thread(c: &mut Criterion) {
-    init_enclave();
-
     let rt = Builder::new_current_thread()
         .enable_all()
         .build()
         .expect("tokio runtime");
-    let batch_filter = Arc::new(build_filter());
-    let per_op_filter = Arc::new(build_filter());
+    let batch_filter = Arc::new(Mutex::new(build_filter()));
+    let per_op_filter = Arc::new(Mutex::new(build_filter()));
 
     let mut batch_start = 0u64;
     let batch_ops = FIXED_CONCURRENCY * PARALLEL_OPS_PER_WORKER;
