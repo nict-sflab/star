@@ -2,13 +2,13 @@ use async_trait::async_trait;
 use pingora::upstreams::peer::HttpPeer;
 use pingora_http::ResponseHeader;
 use pingora_proxy::{ProxyHttp, Session};
-use simple_filter_box::hashmap::HashMapFilterBox;
+use simple_filter_box::dashmap::DashMapFilterBox;
 use star_app::proxy::StarProxy;
 use std::sync::mpsc;
 use std::time::{Instant, SystemTime};
 
 pub struct StarLatencyProxy {
-    pub inner: StarProxy<HashMapFilterBox>,
+    pub inner: StarProxy<DashMapFilterBox>,
     pub latency_tx: mpsc::Sender<u64>,
     pub bypass_request_filter: bool,
 }
@@ -37,7 +37,9 @@ impl ProxyHttp for StarLatencyProxy {
     where
         Self::CTX: Send + Sync,
     {
-        self.inner.early_request_filter(session, &mut ctx.inner_ctx).await
+        self.inner
+            .early_request_filter(session, &mut ctx.inner_ctx)
+            .await
     }
 
     async fn request_filter(
@@ -76,12 +78,8 @@ impl ProxyHttp for StarLatencyProxy {
             .await
     }
 
-    async fn logging(
-        &self,
-        session: &mut Session,
-        e: Option<&pingora::Error>,
-        ctx: &mut Self::CTX,
-    ) where
+    async fn logging(&self, session: &mut Session, e: Option<&pingora::Error>, ctx: &mut Self::CTX)
+    where
         Self::CTX: Send + Sync,
     {
         self.inner.logging(session, e, &mut ctx.inner_ctx).await;

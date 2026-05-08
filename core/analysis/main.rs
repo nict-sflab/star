@@ -11,7 +11,7 @@ const period: u64 = 1;
 // #[cfg(feature = "timecop")]
 fn main() {
     // End-to-end demo: issue a credential, request a token over HPKE, and inspect the token.
-    let mut rng = OsRng;
+    let mut rng: OsRng = OsRng;
 
     // Bootstrap enclave secrets.
     let mut token_sk = [0u8; 32];
