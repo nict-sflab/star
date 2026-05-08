@@ -1,10 +1,12 @@
 use async_trait::async_trait;
+use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use pingora::upstreams::peer::HttpPeer;
 use pingora_http::ResponseHeader;
 use pingora_proxy::{ProxyHttp, Session};
 use pingora_web::StatusCode;
+use tokio::sync::{Mutex, RwLock};
+use std::sync::Arc;
 use std::time::Duration;
-use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 
 use simple_filter_box::core::FilterBox;
 
@@ -12,7 +14,7 @@ use crate::cors::with_cors;
 use crate::filter::StarFilter;
 
 pub struct StarProxy<T: FilterBox + Send> {
-    pub filter: StarFilter<T>,
+    pub filter: Mutex<StarFilter<T>>,
     pub upstream_addr: String,
 }
 
@@ -62,7 +64,7 @@ impl<T: FilterBox + Send> ProxyHttp for StarProxy<T> {
             }
         };
 
-        match self.filter.filter(decoded.as_slice()).await {
+        match self.filter.lock().await.filter(decoded.as_slice()).await {
             Ok(_) => Ok(false),
             Err(err) => exit_filter(err.status_code(), session).await,
         }

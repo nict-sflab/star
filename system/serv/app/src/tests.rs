@@ -84,6 +84,7 @@ fn test_all() {
     let body = get_text_retry(&public_key_url);
     let public_key = URL_SAFE.decode(body.trim()).unwrap();
     let public_key: [u8; 32] = public_key.as_slice().try_into().unwrap();
+    println!("{:?}", public_key);
 
     let client = SecureChannelClient::new(public_key).expect("client init");
     let mut user = User::new(1, client);
@@ -91,16 +92,20 @@ fn test_all() {
     let (cred_request, shared_key) = user.request_credential(&mut rng);
     let cred_request_b64 = URL_SAFE.encode(cred_request);
 
+    println!("{cred_request_b64}");
+
     let register_url = format!("http://{api_addr}{DEFAULT_REGISTER_API}");
     let body = post_text_retry(&register_url, cred_request_b64.as_bytes());
     let cred_cipher = URL_SAFE.decode(body.trim()).unwrap();
     user.receive_credential(&cred_cipher, &shared_key);
 
     let current_period = u64::from_be_bytes(time::current_period());
-    let token_request = user
+    let token_request: Vec<u8> = user
         .request_auth(0, current_period, &mut rng)
         .expect("token request");
     let token_b64 = URL_SAFE.encode(token_request);
+    println!("{token_b64}");
+
     let proxy_url = format!("http://{proxy_addr}/");
     let body = retry_request(|| {
         Ok(ureq::get(&proxy_url)
@@ -110,7 +115,10 @@ fn test_all() {
     });
     assert_eq!(body.trim(), "OK");
 
-    match ureq::get(&proxy_url).set("X-STAR", token_b64.as_str()).call() {
+    match ureq::get(&proxy_url)
+        .set("X-STAR", token_b64.as_str())
+        .call()
+    {
         Err(ureq::Error::Status(code, _)) => assert_eq!(code, 429),
         Ok(_) => panic!("expected duplicate STAR token to be rejected"),
         Err(ureq::Error::Transport(err)) => panic!("http request failed: {err}"),
