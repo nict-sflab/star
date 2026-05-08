@@ -1,9 +1,7 @@
 use pingora::{listeners::tls::TlsSettings, server::Server};
 use pingora_proxy::http_proxy_service;
 use pingora_web::App as WebApp;
-use rand_core::{OsRng, RngCore};
 use simple_filter_box::hashmap::HashMapFilterBox;
-use star_core::serv::enclave::Enclave;
 use std::collections::HashMap;
 use std::env;
 use std::sync::Once;
@@ -12,7 +10,7 @@ use tokio::sync::Mutex;
 use crate::filter::StarFilter;
 use crate::{
     api::{DEFAULT_PUBLIC_KEY_API, DEFAULT_REGISTER_API, issue_api, public_key_api},
-    core::ENCLAVE,
+    core::{ENCLAVE, EnclaveRuntime},
     cors::Cors,
     proxy::StarProxy,
 };
@@ -54,14 +52,7 @@ pub fn build_server(
 ) -> Server {
     ensure_rustls_provider();
 
-    ENCLAVE.get_or_init(|| {
-        let mut rng = OsRng;
-        let mut cipher_receiver = [0u8; 32];
-        let mut sk = [0u8; 32];
-        rng.fill_bytes(&mut cipher_receiver);
-        rng.fill_bytes(&mut sk);
-        Enclave::new(MAX_COUNT, sk, cipher_receiver).expect("init enclave")
-    });
+    ENCLAVE.get_or_init(|| EnclaveRuntime::from_env(MAX_COUNT).expect("init enclave"));
 
     let mut server = Server::new(None).expect("create server");
     server.bootstrap();

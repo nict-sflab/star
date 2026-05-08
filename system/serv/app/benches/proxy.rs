@@ -11,12 +11,10 @@ use pingora::server::Server;
 use pingora_proxy::http_proxy_service;
 use rand_core::{OsRng, RngCore};
 use simple_filter_box::hashmap::HashMapFilterBox;
-use star_app::core::ENCLAVE;
+use star_app::core::{ENCLAVE, EnclaveRuntime};
 use star_app::filter::StarFilter;
 use star_app::proxy::StarProxy;
-use star_core::{
-    client::User, secure_channel::client::SecureChannelClient, serv::enclave::Enclave,
-};
+use star_core::{client::User, secure_channel::client::SecureChannelClient};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -54,7 +52,7 @@ fn init_enclave() {
         let mut sk = [0u8; 32];
         rng.fill_bytes(&mut cipher_receiver);
         rng.fill_bytes(&mut sk);
-        Enclave::new(ENCLAVE_MAX_COUNT, sk, cipher_receiver).expect("init enclave")
+        EnclaveRuntime::stdio(ENCLAVE_MAX_COUNT).expect("init enclave")
     });
 }
 

@@ -2,11 +2,12 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 use rand_core::{OsRng, RngCore};
-use simple_filter_box::{hashmap::HashMapFilterBox, core::Entry};
-use star_app::{core::ENCLAVE, filter::StarFilter};
-use star_core::{
-    client::User, secure_channel::client::SecureChannelClient, serv::enclave::Enclave,
+use simple_filter_box::{core::Entry, hashmap::HashMapFilterBox};
+use star_app::{
+    core::{ENCLAVE, EnclaveRuntime},
+    filter::StarFilter,
 };
+use star_core::{client::User, secure_channel::client::SecureChannelClient};
 use tokio::{runtime::Builder, sync::Mutex, task::JoinSet};
 
 type HashMapStarFilter = StarFilter<HashMapFilterBox>;
@@ -23,7 +24,7 @@ fn init_enclave() {
         let mut sk = [0u8; 32];
         rng.fill_bytes(&mut cipher_receiver);
         rng.fill_bytes(&mut sk);
-        Enclave::new(MAX_COUNT, sk, cipher_receiver).expect("init enclave")
+        EnclaveRuntime::stdio(MAX_COUNT).expect("init enclave")
     });
 }
 

@@ -8,21 +8,20 @@ use pingora::{listeners::tls::TlsSettings, server::Server};
 use pingora_proxy::http_proxy_service;
 use pingora_web::App as WebApp;
 use rand_core::{OsRng, RngCore};
+use rustls_provider::ensure_rustls_ring_provider;
 use simple_filter_box::hashmap::HashMapFilterBox;
+use star_app::all_prefix;
 use star_app::api::{DEFAULT_PUBLIC_KEY_API, DEFAULT_REGISTER_API, issue_api, public_key_api};
-use star_app::core::ENCLAVE;
+use star_app::core::{ENCLAVE, EnclaveRuntime};
 use star_app::cors::Cors;
 use star_app::filter::StarFilter;
 use star_app::proxy::StarProxy;
-use star_app::all_prefix;
-use star_core::serv::enclave::Enclave;
 use std::collections::HashMap;
 use std::env;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc;
 use std::thread;
-use rustls_provider::ensure_rustls_ring_provider;
 use tokio::sync::Mutex;
 
 const E2E_API_ADDR_ENV: &str = "STAR_E2E_API_ADDR";
@@ -101,7 +100,7 @@ fn build_server_with_latency(
         let mut sk = [0u8; 32];
         rng.fill_bytes(&mut cipher_receiver);
         rng.fill_bytes(&mut sk);
-        Enclave::new(MAX_COUNT, sk, cipher_receiver).expect("init enclave")
+        EnclaveRuntime::stdio(MAX_COUNT).expect("init enclave")
     });
 
     let mut server = Server::new(None).expect("create server");
