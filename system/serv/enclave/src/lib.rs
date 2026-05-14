@@ -1,3 +1,5 @@
+mod attest;
+
 use rand::{rngs::OsRng, Rng, RngCore};
 use star_core::serv::enclave::Enclave;
 use std::io;
@@ -57,7 +59,24 @@ impl EnclaveApp {
             Err(_) => (STATUS_PANIC, b"issue_token panicked".to_vec()),
         }
     }
+
+    fn attest(&self, _: &[u8]) -> (u8, Vec<u8>) {
+        let mut pk = self.enclave.public_key().to_vec();
+        let report_data: [u8; 64] = bytes_vec.try_into()
+            .expect("expected exactly 64 bytes");
+        
+        match create_quote(challenge) {
+            Ok(quote) => {
+                quote
+            },
+            Err(err) => {
+                eprintln!("{err}");
+                std::process::exit(1);
+            }
+        }
+    }
 }
+
 
 impl utils::child::Commands for EnclaveApp {
     fn handle(&mut self, op: u8, payload: &[u8]) -> (u8, Vec<u8>) {
