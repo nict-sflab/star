@@ -71,6 +71,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
+name = "bincode"
+version = "1.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1f45e9417d87227c7a56d22e471c6206462cba514c7590c09aff4cf6d1ddcad"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "bitflags"
 version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -231,11 +240,15 @@ checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 name = "enclave"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
  "aesm-client",
+ "bincode",
  "hpke",
  "rand",
+ "serde",
  "sgx-isa",
  "star-core",
+ "thiserror",
  "utils",
 ]
 
@@ -612,6 +625,7 @@ version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5ca0ecfa931c29007047d1bc58e623ab12e5590e8c7cc53200d5202b69266d8a"
 dependencies = [
+ "libc",
  "rand_chacha",
  "rand_core",
 ]
@@ -755,6 +769,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c6e0a0ec672089f6662b6b5fc4ca8a88e979aae8ceb3e24f1c63ffdab681a12e"
 dependencies = [
  "bitflags 1.3.2",
+ "serde",
 ]
 
 [[package]]

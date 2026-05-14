@@ -1,17 +1,18 @@
 mod attest;
+mod seal;
 
 use rand::{rngs::OsRng, Rng, RngCore};
 use star_core::serv::enclave::Enclave;
-use std::io;
+use std::{fs, io, path::Path};
 use utils::io::{
-    OP_ISSUE_CRED, OP_ISSUE_TOKEN, OP_PUBLIC_KEY,
-    STATUS_BAD_REQUEST, STATUS_OK, STATUS_PANIC,
+    OP_ISSUE_CRED, OP_ISSUE_TOKEN, OP_PUBLIC_KEY, STATUS_BAD_REQUEST, STATUS_OK, STATUS_PANIC,
 };
-
-use hpke::HpkeError;
 
 const INIT_PAYLOAD_LEN: usize = 4;
 const PERIOD_LEN: usize = 8;
+const MAX_TICKETS: u32 = 3_000_000_000;
+const SEALED_ENC_KEY_FILE: &str = "sealed_enc_key.bin";
+const SEALED_PRF_KEY_FILE: &str = "sealed_prf_key.bin";
 
 struct EnclaveApp {
     enclave: Enclave,
@@ -26,13 +27,36 @@ impl EnclaveApp {
         }
     }
 
-    fn init<T: Rng>(max: u32, mut rng: T) -> Result<Self, HpkeError> {
+    fn init<T: Rng>(max: u32, mut rng: T) -> io::Result<Self> {
         let mut sk = [0u8; 32];
-        let mut cipher_receiver = [0u8; 32];
+        let mut cipher_receiver: [u8; 32] = [0u8; 32];
         rng.fill_bytes(&mut sk);
         rng.fill_bytes(&mut cipher_receiver);
 
-        let enclave = Enclave::new(max, sk, cipher_receiver)?;
+        let sealed_enc_key = seal::seal(ENC_KEY, &sk).map_err(to_io)?;
+        let sealed_prf_key = seal::seal(PRF_KEY, &cipher_receiver).map_err(to_io)?;
+        fs::write(SEALED_ENC_KEY_FILE, sealed_enc_key)?;
+        fs::write(SEALED_PRF_KEY_FILE, sealed_prf_key)?;
+
+        let enclave = Enclave::new(max, sk, cipher_receiver).map_err(to_io)?;
+
+        Ok(Self::new(enclave))
+    }
+
+    fn load(max: u32) -> io::Result<Self> {
+        let sealed_enc_key = fs::read(SEALED_ENC_KEY_FILE)?;
+        let sealed_prf_key = fs::read(SEALED_PRF_KEY_FILE)?;
+
+        let sk: [u8; 32] = seal::unseal(ENC_KEY, &sealed_enc_key)
+            .map_err(to_io)?
+            .try_into()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "bad sealed enc key"))?;
+        let cipher_receiver: [u8; 32] = seal::unseal(PRF_KEY, &sealed_prf_key)
+            .map_err(to_io)?
+            .try_into()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "bad sealed prf key"))?;
+
+        let enclave = Enclave::new(max, sk, cipher_receiver).map_err(to_io)?;
 
         Ok(Self::new(enclave))
     }
@@ -60,23 +84,18 @@ impl EnclaveApp {
         }
     }
 
-    fn attest(&self, _: &[u8]) -> (u8, Vec<u8>) {
-        let mut pk = self.enclave.public_key().to_vec();
-        let report_data: [u8; 64] = bytes_vec.try_into()
-            .expect("expected exactly 64 bytes");
-        
-        match create_quote(challenge) {
-            Ok(quote) => {
-                quote
-            },
-            Err(err) => {
-                eprintln!("{err}");
-                std::process::exit(1);
-            }
+    fn attest(&self, payload: &[u8]) -> (u8, Vec<u8>) {
+        let report_data: [u8; 64] = match payload.try_into() {
+            Ok(report_data) => report_data,
+            Err(_) => return (STATUS_BAD_REQUEST, b"attest needs 64 bytes".to_vec()),
+        };
+
+        match attest::attest(report_data) {
+            Ok(quote) => (STATUS_OK, quote),
+            Err(err) => (STATUS_PANIC, err.into_bytes()),
         }
     }
 }
-
 
 impl utils::child::Commands for EnclaveApp {
     fn handle(&mut self, op: u8, payload: &[u8]) -> (u8, Vec<u8>) {
@@ -90,9 +109,21 @@ impl utils::child::Commands for EnclaveApp {
 }
 use rand::{rngs::StdRng, SeedableRng};
 
+use crate::seal::{ENC_KEY, PRF_KEY};
+
 pub fn run_stdio() -> io::Result<()> {
     let rng = StdRng::seed_from_u64(10);
-    let mut app = EnclaveApp::init(3000000000, rng).unwrap();
+    let has_sealed_keys =
+        Path::new(SEALED_ENC_KEY_FILE).exists() && Path::new(SEALED_PRF_KEY_FILE).exists();
+    let mut app = if has_sealed_keys {
+        EnclaveApp::load(MAX_TICKETS)?
+    } else {
+        EnclaveApp::init(MAX_TICKETS, rng)?
+    };
 
     utils::child::run_stdio(&mut app)
+}
+
+fn to_io<E: std::fmt::Debug>(err: E) -> io::Error {
+    io::Error::new(io::ErrorKind::Other, format!("{err:?}"))
 }
