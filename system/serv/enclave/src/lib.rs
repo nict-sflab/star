@@ -1,4 +1,4 @@
-use rand::{rngs::OsRng, Rng, RngCore};
+use rand::{rngs::OsRng, Rng};
 use star_core::serv::enclave::Enclave;
 use std::io;
 use utils::io::{
@@ -8,7 +8,7 @@ use utils::io::{
 
 use hpke::HpkeError;
 
-const INIT_PAYLOAD_LEN: usize = 4;
+//const INIT_PAYLOAD_LEN: usize = 4;
 const PERIOD_LEN: usize = 8;
 
 struct EnclaveApp {
