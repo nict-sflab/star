@@ -54,7 +54,7 @@ pub fn build_server(
     max_prefix: u32,
 ) -> Result<Server, Box<dyn Error>> {
     ensure_rustls_provider();
-    let filter_enclave = EnclaveRuntimes::from_env(10)?;
+    let filter_enclave = EnclaveRuntimes::from_env(2)?;
     let mut issue_enclave = EnclaveRuntime::from_env()?;
 
     let filter_box = DashMapFilterBox::new();

@@ -8,8 +8,9 @@ use pingora::server::{RunArgs, ShutdownSignal, ShutdownSignalWatch};
 use rand_core::OsRng;
 use star_core::client::User;
 use star_core::secure_channel::client::SecureChannelClient;
+use std::net::TcpListener;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tiny_http::{Response, Server as TinyServer};
 use tokio::sync::{Mutex as AsyncMutex, oneshot};
 
@@ -30,10 +31,18 @@ fn retry_request<T, F>(mut op: F) -> T
 where
     F: FnMut() -> Result<T, ureq::Error>,
 {
-    match op() {
-        Ok(value) => value,
-        Err(ureq::Error::Transport(err)) => panic!("http request failed: {err}"),
-        Err(ureq::Error::Status(code, _)) => panic!("http request failed: status {code}"),
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        match op() {
+            Ok(value) => return value,
+            Err(ureq::Error::Status(code, _)) => panic!("http request failed: status {code}"),
+            Err(ureq::Error::Transport(err)) => {
+                if Instant::now() >= deadline {
+                    panic!("http request failed after retrying: {err}");
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+        }
     }
 }
 
@@ -43,6 +52,14 @@ fn get_text_retry(url: &str) -> String {
 
 fn post_text_retry(url: &str, body: &[u8]) -> String {
     retry_request(|| Ok(ureq::post(url).send_bytes(body)?.into_string()?))
+}
+
+fn unused_loopback_addr() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+    listener
+        .local_addr()
+        .expect("read ephemeral address")
+        .to_string()
 }
 
 fn spawn_upstream() -> (String, thread::JoinHandle<()>) {
@@ -64,12 +81,13 @@ fn spawn_upstream() -> (String, thread::JoinHandle<()>) {
 #[test]
 fn test_all() {
     let api_addr = "127.0.0.1:8080";
-    let proxy_addr = "127.0.0.1:8081";
+    let proxy_addr = unused_loopback_addr();
     let (upstream_addr, upstream_handle) = spawn_upstream();
 
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let proxy_bind_addr = proxy_addr.clone();
     let server_handle = thread::spawn(move || {
-        let server = build_server(api_addr, proxy_addr, &upstream_addr, all_prefix(1), 1)
+        let server = build_server(api_addr, &proxy_bind_addr, &upstream_addr, all_prefix(1), 1)
             .expect("build test server");
         let shutdown = TestShutdown {
             rx: AsyncMutex::new(shutdown_rx),

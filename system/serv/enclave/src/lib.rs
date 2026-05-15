@@ -1,14 +1,13 @@
 mod attest;
 mod seal;
 
-use rand::{rngs::OsRng, Rng, RngCore};
+use rand::{rngs::OsRng, Rng};
 use star_core::serv::enclave::Enclave;
 use std::{fs, io, path::Path};
 use utils::io::{
     OP_ISSUE_CRED, OP_ISSUE_TOKEN, OP_PUBLIC_KEY, STATUS_BAD_REQUEST, STATUS_OK, STATUS_PANIC,
 };
 
-const INIT_PAYLOAD_LEN: usize = 4;
 const PERIOD_LEN: usize = 8;
 const MAX_TICKETS: u32 = 3_000_000_000;
 const SEALED_ENC_KEY_FILE: &str = "sealed_enc_key.bin";

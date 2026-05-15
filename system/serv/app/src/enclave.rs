@@ -1,9 +1,12 @@
 use std::error::Error;
 use std::fmt;
+use std::vec;
 use std::path::PathBuf;
 use tokio::sync::Mutex;
 use utils::io::{OP_ISSUE_CRED, OP_ISSUE_TOKEN, OP_PUBLIC_KEY};
 use utils::parent::SubprocessError;
+
+const CARGO_NAME : &str = "cargo";
 
 pub struct EnclaveRuntimes {
     inner: Mutex<Vec<EnclaveRuntime>>,
@@ -42,11 +45,11 @@ impl From<SubprocessError> for EnclaveError {
 }
 
 impl EnclaveRuntimes {
-    pub fn init(name: &str, num: u8) -> Result<Self, EnclaveError> {
+    pub fn init(args: &[String], num: u8) -> Result<Self, EnclaveError> {
         let mut in_use = vec![];
 
         for _ in 0..num {
-            let enclave = EnclaveRuntime::init(name)?;
+            let enclave = EnclaveRuntime::init(args)?;
             in_use.push(enclave);
         }
 
@@ -55,8 +58,8 @@ impl EnclaveRuntimes {
         })
     }
     pub fn from_env(num: u8) -> Result<Self, EnclaveError> {
-        let name = default_enclave_bin();
-        EnclaveRuntimes::init(&name, num)
+        let args = default_enclave_bin();
+        EnclaveRuntimes::init(&args, num)
     }
     pub async fn pick(&mut self) -> Option<EnclaveRuntime> {
         self.inner.lock().await.pop()
@@ -72,14 +75,14 @@ pub struct EnclaveRuntime {
 }
 
 impl EnclaveRuntime {
-    pub fn init(name: &str) -> Result<Self, EnclaveError> {
-        let process = utils::parent::Subprocess::init(name)?;
+    pub fn init(args: &[String]) -> Result<Self, EnclaveError> {
+        let process = utils::parent::Subprocess::init(CARGO_NAME, args)?;
         Ok(EnclaveRuntime { process })
     }
 
     pub fn from_env() -> Result<Self, EnclaveError> {
-        let name = default_enclave_bin();
-        Self::init(&name)
+        let args = default_enclave_bin();
+        Self::init(&args)
     }
 
     pub fn public_key(&mut self) -> Result<[u8; 32], EnclaveError> {
@@ -109,21 +112,36 @@ impl EnclaveRuntime {
     }
 }
 
-fn default_enclave_bin() -> String {
-    let profile = if cfg!(debug_assertions) {
-        "debug"
-    } else {
-        "release"
-    };
+fn default_enclave_bin() -> vec::Vec<String> {
     let manifest_dir = match option_env!("CARGO_MANIFEST_DIR") {
         Some(dir) => dir,
         None => ".",
     };
 
-    PathBuf::from(manifest_dir)
-        .join("../enclave/target")
-        .join(profile)
-        .join("enclave")
+    let manifest_path = PathBuf::from(manifest_dir)
+        .join("../enclave/Cargo.toml")
         .to_string_lossy()
-        .into_owned()
+        .into_owned();
+
+    let mut args = vec![
+        "run".to_string(),
+        "--quiet".to_string(),
+        "--manifest-path".to_string(),
+        manifest_path,
+    ];
+
+    println!("{:?}", args);
+
+    if cfg!(debug_assertions) {
+    } else {
+        args.append(
+            vec![
+                "--release".to_string(),
+                "--target".to_string(),
+                "x86_64-fortanix-unknown-sgx".to_string()
+            ].as_mut()
+        )
+    }
+
+    args
 }
