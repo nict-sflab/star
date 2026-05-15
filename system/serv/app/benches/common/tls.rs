@@ -82,8 +82,13 @@ fn load_first_cert_der(cert_path: &str) -> Vec<u8> {
 pub fn ensure_rustls_ring_provider() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
-        let _ = rustls::crypto::ring::default_provider().install_default();
-        let _ = ureq::rustls::crypto::ring::default_provider().install_default();
+        let mut provider = rustls::crypto::ring::default_provider();
+        provider.kx_groups = vec![rustls::crypto::ring::kx_group::X25519];
+        let _ = provider.install_default();
+
+        let mut ureq_provider = ureq::rustls::crypto::ring::default_provider();
+        ureq_provider.kx_groups = vec![ureq::rustls::crypto::ring::kx_group::X25519];
+        let _ = ureq_provider.install_default();
     });
 }
 

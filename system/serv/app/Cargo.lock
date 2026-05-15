@@ -3137,6 +3137,7 @@ dependencies = [
  "constant-time-utils",
  "cpu-time",
  "criterion",
+ "dashmap",
  "env_logger",
  "log",
  "pingora",
