@@ -61,5 +61,5 @@ fn main() {
         all_prefix(1),
         1,
     );
-    server.run_forever();
+    server.unwrap().run_forever();
 }

@@ -128,8 +128,7 @@ async fn run_check_duplication_batch(filter: SharedStarFilter, batch_start: u64)
                 let result = filter
                     .lock()
                     .await
-                    .check_duplication(black_box(&token), black_box(route))
-                    .await;
+                    .check_duplication(black_box(&token), black_box(route));
                 let _ = black_box(result);
             }
         });
@@ -152,8 +151,7 @@ async fn run_check_duplication_single_batch(
         let result = filter
             .lock()
             .await
-            .check_duplication(black_box(&token), black_box(route))
-            .await;
+            .check_duplication(black_box(&token), black_box(route));
         let _ = black_box(result);
     }
 }

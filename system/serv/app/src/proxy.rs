@@ -1,19 +1,19 @@
 use async_trait::async_trait;
-use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use pingora::upstreams::peer::HttpPeer;
 use pingora_http::ResponseHeader;
 use pingora_proxy::{ProxyHttp, Session};
 use pingora_web::StatusCode;
 use std::time::Duration;
-use tokio::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use simple_filter_box::core::FilterBox;
 
 use crate::cors::with_cors;
 use crate::filter::StarFilter;
+use crate::tls_token::request_from_tls_extension;
 
 pub struct StarProxy<T: FilterBox + Send> {
-    pub filter: Mutex<StarFilter<T>>,
+    pub filter: Arc<Mutex<StarFilter<T>>>,
     pub upstream_addr: String,
 }
 
@@ -27,6 +27,16 @@ async fn exit_filter(
         .write_response_header(Box::new(header), true)
         .await?;
     Ok(true)
+}
+
+fn request_from_tls_extension_required(session: &Session) -> Result<Vec<u8>, u16> {
+    let stream = session.as_downstream().stream().ok_or(403u16)?;
+    let ssl = stream.get_ssl().ok_or(403u16)?;
+    match request_from_tls_extension(ssl) {
+        Ok(request) => Ok(request),
+        Err("empty STAR TLS extension") => Err(400u16),
+        Err(_) => Err(403u16),
+    }
 }
 
 #[async_trait]
@@ -46,27 +56,7 @@ impl<T: FilterBox + Send> ProxyHttp for StarProxy<T> {
             return exit_filter(204, session).await;
         }
 
-        let req_headers = &session.req_header().headers;
-        let target = req_headers.get("X-STAR");
-
-        let x = match target {
-            Some(x) => x,
-            None => {
-                return exit_filter(403, session).await;
-            }
-        };
-
-        let decoded = match URL_SAFE.decode(x) {
-            Ok(v) => v,
-            Err(_) => {
-                return exit_filter(400, session).await;
-            }
-        };
-
-        match self.filter.lock().await.filter(decoded.as_slice()).await {
-            Ok(_) => Ok(false),
-            Err(err) => exit_filter(err.status_code(), session).await,
-        }
+        Ok(false)
     }
 
     async fn upstream_peer(
@@ -94,6 +84,6 @@ impl<T: FilterBox + Send> ProxyHttp for StarProxy<T> {
     where
         Self::CTX: Send + Sync,
     {
-        with_cors(upstream_response, session.req_header())
+        Ok(())
     }
 }

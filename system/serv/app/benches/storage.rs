@@ -57,16 +57,12 @@ unsafe impl GlobalAlloc for CountingAllocator {
         if !new_ptr.is_null() && should_count_this_allocation() {
             match new_size.cmp(&old_layout.size()) {
                 std::cmp::Ordering::Greater => {
-                    MEASURED_DELTA_BYTES.fetch_add(
-                        (new_size - old_layout.size()) as isize,
-                        Ordering::Relaxed,
-                    );
+                    MEASURED_DELTA_BYTES
+                        .fetch_add((new_size - old_layout.size()) as isize, Ordering::Relaxed);
                 }
                 std::cmp::Ordering::Less => {
-                    MEASURED_DELTA_BYTES.fetch_sub(
-                        (old_layout.size() - new_size) as isize,
-                        Ordering::Relaxed,
-                    );
+                    MEASURED_DELTA_BYTES
+                        .fetch_sub((old_layout.size() - new_size) as isize, Ordering::Relaxed);
                 }
                 std::cmp::Ordering::Equal => {}
             }

@@ -15,13 +15,13 @@ use star_app::cors::Cors;
 use star_app::enclave::{EnclaveRuntime, EnclaveRuntimes};
 use star_app::filter::StarFilter;
 use star_app::proxy::StarProxy;
+use star_app::tls_token::configure_tls_token_extension;
 use std::env;
 use std::error::Error;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, mpsc, Mutex};
 use std::thread;
-use tokio::sync::Mutex;
 
 const E2E_API_ADDR_ENV: &str = "STAR_E2E_API_ADDR";
 const E2E_PROXY_ADDR_ENV: &str = "STAR_E2E_PROXY_ADDR";
@@ -32,9 +32,9 @@ const E2E_PROXY_THREADS_ENV: &str = "STAR_E2E_PROXY_THREADS";
 const E2E_TLS_CERT_PATH_ENV: &str = "STAR_E2E_TLS_CERT_PATH";
 const E2E_TLS_KEY_PATH_ENV: &str = "STAR_E2E_TLS_KEY_PATH";
 
-const DEFAULT_API_ADDR: &str = "0.0.0.0:8080";
-const DEFAULT_PROXY_ADDR: &str = "0.0.0.0:8443";
-const DEFAULT_UPSTREAM_ADDR: &str = "127.0.0.1:3000";
+const DEFAULT_API_ADDR: &str = "127.0.0.1:8080";
+const DEFAULT_PROXY_ADDR: &str = "127.0.0.1:8443";
+const DEFAULT_UPSTREAM_ADDR: &str = "127.0.0.1:3001";
 const DEFAULT_MAX_PREFIX: u32 = 2;
 const DEFAULT_API_THREADS: usize = 1;
 const DEFAULT_PROXY_THREADS: usize = 2;
@@ -109,18 +109,18 @@ fn build_server_with_latency(
     api_svc.add_tcp(api_addr);
     server.add_service(api_svc);
 
-    let filter = BenchFilter::new(
+    let filter = Arc::new(Mutex::new(BenchFilter::new(
         DashMapFilterBox::new(),
         prefixes,
         max_prefix,
         filter_enclave,
-    );
+    )));
 
     let mut proxy_svc = http_proxy_service(
         &server.configuration,
         StarLatencyProxy {
             inner: StarProxy {
-                filter: Mutex::new(filter),
+                filter: Arc::clone(&filter),
                 upstream_addr: upstream_addr.to_string(),
             },
             latency_tx,
@@ -129,8 +129,12 @@ fn build_server_with_latency(
     );
     proxy_svc.threads = Some(proxy_threads);
 
-    let tls_settings =
+    let mut tls_settings =
         TlsSettings::intermediate(tls_cert_path, tls_key_path).expect("build pingora TLS settings");
+    if !ONLY_PROXY {
+        configure_tls_token_extension(&mut tls_settings, filter).expect("configure STAR TLS extension");
+    }
+
     proxy_svc.add_tls_with_settings(proxy_addr, None, tls_settings);
 
     server.add_service(proxy_svc);

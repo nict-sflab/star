@@ -1,12 +1,11 @@
 mod common;
 
-use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use common::latency_proxy::StarLatencyProxy;
 use common::local_http::{reserve_local_addr, spawn_ok_server};
 use common::retry::{StartupProbe, wait_until_ready};
-use common::tls::{build_pinned_tls_agent, ensure_rustls_ring_provider};
+use common::tls::StarTlsClient;
 use constant_time_utils::time as ct_time;
-use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use pingora::listeners::tls::TlsSettings;
 use pingora::server::Server;
 use pingora_proxy::http_proxy_service;
@@ -15,11 +14,12 @@ use simple_filter_box::dashmap::DashMapFilterBox;
 use star_app::enclave::{EnclaveRuntime, EnclaveRuntimes};
 use star_app::filter::StarFilter;
 use star_app::proxy::StarProxy;
+use star_app::tls_token::configure_tls_token_extension;
 use star_core::{client::User, secure_channel::client::SecureChannelClient};
-use std::sync::mpsc;
+use std::net::ToSocketAddrs;
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-use tokio::sync::Mutex;
 
 const STARTUP_RETRIES: u32 = 100;
 const STARTUP_RETRY_DELAY: Duration = Duration::from_millis(50);
@@ -27,7 +27,7 @@ const WARMUP_REQUESTS: usize = 128;
 const TLS_CERT_RELATIVE_PATH: &str = "examples/certs/server.crt";
 const TLS_KEY_RELATIVE_PATH: &str = "examples/certs/server.key";
 const MAX_COUNT_PER_CREDENTIAL: u64 = 3;
-const PROXY_AGENT_READ_TIMEOUT: Duration = Duration::from_secs(2);
+const PROXY_TLS_READ_TIMEOUT: Duration = Duration::from_secs(2);
 const LATENCY_RECV_TIMEOUT: Duration = Duration::from_secs(2);
 const BENCH_GROUP_NAME: &str = "pingora_proxy_basic_latency_tls";
 const BENCH_FUNCTION_NAME: &str = "single_thread_tls_process_cpu";
@@ -43,8 +43,9 @@ fn build_star_proxy(upstream_addr: String) -> StarProxy<DashMapFilterBox> {
         1,
         EnclaveRuntimes::from_env(10).expect("filter enclave pool"),
     );
+
     StarProxy {
-        filter: Mutex::new(filter),
+        filter: Arc::new(Mutex::new(filter)),
         upstream_addr,
     }
 }
@@ -61,11 +62,14 @@ impl TokenGenerator {
     fn register_user(issue_enclave: &mut EnclaveRuntime, rng: &mut OsRng) -> User {
         let sender = SecureChannelClient::new(issue_enclave.public_key().expect("public key"))
             .expect("secure channel");
+
         let mut user = User::new(MAX_COUNT_PER_CREDENTIAL, sender);
         let (cred_request, shared_key) = user.request_credential(rng);
+
         let cred_cipher = issue_enclave
             .issue_cred(&cred_request)
             .expect("issue credential");
+
         user.receive_credential(&cred_cipher, &shared_key);
         user
     }
@@ -74,6 +78,7 @@ impl TokenGenerator {
         let mut issue_enclave = EnclaveRuntime::from_env().expect("issue enclave");
         let mut rng = OsRng;
         let user = Self::register_user(&mut issue_enclave, &mut rng);
+
         Self {
             issue_enclave,
             user,
@@ -90,13 +95,14 @@ impl TokenGenerator {
 
     fn refresh_period(&mut self) {
         let current_period = u64::from_be_bytes(ct_time::current_period());
+
         if current_period != self.period {
             self.period = current_period;
             self.rotate_credential();
         }
     }
 
-    fn next_token(&mut self) -> String {
+    fn next_request(&mut self) -> Vec<u8> {
         self.refresh_period();
 
         if self.counter >= MAX_COUNT_PER_CREDENTIAL {
@@ -107,8 +113,9 @@ impl TokenGenerator {
             .user
             .request_auth(self.counter, self.period, &mut self.rng)
             .expect("build auth request");
+
         self.counter += 1;
-        URL_SAFE.encode(token_request)
+        token_request
     }
 }
 
@@ -133,22 +140,37 @@ fn spawn_proxy(
     latency_tx: mpsc::Sender<u64>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        ensure_rustls_ring_provider();
         let mut server = Server::new(None).expect("create pingora server");
         server.bootstrap();
+
+        let inner = build_star_proxy(upstream_addr);
 
         let mut proxy_svc = http_proxy_service(
             &server.configuration,
             StarLatencyProxy {
-                inner: build_star_proxy(upstream_addr),
+                inner: StarProxy {
+                    filter: Arc::clone(&inner.filter),
+                    upstream_addr: inner.upstream_addr.clone(),
+                },
                 latency_tx,
                 bypass_request_filter: PROXY_ONLY,
             },
         );
+
         proxy_svc.threads = Some(1);
 
-        let tls_settings = TlsSettings::intermediate(&cert_pem_path, &key_pem_path)
+        let mut tls_settings = TlsSettings::intermediate(&cert_pem_path, &key_pem_path)
             .expect("build pingora TLS settings");
+
+        tls_settings
+            .set_groups_list("X25519")
+            .expect("set server TLS group");
+
+        if !PROXY_ONLY {
+            configure_tls_token_extension(&mut tls_settings, inner.filter)
+                .expect("configure STAR TLS extension");
+        }
+
         proxy_svc.add_tls_with_settings(&proxy_addr, None, tls_settings);
 
         server.add_service(proxy_svc);
@@ -157,8 +179,8 @@ fn spawn_proxy(
 }
 
 struct BenchHarness {
-    proxy_url: String,
-    agent: ureq::Agent,
+    proxy_addr: std::net::SocketAddr,
+    star_tls_client: StarTlsClient,
     latency_rx: mpsc::Receiver<u64>,
     token_generator: TokenGenerator,
     _upstream_handle: thread::JoinHandle<()>,
@@ -169,25 +191,31 @@ impl BenchHarness {
     fn start() -> Self {
         let cert_pem_path = cert_path();
         let key_pem_path = key_path();
+
         let upstream_addr = reserve_local_addr();
         let proxy_addr = reserve_local_addr();
 
         let upstream_handle = spawn_upstream(&upstream_addr);
+
         let (latency_tx, latency_rx) = mpsc::channel();
+
         let proxy_handle = spawn_proxy(
             proxy_addr.clone(),
             upstream_addr,
-            cert_pem_path.clone(),
+            cert_pem_path,
             key_pem_path,
             latency_tx,
         );
 
-        let proxy_url = format!("https://{proxy_addr}/");
-        let agent = build_pinned_tls_agent(&cert_pem_path, PROXY_AGENT_READ_TIMEOUT);
+        let proxy_addr = proxy_addr
+            .to_socket_addrs()
+            .expect("resolve proxy address")
+            .next()
+            .expect("proxy address should resolve");
 
         let mut harness = Self {
-            proxy_url,
-            agent,
+            proxy_addr,
+            star_tls_client: StarTlsClient::new().expect("build STAR TLS client"),
             latency_rx,
             token_generator: TokenGenerator::new(),
             _upstream_handle: upstream_handle,
@@ -197,24 +225,25 @@ impl BenchHarness {
         harness.wait_until_ready();
         harness.warmup(WARMUP_REQUESTS);
         harness.drain_latencies();
+
         harness
     }
 
-    fn send_request(&self, token: &str) {
-        let response = self
-            .agent
-            .get(&self.proxy_url)
-            .set("Connection", "close")
-            .set("X-STAR", token)
-            .call()
+    fn send_request(&mut self, token_request: &[u8]) {
+        let (status, body) = self
+            .star_tls_client
+            .get(self.proxy_addr, token_request, PROXY_TLS_READ_TIMEOUT)
             .expect("request through proxy");
-        let body = response.into_string().expect("read proxy body");
+
+        assert_eq!(status, 200);
         assert_eq!(body.trim(), "OK");
     }
 
     fn one_internal_latency_ns(&mut self) -> u64 {
-        let token = self.token_generator.next_token();
-        self.send_request(&token);
+        let token_request = self.token_generator.next_request();
+
+        self.send_request(&token_request);
+
         self.latency_rx
             .recv_timeout(LATENCY_RECV_TIMEOUT)
             .expect("wait internal proxy latency")
@@ -226,29 +255,21 @@ impl BenchHarness {
             STARTUP_RETRIES,
             STARTUP_RETRY_DELAY,
             || {
-                let token = self.token_generator.next_token();
-                let result = self
-                    .agent
-                    .get(&self.proxy_url)
-                    .set("Connection", "close")
-                    .set("X-STAR", &token)
-                    .call();
-                match result {
-                    Ok(response) => {
-                        let body = response.into_string().expect("read startup body");
-                        if body.trim() == "OK" {
-                            let _ = self.latency_rx.recv_timeout(LATENCY_RECV_TIMEOUT);
-                            StartupProbe::Ready
-                        } else {
-                            StartupProbe::Retry(format!("unexpected startup body: {body:?}"))
-                        }
+                let token_request = self.token_generator.next_request();
+
+                match self.star_tls_client.get(
+                    self.proxy_addr,
+                    &token_request,
+                    PROXY_TLS_READ_TIMEOUT,
+                ) {
+                    Ok((200, body)) if body.trim() == "OK" => {
+                        let _ = self.latency_rx.recv_timeout(LATENCY_RECV_TIMEOUT);
+                        StartupProbe::Ready
                     }
-                    Err(ureq::Error::Status(code, _)) => {
-                        StartupProbe::Retry(format!("startup status error: {code}"))
+                    Ok((status, _)) => {
+                        StartupProbe::Retry(format!("startup status error: {status}"))
                     }
-                    Err(ureq::Error::Transport(err)) => {
-                        StartupProbe::Retry(format!("startup transport error: {err}"))
-                    }
+                    Err(err) => StartupProbe::Retry(format!("startup transport error: {err}")),
                 }
             },
         );
@@ -272,13 +293,16 @@ fn bench_pingora_proxy_basic_latency_tls(c: &mut Criterion) {
     group.sample_size(40);
     group.measurement_time(Duration::from_secs(6));
     group.throughput(Throughput::Elements(1));
+
     group.bench_function(BENCH_FUNCTION_NAME, |b| {
         b.iter_custom(|iters| {
             common::measure_process_cpu_time(iters, || {
-                let _ = harness.one_internal_latency_ns();
+                let latency_ns = harness.one_internal_latency_ns();
+                std::hint::black_box(latency_ns);
             })
         });
     });
+
     group.finish();
 }
 

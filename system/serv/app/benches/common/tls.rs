@@ -1,5 +1,9 @@
+use openssl::ssl::{ExtensionContext, SslAlert, SslConnector, SslMethod, SslVerifyMode};
+use star_app::tls_token::STAR_TLS_EXTENSION_TYPE;
 use std::fs;
-use std::sync::{Arc, Once};
+use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpStream};
+use std::sync::{Arc, Mutex, Once};
 use std::time::Duration;
 use ureq::rustls::client::danger::{
     HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier,
@@ -71,6 +75,7 @@ fn load_first_cert_der(cert_path: &str) -> Vec<u8> {
     let mut certs = CertificateDer::pem_slice_iter(&cert_pem)
         .collect::<Result<Vec<_>, _>>()
         .expect("parse TLS cert PEM");
+
     certs
         .drain(..)
         .next()
@@ -93,11 +98,26 @@ pub fn ensure_rustls_ring_provider() {
 }
 
 pub fn build_pinned_tls_agent(cert_path: &str, read_timeout: Duration) -> ureq::Agent {
+    build_pinned_tls_agent_with_resolver(cert_path, read_timeout, |netloc: &str| {
+        use std::net::ToSocketAddrs;
+        netloc.to_socket_addrs().map(Iterator::collect)
+    })
+}
+
+pub fn build_pinned_tls_agent_with_resolver<R>(
+    cert_path: &str,
+    read_timeout: Duration,
+    resolver: R,
+) -> ureq::Agent
+where
+    R: ureq::Resolver + 'static,
+{
     ensure_rustls_ring_provider();
 
     let verifier = PinnedServerCertVerifier {
         expected_leaf_der: load_first_cert_der(cert_path),
     };
+
     let tls_config = ureq::rustls::ClientConfig::builder()
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(verifier))
@@ -105,9 +125,116 @@ pub fn build_pinned_tls_agent(cert_path: &str, read_timeout: Duration) -> ureq::
 
     ureq::AgentBuilder::new()
         .tls_config(Arc::new(tls_config))
+        .resolver(resolver)
         .max_idle_connections(0)
         .max_idle_connections_per_host(0)
         .timeout_connect(Duration::from_secs(2))
         .timeout_read(read_timeout)
         .build()
+}
+
+pub struct StarTlsClient {
+    connector: SslConnector,
+    current_ext: Arc<Mutex<Vec<u8>>>,
+}
+
+impl StarTlsClient {
+    pub fn new() -> Result<Self, String> {
+        let current_ext = Arc::new(Mutex::new(Vec::new()));
+
+        let mut builder = SslConnector::builder(SslMethod::tls()).map_err(|e| e.to_string())?;
+        builder.set_verify(SslVerifyMode::NONE);
+        builder
+            .set_groups_list("X25519")
+            .map_err(|e| e.to_string())?;
+
+        let ext_ref = Arc::clone(&current_ext);
+        builder
+            .add_custom_ext(
+                STAR_TLS_EXTENSION_TYPE,
+                ExtensionContext::CLIENT_HELLO,
+                move |_, _, _| {
+                    let ext = ext_ref
+                        .lock()
+                        .map_err(|_| SslAlert::DECODE_ERROR)?
+                        .clone();
+
+                    if ext.is_empty() {
+                        return Err(SslAlert::DECODE_ERROR);
+                    }
+
+                    Ok(Some(ext))
+                },
+                |_, _, _, _| Ok(()),
+            )
+            .map_err(|e| e.to_string())?;
+
+        Ok(Self {
+            connector: builder.build(),
+            current_ext,
+        })
+    }
+
+    pub fn get(
+        &self,
+        proxy_addr: SocketAddr,
+        token_request: &[u8],
+        read_timeout: Duration,
+    ) -> Result<(u16, String), String> {
+        {
+            let mut current_ext = self
+                .current_ext
+                .lock()
+                .map_err(|_| "STAR TLS extension mutex poisoned".to_string())?;
+            current_ext.clear();
+            current_ext.extend_from_slice(token_request);
+        }
+
+        let stream = TcpStream::connect_timeout(&proxy_addr, Duration::from_secs(2))
+            .map_err(|e| e.to_string())?;
+
+        stream
+            .set_read_timeout(Some(read_timeout))
+            .map_err(|e| e.to_string())?;
+        stream
+            .set_write_timeout(Some(read_timeout))
+            .map_err(|e| e.to_string())?;
+
+        let mut stream = self
+            .connector
+            .connect("localhost", stream)
+            .map_err(|e| format!("tls connect failed: {e}"))?;
+
+        stream
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .map_err(|e| e.to_string())?;
+        stream.flush().map_err(|e| e.to_string())?;
+
+        let mut raw = Vec::new();
+        stream.read_to_end(&mut raw).map_err(|e| e.to_string())?;
+
+        let raw = String::from_utf8_lossy(&raw);
+        let (head, body) = raw
+            .split_once("\r\n\r\n")
+            .ok_or_else(|| "invalid HTTP response".to_string())?;
+
+        let status = head
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .ok_or_else(|| "missing HTTP status".to_string())?
+            .parse::<u16>()
+            .map_err(|e| e.to_string())?;
+
+        Ok((status, body.to_string()))
+    }
+}
+
+pub fn https_get_with_star_extension(
+    proxy_addr: SocketAddr,
+    token_request: &[u8],
+    read_timeout: Duration,
+) -> Result<(u16, String), String> {
+    let client = StarTlsClient::new()?;
+    client.get(proxy_addr, token_request, read_timeout)
 }

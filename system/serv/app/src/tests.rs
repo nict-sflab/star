@@ -1,13 +1,17 @@
 use crate::api::{DEFAULT_PUBLIC_KEY_API, DEFAULT_REGISTER_API};
 use crate::{all_prefix, build_server};
 
+use crate::tls_token::STAR_TLS_EXTENSION_TYPE;
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use constant_time_utils::time;
+use openssl::ssl::{ExtensionContext, SslConnector, SslMethod, SslVerifyMode};
 use pingora::server::{RunArgs, ShutdownSignal, ShutdownSignalWatch};
 use rand_core::OsRng;
 use star_core::client::User;
 use star_core::secure_channel::client::SecureChannelClient;
+use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::thread;
 use std::time::Duration;
 use tiny_http::{Response, Server as TinyServer};
@@ -45,8 +49,78 @@ fn post_text_retry(url: &str, body: &[u8]) -> String {
     retry_request(|| Ok(ureq::post(url).send_bytes(body)?.into_string()?))
 }
 
+fn https_get_with_star_extension(
+    proxy_addr: SocketAddr,
+    token_request: &[u8],
+) -> Result<(u16, String), String> {
+    let mut tls = SslConnector::builder(SslMethod::tls()).map_err(|e| e.to_string())?;
+    tls.set_verify(SslVerifyMode::NONE);
+
+    let ext = token_request.to_vec();
+    tls.add_custom_ext(
+        STAR_TLS_EXTENSION_TYPE,
+        ExtensionContext::TLS_ONLY
+            | ExtensionContext::CLIENT_HELLO
+            | ExtensionContext::TLS1_2_AND_BELOW_ONLY
+            | ExtensionContext::TLS1_3_ONLY,
+        move |_, _, _| Ok(Some(ext.clone())),
+        |_, _, _, _| Ok(()),
+    )
+    .map_err(|e| e.to_string())?;
+
+    let tls = tls.build();
+    https_get_with_connector(proxy_addr, tls)
+}
+
+fn https_get_without_star_extension(proxy_addr: SocketAddr) -> Result<(u16, String), String> {
+    let mut tls = SslConnector::builder(SslMethod::tls()).map_err(|e| e.to_string())?;
+    tls.set_verify(SslVerifyMode::NONE);
+
+    let tls = tls.build();
+    https_get_with_connector(proxy_addr, tls)
+}
+
+fn https_get_with_connector(
+    proxy_addr: SocketAddr,
+    tls: openssl::ssl::SslConnector,
+) -> Result<(u16, String), String> {
+    let stream = TcpStream::connect_timeout(&proxy_addr, Duration::from_secs(2))
+        .map_err(|e| e.to_string())?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .map_err(|e| e.to_string())?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .map_err(|e| e.to_string())?;
+
+    let mut stream = tls
+        .connect("localhost", stream)
+        .map_err(|e| format!("tls connect failed: {e}"))?;
+
+    stream
+        .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .map_err(|e| e.to_string())?;
+    stream.flush().map_err(|e| e.to_string())?;
+
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw).map_err(|e| e.to_string())?;
+    let raw = String::from_utf8_lossy(&raw);
+    let (head, body) = raw
+        .split_once("\r\n\r\n")
+        .ok_or_else(|| "invalid HTTP response".to_string())?;
+    let status = head
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .ok_or_else(|| "missing HTTP status".to_string())?
+        .parse::<u16>()
+        .map_err(|e| e.to_string())?;
+
+    Ok((status, body.to_string()))
+}
+
 fn spawn_upstream() -> (String, thread::JoinHandle<()>) {
-    let server = TinyServer::http("127.0.0.1:3000").expect("bind upstream");
+    let server = TinyServer::http("127.0.0.1:0").expect("bind upstream");
     let addr = server
         .server_addr()
         .to_ip()
@@ -68,6 +142,14 @@ fn test_all() {
     let (upstream_addr, upstream_handle) = spawn_upstream();
 
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let tls_cert_path = format!("{}/examples/certs/server.crt", env!("CARGO_MANIFEST_DIR"));
+    let tls_key_path = format!("{}/examples/certs/server.key", env!("CARGO_MANIFEST_DIR"));
+
+    unsafe {
+        std::env::set_var("TLS_CERT_PATH", tls_cert_path.as_str());
+        std::env::set_var("TLS_KEY_PATH", tls_key_path.as_str());
+    }
+
     let server_handle = thread::spawn(move || {
         let server = build_server(api_addr, proxy_addr, &upstream_addr, all_prefix(1), 1)
             .expect("build test server");
@@ -79,6 +161,7 @@ fn test_all() {
         };
         server.run(run_args);
     });
+
     thread::sleep(Duration::from_millis(100));
 
     let public_key_url = format!("http://{api_addr}{DEFAULT_PUBLIC_KEY_API}");
@@ -90,6 +173,7 @@ fn test_all() {
     let client = SecureChannelClient::new(public_key).expect("client init");
     let mut user = User::new(1, client);
     let mut rng = OsRng;
+
     let (cred_request, shared_key) = user.request_credential(&mut rng);
     let cred_request_b64 = URL_SAFE.encode(cred_request);
 
@@ -104,25 +188,33 @@ fn test_all() {
     let token_request: Vec<u8> = user
         .request_auth(0, current_period, &mut rng)
         .expect("token request");
-    let token_b64 = URL_SAFE.encode(token_request);
-    println!("{token_b64}");
 
-    let proxy_url = format!("http://{proxy_addr}/");
-    let body = retry_request(|| {
-        Ok(ureq::get(&proxy_url)
-            .set("X-STAR", token_b64.as_str())
-            .call()?
-            .into_string()?)
-    });
+    let proxy_socket = proxy_addr
+        .to_socket_addrs()
+        .expect("resolve proxy address")
+        .next()
+        .expect("proxy address should resolve");
+
+    let (status, body) =
+        https_get_with_star_extension(proxy_socket, &token_request).expect("proxy request");
+    assert_eq!(status, 200);
     assert_eq!(body.trim(), "OK");
 
-    match ureq::get(&proxy_url)
-        .set("X-STAR", token_b64.as_str())
-        .call()
-    {
-        Err(ureq::Error::Status(code, _)) => assert_eq!(code, 429),
-        Ok(_) => panic!("expected duplicate STAR token to be rejected"),
-        Err(ureq::Error::Transport(err)) => panic!("http request failed: {err}"),
+    match https_get_with_star_extension(proxy_socket, &token_request) {
+        Ok((status, _)) => panic!("expected handshake rejection for duplicate token, got {status}"),
+        Err(_) => {}
+    }
+
+    match https_get_with_star_extension(proxy_socket, &[]) {
+        Ok((status, _)) => panic!("expected handshake rejection for empty token, got {status}"),
+        Err(_) => {}
+    }
+
+    match https_get_without_star_extension(proxy_socket) {
+        Ok((status, _)) => {
+            panic!("expected handshake rejection when STAR extension is missing, got {status}")
+        }
+        Err(_) => {}
     }
 
     let _ = shutdown_tx.send(());

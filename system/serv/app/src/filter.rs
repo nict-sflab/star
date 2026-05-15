@@ -41,8 +41,14 @@ impl<T: FilterBox + Send> StarFilter<T> {
 
     pub async fn filter(&mut self, request: &[u8]) -> Result<(), StarFilterErrorStatus> {
         let (token, route) = self.issue_token_and_route(request).await?;
-        self.check_duplication(&token, route).await?;
+        self.check_duplication(&token, route)?;
 
+        Ok(())
+    }
+
+    pub fn filter_client_hello(&mut self, request: &[u8]) -> Result<(), StarFilterErrorStatus> {
+        let (token, route) = self.issue_token_and_route_sync(request)?;
+        self.check_duplication(&token, route)?;
         Ok(())
     }
 
@@ -82,7 +88,44 @@ impl<T: FilterBox + Send> StarFilter<T> {
         result
     }
 
-    pub async fn check_duplication(
+    pub fn issue_token_and_route_sync(
+        &mut self,
+        request: &[u8],
+    ) -> Result<(Entry, u32), StarFilterErrorStatus> {
+        let current_period = constant_time_utils::time::current_period();
+
+        let mut enclave = self
+            .enclaves
+            .try_pick()
+            .ok_or(StarFilterErrorStatus::Internal)?;
+
+        let result = (|| {
+            let token_bytes = enclave
+                .issue_token(request, current_period)
+                .map_err(|_| StarFilterErrorStatus::Internal)?;
+
+            if token_bytes.len() < 32 {
+                return Err(StarFilterErrorStatus::InvalidToken);
+            }
+
+            let token_entry: Entry = token_bytes[..32]
+                .try_into()
+                .map_err(|_| StarFilterErrorStatus::InvalidToken)?;
+
+            let token = Token::new(token_entry);
+            let route = token.route(self.prefix_max);
+
+            Ok((token.token, route))
+        })();
+
+        if !self.enclaves.try_release(enclave) {
+            return Err(StarFilterErrorStatus::Internal);
+        }
+
+        result
+    }
+
+    pub fn check_duplication(
         &mut self,
         token: &Entry,
         route: u32,

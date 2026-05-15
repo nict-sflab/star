@@ -58,12 +58,26 @@ impl EnclaveRuntimes {
         let name = default_enclave_bin();
         EnclaveRuntimes::init(&name, num)
     }
-    pub async fn pick(&mut self) -> Option<EnclaveRuntime> {
+    pub async fn pick(&self) -> Option<EnclaveRuntime> {
         self.inner.lock().await.pop()
     }
 
-    pub async fn release(&mut self, enclave: EnclaveRuntime) {
+    pub async fn release(&self, enclave: EnclaveRuntime) {
         self.inner.lock().await.push(enclave);
+    }
+
+    pub fn try_pick(&self) -> Option<EnclaveRuntime> {
+        self.inner.try_lock().ok()?.pop()
+    }
+
+    pub fn try_release(&self, enclave: EnclaveRuntime) -> bool {
+        match self.inner.try_lock() {
+            Ok(mut guard) => {
+                guard.push(enclave);
+                true
+            }
+            Err(_) => false,
+        }
     }
 }
 
