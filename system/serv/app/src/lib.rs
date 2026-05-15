@@ -42,7 +42,10 @@ fn env_usize(name: &str) -> Option<usize> {
 fn ensure_rustls_provider() {
     RUSTLS_PROVIDER_INIT.call_once(|| {
         // Rustls 0.23 may have multiple providers compiled in transitively; choose one explicitly.
-        let _ = rustls::crypto::ring::default_provider().install_default();
+        // Also force TLS key exchange groups to X25519 only.
+        let mut provider = rustls::crypto::ring::default_provider();
+        provider.kx_groups = vec![rustls::crypto::ring::kx_group::X25519];
+        let _ = provider.install_default();
     });
 }
 
