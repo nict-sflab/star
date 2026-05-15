@@ -49,6 +49,10 @@ name = "e2e"
 harness = false
 
 [[bench]]
+name = "dos"
+harness = false
+
+[[bench]]
 name = "proxy"
 harness = false
 
