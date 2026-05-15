@@ -4,14 +4,18 @@ use aes_gcm::{
 };
 use rand::random;
 use serde::{Deserialize, Serialize};
-use sgx_isa::{Attributes, ErrorCode, Keyname, Keypolicy, Keyrequest, Miscselect, Report};
+use sgx_isa::{Attributes, Miscselect};
+#[cfg(target_env = "sgx")]
+use sgx_isa::{ErrorCode, Keyname, Keypolicy, Keyrequest, Report};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum SealError {
+    #[cfg(target_env = "sgx")]
     #[error("SGX EGETKEY failed: {0:?}")]
     Sgx(ErrorCode),
 
+    #[cfg(target_env = "sgx")]
     #[error("current enclave attributes do not match sealed metadata")]
     InvalidEnclaveAttributes,
 
@@ -20,6 +24,10 @@ pub enum SealError {
 
     #[error("serialization failed: {0}")]
     Serialize(#[from] Box<bincode::ErrorKind>),
+
+    #[cfg(not(target_env = "sgx"))]
+    #[error("SGX sealing is only available inside the Fortanix SGX target")]
+    UnsupportedTarget,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -41,6 +49,38 @@ pub struct SealedBlob {
 pub const PRF_KEY: [u8; 16] = *b"prf-key         ";
 pub const ENC_KEY: [u8; 16] = *b"enc-key         ";
 
+fn seal_with_key(
+    key_bytes: [u8; 16],
+    seal_data: SealData,
+    plaintext: &[u8],
+    nonce_bytes: [u8; 12],
+) -> Result<Vec<u8>, SealError> {
+    let cipher = Aes128Gcm::new_from_slice(&key_bytes).map_err(|_| SealError::Crypto)?;
+    let nonce = Nonce::from_slice(&nonce_bytes);
+
+    let ciphertext = cipher
+        .encrypt(nonce, plaintext)
+        .map_err(|_| SealError::Crypto)?;
+
+    let blob = SealedBlob {
+        seal_data,
+        nonce: nonce_bytes,
+        ciphertext,
+    };
+
+    Ok(bincode::serialize(&blob)?)
+}
+
+fn unseal_with_key(key_bytes: [u8; 16], blob: &SealedBlob) -> Result<Vec<u8>, SealError> {
+    let cipher = Aes128Gcm::new_from_slice(&key_bytes).map_err(|_| SealError::Crypto)?;
+    let nonce = Nonce::from_slice(&blob.nonce);
+
+    cipher
+        .decrypt(nonce, blob.ciphertext.as_ref())
+        .map_err(|_| SealError::Crypto)
+}
+
+#[cfg(target_env = "sgx")]
 fn egetkey(label: [u8; 16], seal_data: &SealData) -> Result<[u8; 16], SealError> {
     let mut keyid = [0u8; 32];
     keyid[..16].copy_from_slice(&label);
@@ -60,6 +100,7 @@ fn egetkey(label: [u8; 16], seal_data: &SealData) -> Result<[u8; 16], SealError>
     req.egetkey().map_err(SealError::Sgx)
 }
 
+#[cfg(target_env = "sgx")]
 fn seal_key(label: [u8; 16]) -> Result<([u8; 16], SealData), SealError> {
     let report = Report::for_self();
 
@@ -75,6 +116,12 @@ fn seal_key(label: [u8; 16]) -> Result<([u8; 16], SealData), SealError> {
     Ok((key, seal_data))
 }
 
+#[cfg(not(target_env = "sgx"))]
+fn seal_key(_: [u8; 16]) -> Result<([u8; 16], SealData), SealError> {
+    Err(SealError::UnsupportedTarget)
+}
+
+#[cfg(target_env = "sgx")]
 fn unseal_key(label: [u8; 16], seal_data: &SealData) -> Result<[u8; 16], SealError> {
     let report = Report::for_self();
 
@@ -85,37 +132,113 @@ fn unseal_key(label: [u8; 16], seal_data: &SealData) -> Result<[u8; 16], SealErr
     egetkey(label, seal_data)
 }
 
+#[cfg(not(target_env = "sgx"))]
+fn unseal_key(_: [u8; 16], _: &SealData) -> Result<[u8; 16], SealError> {
+    Err(SealError::UnsupportedTarget)
+}
+
 pub fn seal(label: [u8; 16], plaintext: &[u8]) -> Result<Vec<u8>, SealError> {
     let (key_bytes, seal_data) = seal_key(label)?;
-
-    let cipher = Aes128Gcm::new_from_slice(&key_bytes).map_err(|_| SealError::Crypto)?;
     let nonce_bytes: [u8; 12] = random();
-    let nonce = Nonce::from_slice(&nonce_bytes);
-
-    let ciphertext = cipher
-        .encrypt(nonce, plaintext)
-        .map_err(|_| SealError::Crypto)?;
-
-    let blob = SealedBlob {
-        seal_data,
-        nonce: nonce_bytes,
-        ciphertext,
-    };
-
-    Ok(bincode::serialize(&blob)?)
+    seal_with_key(key_bytes, seal_data, plaintext, nonce_bytes)
 }
 
 pub fn unseal(label: [u8; 16], sealed: &[u8]) -> Result<Vec<u8>, SealError> {
     let blob: SealedBlob = bincode::deserialize(sealed)?;
 
     let key_bytes = unseal_key(label, &blob.seal_data)?;
+    unseal_with_key(key_bytes, &blob)
+}
 
-    let cipher = Aes128Gcm::new_from_slice(&key_bytes).map_err(|_| SealError::Crypto)?;
-    let nonce = Nonce::from_slice(&blob.nonce);
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let plaintext = cipher
-        .decrypt(nonce, blob.ciphertext.as_ref())
-        .map_err(|_| SealError::Crypto)?;
+    fn fake_seal_data() -> SealData {
+        SealData {
+            rand: [3u8; 16],
+            isvsvn: 7,
+            cpusvn: [9u8; 16],
+            attributes: Attributes::default(),
+            miscselect: Miscselect::default(),
+        }
+    }
 
-    Ok(plaintext)
+    #[test]
+    fn sealed_blob_crypto_round_trips_with_supplied_key() {
+        let key = [0x42u8; 16];
+        let nonce = [0x24u8; 12];
+        let plaintext = b"sealed enclave payload";
+
+        let sealed = seal_with_key(key, fake_seal_data(), plaintext, nonce).expect("seal");
+        let blob: SealedBlob = bincode::deserialize(&sealed).expect("deserialize sealed blob");
+
+        assert_eq!(blob.nonce, nonce);
+        assert_ne!(blob.ciphertext.as_slice(), plaintext);
+        assert_eq!(
+            unseal_with_key(key, &blob).expect("unseal"),
+            plaintext.as_slice()
+        );
+    }
+
+    #[test]
+    fn sealed_blob_rejects_modified_ciphertext() {
+        let key = [0x42u8; 16];
+        let sealed = seal_with_key(
+            key,
+            fake_seal_data(),
+            b"sealed enclave payload",
+            [0x24u8; 12],
+        )
+        .expect("seal");
+        let mut blob: SealedBlob = bincode::deserialize(&sealed).expect("deserialize sealed blob");
+
+        *blob.ciphertext.last_mut().expect("ciphertext") ^= 1;
+
+        assert!(matches!(
+            unseal_with_key(key, &blob),
+            Err(SealError::Crypto)
+        ));
+    }
+
+    #[cfg(not(target_env = "sgx"))]
+    #[test]
+    fn public_seal_reports_unsupported_outside_sgx() {
+        assert!(matches!(
+            seal(ENC_KEY, b"payload"),
+            Err(SealError::UnsupportedTarget)
+        ));
+    }
+
+    #[cfg(target_env = "sgx")]
+    #[test]
+    fn public_seal_round_trips_inside_sgx() {
+        let plaintext = b"payload sealed by SGX";
+        let sealed = seal(ENC_KEY, plaintext).expect("seal");
+
+        assert_eq!(unseal(ENC_KEY, &sealed).expect("unseal"), plaintext);
+    }
+
+    #[cfg(target_env = "sgx")]
+    #[test]
+    fn public_unseal_rejects_wrong_label_inside_sgx() {
+        let sealed = seal(ENC_KEY, b"payload sealed by SGX").expect("seal");
+
+        assert!(matches!(unseal(PRF_KEY, &sealed), Err(SealError::Crypto)));
+    }
+
+    #[cfg(target_env = "sgx")]
+    #[test]
+    fn public_unseal_rejects_changed_enclave_metadata_inside_sgx() {
+        let sealed = seal(ENC_KEY, b"payload sealed by SGX").expect("seal");
+        let mut blob: SealedBlob = bincode::deserialize(&sealed).expect("deserialize sealed blob");
+        blob.seal_data.miscselect =
+            Miscselect::from_bits_truncate(blob.seal_data.miscselect.bits() ^ 1);
+        let sealed = bincode::serialize(&blob).expect("serialize sealed blob");
+
+        assert!(matches!(
+            unseal(ENC_KEY, &sealed),
+            Err(SealError::InvalidEnclaveAttributes)
+        ));
+    }
 }

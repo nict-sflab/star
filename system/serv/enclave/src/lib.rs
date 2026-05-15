@@ -5,7 +5,8 @@ use rand::{rngs::OsRng, Rng};
 use star_core::serv::enclave::Enclave;
 use std::{fs, io, path::Path};
 use utils::io::{
-    OP_ISSUE_CRED, OP_ISSUE_TOKEN, OP_PUBLIC_KEY, STATUS_BAD_REQUEST, STATUS_OK, STATUS_PANIC,
+    OP_ATTEST, OP_ISSUE_CRED, OP_ISSUE_TOKEN, OP_PUBLIC_KEY, STATUS_BAD_REQUEST, STATUS_OK,
+    STATUS_PANIC,
 };
 
 const PERIOD_LEN: usize = 8;
@@ -102,6 +103,7 @@ impl utils::child::Commands for EnclaveApp {
             OP_PUBLIC_KEY => self.public_key(payload),
             OP_ISSUE_CRED => self.issue_cred(payload),
             OP_ISSUE_TOKEN => self.issue_token(payload),
+            OP_ATTEST => self.attest(payload),
             _ => (STATUS_BAD_REQUEST, b"unknown operation".to_vec()),
         }
     }
@@ -125,4 +127,21 @@ pub fn run_stdio() -> io::Result<()> {
 
 fn to_io<E: std::fmt::Debug>(err: E) -> io::Error {
     io::Error::new(io::ErrorKind::Other, format!("{err:?}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use utils::child::Commands;
+
+    #[test]
+    fn attest_dispatch_rejects_non_64_byte_challenge() {
+        let enclave = Enclave::new(1, [1u8; 32], [2u8; 32]).expect("enclave");
+        let mut app = EnclaveApp::new(enclave);
+
+        let (status, payload) = app.handle(OP_ATTEST, b"short");
+
+        assert_eq!(status, STATUS_BAD_REQUEST);
+        assert_eq!(payload, b"attest needs 64 bytes");
+    }
 }

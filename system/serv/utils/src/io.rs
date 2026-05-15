@@ -5,6 +5,7 @@ pub const OP_INIT: u8 = 0;
 pub const OP_PUBLIC_KEY: u8 = 1;
 pub const OP_ISSUE_CRED: u8 = 2;
 pub const OP_ISSUE_TOKEN: u8 = 3;
+pub const OP_ATTEST: u8 = 4;
 
 pub const STATUS_OK: u8 = 0;
 pub const STATUS_NOT_INITIALIZED: u8 = 1;
