@@ -10,12 +10,11 @@ use star_app::{
 use star_core::{client::User, secure_channel::client::SecureChannelClient};
 use tokio::{
     runtime::{Builder, Runtime},
-    sync::Mutex,
     task::JoinSet,
 };
 
 type HashMapStarFilter = StarFilter<DashMapFilterBox>;
-type SharedStarFilter = Arc<Mutex<HashMapStarFilter>>;
+type SharedStarFilter = Arc<HashMapStarFilter>;
 
 const MAX_COUNT: u32 = 1_000_000;
 const PARALLEL_OPS_PER_WORKER: usize = 64;
@@ -89,7 +88,7 @@ fn token_from_counter(counter: u64) -> Entry {
 
 fn bench_issue_token_and_route(c: &mut Criterion) {
     let rt = current_thread_runtime();
-    let filter = Arc::new(Mutex::new(build_filter()));
+    let filter = Arc::new(build_filter());
     let request = Arc::new(build_request());
 
     let mut group = c.benchmark_group(ISSUE_TOKEN_GROUP_NAME);
@@ -102,8 +101,6 @@ fn bench_issue_token_and_route(c: &mut Criterion) {
             let request = Arc::clone(&request);
             async move {
                 let result = filter
-                    .lock()
-                    .await
                     .issue_token_and_route(black_box(request.as_slice()))
                     .await
                     .expect("issue token and route");
@@ -125,11 +122,7 @@ async fn run_check_duplication_batch(filter: SharedStarFilter, batch_start: u64)
                 let idx = worker_start + offset as u64;
                 let token = token_from_counter(idx);
                 let route = route_for_token_index(idx);
-                let result = filter
-                    .lock()
-                    .await
-                    .check_duplication(black_box(&token), black_box(route))
-                    .await;
+                let result = filter.check_duplication(black_box(&token), black_box(route));
                 let _ = black_box(result);
             }
         });
@@ -149,18 +142,14 @@ async fn run_check_duplication_single_batch(
         let idx = batch_start + offset as u64;
         let token = token_from_counter(idx);
         let route = route_for_token_index(idx);
-        let result = filter
-            .lock()
-            .await
-            .check_duplication(black_box(&token), black_box(route))
-            .await;
+        let result = filter.check_duplication(black_box(&token), black_box(route));
         let _ = black_box(result);
     }
 }
 
 fn bench_check_duplication_parallel(c: &mut Criterion) {
     let rt = multi_thread_runtime(FIXED_CONCURRENCY);
-    let filter = Arc::new(Mutex::new(build_filter()));
+    let filter = Arc::new(build_filter());
 
     let mut batch_start = 0u64;
     let batch_ops = CHECK_DUPLICATION_BATCH_OPS as u64;
@@ -187,8 +176,8 @@ fn bench_check_duplication_parallel(c: &mut Criterion) {
 
 fn bench_check_duplication_single_thread(c: &mut Criterion) {
     let rt = current_thread_runtime();
-    let batch_filter = Arc::new(Mutex::new(build_filter()));
-    let per_op_filter = Arc::new(Mutex::new(build_filter()));
+    let batch_filter = Arc::new(build_filter());
+    let per_op_filter = Arc::new(build_filter());
 
     let mut batch_start = 0u64;
     let batch_ops = CHECK_DUPLICATION_BATCH_OPS;

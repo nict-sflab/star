@@ -6,7 +6,7 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 
 use constant_time_utils::bytes::Long;
 use pingora_web::{Handler, PingoraHttpRequest, PingoraWebHttpResponse, StatusCode, WebError};
-use tokio::sync::Mutex;
+use std::sync::Mutex;
 
 use crate::enclave::{EnclaveError, EnclaveRuntime};
 
@@ -32,7 +32,7 @@ impl Handler for IssueApi {
             }
         };
 
-        let cred = match self.enclave.lock().await.issue_cred(&decoded) {
+        let cred = match self.enclave.lock().unwrap().issue_cred(&decoded) {
             Ok(cred) => cred,
             Err(_) => {
                 return Ok(PingoraWebHttpResponse::text(
