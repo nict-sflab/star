@@ -1,10 +1,9 @@
 use std::{env, fmt, io};
 
 use pingora::protocols::Stream;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::{BoxError, MAX_HEADER_SIZE};
-
 
 pub(crate) fn find_header_end(buf: &[u8]) -> Option<usize> {
     buf.windows(4)
@@ -42,6 +41,13 @@ pub(crate) fn io_other(error: impl fmt::Display) -> io::Error {
 }
 
 pub async fn read_header(stream: &mut Stream) -> io::Result<Vec<u8>> {
+    read_header_from(stream).await
+}
+
+pub async fn read_header_from<R>(stream: &mut R) -> io::Result<Vec<u8>>
+where
+    R: AsyncRead + Unpin,
+{
     let mut out = Vec::with_capacity(4096);
     let mut buf = [0u8; 2048];
 
@@ -49,7 +55,7 @@ pub async fn read_header(stream: &mut Stream) -> io::Result<Vec<u8>> {
         let n = stream.read(&mut buf).await?;
 
         if n == 0 {
-            return Err(io_error("connection closed before request header"));
+            return Err(io_error("connection closed before header"));
         }
 
         out.extend_from_slice(&buf[..n]);
@@ -59,7 +65,7 @@ pub async fn read_header(stream: &mut Stream) -> io::Result<Vec<u8>> {
         }
 
         if out.len() > MAX_HEADER_SIZE {
-            return Err(io_error("request header too large"));
+            return Err(io_error("header too large"));
         }
     }
 }

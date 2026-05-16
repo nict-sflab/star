@@ -33,7 +33,7 @@ impl ProxyConfig {
             upstream_host,
             upstream_port,
             upstream_sni,
-            insecure_tls: utils::truthy_env("STAR_TLS_INSECURE"),
+            insecure_tls: true, //utils::truthy_env("STAR_TLS_INSECURE"),
             max_count: env::var("STAR_MAX_COUNT")
                 .ok()
                 .and_then(|value| value.parse().ok())
