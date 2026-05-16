@@ -1,12 +1,14 @@
 use std::error::Error;
 use std::fmt;
 use std::path::PathBuf;
-use tokio::sync::Mutex;
+use std::sync::{Condvar, Mutex};
 use utils::io::{OP_ISSUE_CRED, OP_ISSUE_TOKEN, OP_PUBLIC_KEY};
 use utils::parent::SubprocessError;
 
 pub struct EnclaveRuntimes {
     inner: Mutex<Vec<EnclaveRuntime>>,
+    available: Condvar,
+    total: usize,
 }
 
 #[derive(Debug)]
@@ -52,6 +54,8 @@ impl EnclaveRuntimes {
 
         Ok(EnclaveRuntimes {
             inner: Mutex::new(in_use),
+            available: Condvar::new(),
+            total: num as usize,
         })
     }
     pub fn from_env(num: u8) -> Result<Self, EnclaveError> {
@@ -59,24 +63,32 @@ impl EnclaveRuntimes {
         EnclaveRuntimes::init(&name, num)
     }
     pub async fn pick(&self) -> Option<EnclaveRuntime> {
-        self.inner.lock().await.pop()
+        self.pick_blocking()
     }
 
     pub async fn release(&self, enclave: EnclaveRuntime) {
-        self.inner.lock().await.push(enclave);
+        self.release_blocking(enclave);
     }
 
-    pub fn try_pick(&self) -> Option<EnclaveRuntime> {
-        self.inner.try_lock().ok()?.pop()
-    }
+    pub fn pick_blocking(&self) -> Option<EnclaveRuntime> {
+        if self.total == 0 {
+            return None;
+        }
 
-    pub fn try_release(&self, enclave: EnclaveRuntime) -> bool {
-        match self.inner.try_lock() {
-            Ok(mut guard) => {
-                guard.push(enclave);
-                true
+        let mut guard = self.inner.lock().ok()?;
+        loop {
+            if let Some(enclave) = guard.pop() {
+                return Some(enclave);
             }
-            Err(_) => false,
+
+            guard = self.available.wait(guard).ok()?;
+        }
+    }
+
+    pub fn release_blocking(&self, enclave: EnclaveRuntime) {
+        if let Ok(mut guard) = self.inner.lock() {
+            guard.push(enclave);
+            self.available.notify_one();
         }
     }
 }

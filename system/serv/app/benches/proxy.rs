@@ -5,7 +5,7 @@ use common::local_http::{reserve_local_addr, spawn_ok_server};
 use common::retry::{StartupProbe, wait_until_ready};
 use common::tls::StarTlsClient;
 use constant_time_utils::time as ct_time;
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use pingora::listeners::tls::TlsSettings;
 use pingora::server::Server;
 use pingora_proxy::http_proxy_service;
@@ -17,7 +17,7 @@ use star_app::proxy::StarProxy;
 use star_app::tls_token::configure_tls_token_extension;
 use star_core::{client::User, secure_channel::client::SecureChannelClient};
 use std::net::ToSocketAddrs;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Duration;
 
@@ -45,7 +45,7 @@ fn build_star_proxy(upstream_addr: String) -> StarProxy<DashMapFilterBox> {
     );
 
     StarProxy {
-        filter: Arc::new(Mutex::new(filter)),
+        filter: Arc::new(filter),
         upstream_addr,
     }
 }

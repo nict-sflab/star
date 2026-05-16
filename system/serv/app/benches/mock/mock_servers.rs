@@ -20,7 +20,7 @@ use std::env;
 use std::error::Error;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, mpsc, Mutex};
+use std::sync::{Arc, mpsc};
 use std::thread;
 
 const E2E_API_ADDR_ENV: &str = "STAR_E2E_API_ADDR";
@@ -109,12 +109,12 @@ fn build_server_with_latency(
     api_svc.add_tcp(api_addr);
     server.add_service(api_svc);
 
-    let filter = Arc::new(Mutex::new(BenchFilter::new(
+    let filter = Arc::new(BenchFilter::new(
         DashMapFilterBox::new(),
         prefixes,
         max_prefix,
         filter_enclave,
-    )));
+    ));
 
     let mut proxy_svc = http_proxy_service(
         &server.configuration,
@@ -132,7 +132,8 @@ fn build_server_with_latency(
     let mut tls_settings =
         TlsSettings::intermediate(tls_cert_path, tls_key_path).expect("build pingora TLS settings");
     if !ONLY_PROXY {
-        configure_tls_token_extension(&mut tls_settings, filter).expect("configure STAR TLS extension");
+        configure_tls_token_extension(&mut tls_settings, filter)
+            .expect("configure STAR TLS extension");
     }
 
     proxy_svc.add_tls_with_settings(proxy_addr, None, tls_settings);

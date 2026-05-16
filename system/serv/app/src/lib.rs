@@ -4,7 +4,7 @@ use pingora_web::App as WebApp;
 use simple_filter_box::dashmap::DashMapFilterBox;
 use std::env;
 use std::error::Error;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::enclave::EnclaveRuntime;
 use crate::filter::StarFilter;
@@ -50,12 +50,12 @@ pub fn build_server(
 
     let filter_box = DashMapFilterBox::new();
 
-    let filter = Arc::new(Mutex::new(StarFilter::new(
+    let filter = Arc::new(StarFilter::new(
         filter_box,
         prefixes,
         max_prefix,
         filter_enclave,
-    )));
+    ));
 
     let mut server = Server::new(None)?;
     server.bootstrap();

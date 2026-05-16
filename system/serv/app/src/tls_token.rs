@@ -7,7 +7,7 @@ use pingora::listeners::tls::TlsSettings;
 use pingora::tls::ssl::{ExtensionContext, SslAlert, SslRef};
 use simple_filter_box::core::FilterBox;
 use std::os::raw::{c_int, c_uchar, c_uint};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 use std::{ptr, slice};
 
 use crate::filter::{StarFilter, StarFilterErrorStatus};
@@ -142,9 +142,7 @@ fn token_ex_index() -> Result<Index<Ssl, Vec<u8>>, openssl::error::ErrorStack> {
 
     star_tls_debug!("created OpenSSL ex_data index");
 
-    Ok(*STAR_TLS_TOKEN_EX_INDEX
-        .get()
-        .expect("TLS token index set"))
+    Ok(*STAR_TLS_TOKEN_EX_INDEX.get().expect("TLS token index set"))
 }
 
 fn alert_for_filter_error(status: &StarFilterErrorStatus) -> SslAlert {
@@ -204,7 +202,10 @@ fn star_tls_extension_from_client_hello<'a>(ssl: &'a SslRef) -> Option<&'a [u8]>
     Some(unsafe { slice::from_raw_parts(out as *const u8, out_len) })
 }
 
-fn reject_client_hello(alert: &mut SslAlert, reason: &'static str) -> Result<ClientHelloResponse, ErrorStack> {
+fn reject_client_hello(
+    alert: &mut SslAlert,
+    reason: &'static str,
+) -> Result<ClientHelloResponse, ErrorStack> {
     star_tls_debug!(
         "rejecting ClientHello: reason={}, extension_type={}",
         reason,
@@ -217,7 +218,7 @@ fn reject_client_hello(alert: &mut SslAlert, reason: &'static str) -> Result<Cli
 
 pub fn configure_tls_token_extension<T>(
     tls_settings: &mut TlsSettings,
-    filter: Arc<Mutex<StarFilter<T>>>,
+    filter: Arc<StarFilter<T>>,
 ) -> Result<(), openssl::error::ErrorStack>
 where
     T: FilterBox + Send + 'static,
@@ -300,27 +301,7 @@ where
                 return Err(SslAlert::ILLEGAL_PARAMETER);
             }
 
-            let mut guard = match filter.lock() {
-                Ok(guard) => {
-                    star_tls_debug!(
-                        "acquired filter lock during ClientHello parse: extension_type={}",
-                        STAR_TLS_EXTENSION_TYPE
-                    );
-
-                    guard
-                }
-                Err(_) => {
-                    star_tls_debug!(
-                        "rejecting custom extension: reason=filter_lock_poisoned, extension_type={}, ext_data_len={}",
-                        STAR_TLS_EXTENSION_TYPE,
-                        ext_data.len()
-                    );
-
-                    return Err(SslAlert::DECODE_ERROR);
-                }
-            };
-
-            if let Err(filter_err) = guard.filter_client_hello(ext_data) {
+            if let Err(filter_err) = filter.filter_client_hello(ext_data) {
                 let alert = alert_for_filter_error(&filter_err);
 
                 star_tls_debug!(

@@ -3,8 +3,8 @@ use pingora::upstreams::peer::HttpPeer;
 use pingora_http::ResponseHeader;
 use pingora_proxy::{ProxyHttp, Session};
 use pingora_web::StatusCode;
+use std::sync::Arc;
 use std::time::Duration;
-use std::sync::{Arc, Mutex};
 
 use simple_filter_box::core::FilterBox;
 
@@ -13,7 +13,7 @@ use crate::filter::StarFilter;
 use crate::tls_token::request_from_tls_extension;
 
 pub struct StarProxy<T: FilterBox + Send> {
-    pub filter: Arc<Mutex<StarFilter<T>>>,
+    pub filter: Arc<StarFilter<T>>,
     pub upstream_addr: String,
 }
 

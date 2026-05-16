@@ -1,10 +1,11 @@
 use simple_filter_box::core::{Entry, FilterBox};
 use star_core::serv::core::token::Token;
+use std::sync::Mutex;
 
 use crate::enclave::EnclaveRuntimes;
 
 pub struct StarFilter<T: FilterBox + Send> {
-    pub filter: T,
+    pub filter: Mutex<T>,
     pub prefix_max: u32,
     pub prefixes: Vec<u32>,
     pub enclaves: EnclaveRuntimes,
@@ -32,28 +33,28 @@ impl StarFilterErrorStatus {
 impl<T: FilterBox + Send> StarFilter<T> {
     pub fn new(filter: T, prefixes: Vec<u32>, prefix_max: u32, enclaves: EnclaveRuntimes) -> Self {
         Self {
-            filter,
+            filter: Mutex::new(filter),
             prefixes,
             prefix_max,
             enclaves,
         }
     }
 
-    pub async fn filter(&mut self, request: &[u8]) -> Result<(), StarFilterErrorStatus> {
+    pub async fn filter(&self, request: &[u8]) -> Result<(), StarFilterErrorStatus> {
         let (token, route) = self.issue_token_and_route(request).await?;
         self.check_duplication(&token, route)?;
 
         Ok(())
     }
 
-    pub fn filter_client_hello(&mut self, request: &[u8]) -> Result<(), StarFilterErrorStatus> {
+    pub fn filter_client_hello(&self, request: &[u8]) -> Result<(), StarFilterErrorStatus> {
         let (token, route) = self.issue_token_and_route_sync(request)?;
         self.check_duplication(&token, route)?;
         Ok(())
     }
 
     pub async fn issue_token_and_route(
-        &mut self,
+        &self,
         request: &[u8],
     ) -> Result<(Entry, u32), StarFilterErrorStatus> {
         let current_period = constant_time_utils::time::current_period();
@@ -89,14 +90,14 @@ impl<T: FilterBox + Send> StarFilter<T> {
     }
 
     pub fn issue_token_and_route_sync(
-        &mut self,
+        &self,
         request: &[u8],
     ) -> Result<(Entry, u32), StarFilterErrorStatus> {
         let current_period = constant_time_utils::time::current_period();
 
         let mut enclave = self
             .enclaves
-            .try_pick()
+            .pick_blocking()
             .ok_or(StarFilterErrorStatus::Internal)?;
 
         let result = (|| {
@@ -118,15 +119,13 @@ impl<T: FilterBox + Send> StarFilter<T> {
             Ok((token.token, route))
         })();
 
-        if !self.enclaves.try_release(enclave) {
-            return Err(StarFilterErrorStatus::Internal);
-        }
+        self.enclaves.release_blocking(enclave);
 
         result
     }
 
     pub fn check_duplication(
-        &mut self,
+        &self,
         token: &Entry,
         route: u32,
     ) -> Result<(), StarFilterErrorStatus> {
@@ -134,9 +133,14 @@ impl<T: FilterBox + Send> StarFilter<T> {
             return Err(StarFilterErrorStatus::InvalidRoute);
         }
 
-        let is_new = self.filter.test(token);
+        let mut filter = self
+            .filter
+            .lock()
+            .map_err(|_| StarFilterErrorStatus::Internal)?;
+
+        let is_new = filter.test(token);
         if is_new {
-            self.filter
+            filter
                 .insert(token)
                 .map_err(|_| StarFilterErrorStatus::Internal)?;
         }
