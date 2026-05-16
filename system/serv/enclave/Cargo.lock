@@ -249,7 +249,6 @@ dependencies = [
  "sgx-isa",
  "star-core",
  "thiserror",
- "utils",
 ]
 
 [[package]]
@@ -895,10 +894,6 @@ checksum = "b57c6eace16c00eccb98a28e85db3370eab0685bdd5e13831d59e2bcb49a1d8a"
 dependencies = [
  "libc",
 ]
-
-[[package]]
-name = "utils"
-version = "0.1.0"
 
 [[package]]
 name = "version_check"

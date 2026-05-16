@@ -2,7 +2,7 @@ use aes_gcm::{
     aead::{Aead, KeyInit},
     Aes128Gcm, Nonce,
 };
-use rand::random;
+use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sgx_isa::{Attributes, Miscselect};
 #[cfg(target_env = "sgx")]
@@ -48,6 +48,12 @@ pub struct SealedBlob {
 
 pub const PRF_KEY: [u8; 16] = *b"prf-key         ";
 pub const ENC_KEY: [u8; 16] = *b"enc-key         ";
+
+fn random_bytes<const N: usize>() -> [u8; N] {
+    let mut bytes = [0u8; N];
+    OsRng.fill_bytes(&mut bytes);
+    bytes
+}
 
 fn seal_with_key(
     key_bytes: [u8; 16],
@@ -105,7 +111,7 @@ fn seal_key(label: [u8; 16]) -> Result<([u8; 16], SealData), SealError> {
     let report = Report::for_self();
 
     let seal_data = SealData {
-        rand: random(),
+        rand: random_bytes(),
         isvsvn: report.isvsvn,
         cpusvn: report.cpusvn,
         attributes: report.attributes,
@@ -139,7 +145,7 @@ fn unseal_key(_: [u8; 16], _: &SealData) -> Result<[u8; 16], SealError> {
 
 pub fn seal(label: [u8; 16], plaintext: &[u8]) -> Result<Vec<u8>, SealError> {
     let (key_bytes, seal_data) = seal_key(label)?;
-    let nonce_bytes: [u8; 12] = random();
+    let nonce_bytes = random_bytes();
     seal_with_key(key_bytes, seal_data, plaintext, nonce_bytes)
 }
 

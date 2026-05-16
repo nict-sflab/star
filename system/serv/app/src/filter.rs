@@ -51,6 +51,8 @@ impl<T: FilterBox + Send> StarFilter<T> {
         request: &[u8],
     ) -> Result<(Entry, u32), StarFilterErrorStatus> {
         let current_period = constant_time_utils::time::current_period();
+        let request = request.to_vec();
+        let prefix_max = self.prefix_max;
 
         let mut enclave = self
             .enclaves
@@ -58,27 +60,34 @@ impl<T: FilterBox + Send> StarFilter<T> {
             .await
             .ok_or(StarFilterErrorStatus::Internal)?;
 
-        let result = (|| {
-            let token_bytes = enclave
-                .issue_token(request, current_period)
-                .map_err(|_| StarFilterErrorStatus::Internal)?;
+        let result = tokio::task::spawn_blocking(move || {
+            let token_bytes = match enclave.issue_token(&request, current_period) {
+                Ok(token_bytes) => token_bytes,
+                Err(_) => return (enclave, Err(StarFilterErrorStatus::Internal)),
+            };
 
             if token_bytes.len() < 32 {
-                return Err(StarFilterErrorStatus::InvalidToken);
+                return (enclave, Err(StarFilterErrorStatus::InvalidToken));
             }
 
-            let token_entry: Entry = token_bytes[..32]
-                .try_into()
-                .map_err(|_| StarFilterErrorStatus::InvalidToken)?;
+            let token_entry: Entry = match token_bytes[..32].try_into() {
+                Ok(token_entry) => token_entry,
+                Err(_) => return (enclave, Err(StarFilterErrorStatus::InvalidToken)),
+            };
 
             let token = Token::new(token_entry);
-            let route = token.route(self.prefix_max);
+            let route = token.route(prefix_max);
 
-            Ok((token.token, route))
-        })();
+            (enclave, Ok((token.token, route)))
+        })
+        .await;
+
+        let (enclave, result) = match result {
+            Ok(result) => result,
+            Err(_) => return Err(StarFilterErrorStatus::Internal),
+        };
 
         self.enclaves.release(enclave).await;
-
         result
     }
 

@@ -4,13 +4,26 @@ mod seal;
 use rand::{rngs::OsRng, RngCore};
 use star_core::serv::enclave::Enclave;
 use std::io;
-use utils::io::{
-    OP_ATTEST, OP_INIT, OP_ISSUE_CRED, OP_ISSUE_TOKEN, OP_PUBLIC_KEY, STATUS_BAD_REQUEST,
-    STATUS_NOT_INITIALIZED, STATUS_OK, STATUS_PANIC,
-};
+#[cfg(target_env = "sgx")]
+use std::slice;
+#[cfg(target_env = "sgx")]
+use std::sync::{Mutex, OnceLock};
 
 const PERIOD_LEN: usize = 8;
 const MAX_TICKETS: u32 = 3_000_000_000;
+const MAX_PAYLOAD_LEN: usize = 16 * 1024 * 1024;
+
+const OP_INIT: u8 = 0;
+const OP_PUBLIC_KEY: u8 = 1;
+const OP_ISSUE_CRED: u8 = 2;
+const OP_ISSUE_TOKEN: u8 = 3;
+const OP_ATTEST: u8 = 4;
+
+const STATUS_OK: u8 = 0;
+const STATUS_NOT_INITIALIZED: u8 = 1;
+const STATUS_BAD_REQUEST: u8 = 2;
+const STATUS_PANIC: u8 = 4;
+const STATUS_BUFFER_TOO_SMALL: u8 = 5;
 
 struct EnclaveApp {
     enclave: Option<Enclave>,
@@ -144,9 +157,7 @@ impl EnclaveApp {
             Err(err) => (STATUS_PANIC, err.into_bytes()),
         }
     }
-}
 
-impl utils::child::Commands for EnclaveApp {
     fn handle(&mut self, op: u8, payload: &[u8]) -> (u8, Vec<u8>) {
         match op {
             OP_INIT => self.init(payload),
@@ -160,9 +171,130 @@ impl utils::child::Commands for EnclaveApp {
 }
 use crate::seal::{ENC_KEY, PRF_KEY};
 
-pub fn run_stdio() -> io::Result<()> {
-    let mut app = EnclaveApp::new(MAX_TICKETS);
-    utils::child::run_stdio(&mut app)
+pub fn run() {}
+
+#[cfg(target_env = "sgx")]
+static LIBRARY_APP: OnceLock<Mutex<EnclaveApp>> = OnceLock::new();
+
+#[cfg(target_env = "sgx")]
+#[allow(improper_ctypes_definitions)]
+#[no_mangle]
+// Matches the Fortanix SGX library entry ABI: p1 selects the operation, p2-p5 carry buffers.
+pub extern "C" fn entry(p1: u64, p2: u64, p3: u64, _ignore: u64, p4: u64, p5: u64) -> (u64, u64) {
+    library_entry(p1, p2, p3, p4, p5)
+}
+
+#[cfg(target_env = "sgx")]
+fn library_entry(
+    op: u64,
+    input_ptr: u64,
+    input_len: u64,
+    output_ptr: u64,
+    output_len: u64,
+) -> (u64, u64) {
+    let op = match u8::try_from(op) {
+        Ok(op) => op,
+        Err(_) => return (STATUS_BAD_REQUEST as u64, 0),
+    };
+
+    let input = match unsafe { user_slice(input_ptr, input_len) } {
+        Ok(input) => input,
+        Err(status) => return (status as u64, 0),
+    };
+    let output = match unsafe { user_slice_mut(output_ptr, output_len) } {
+        Ok(output) => output,
+        Err(status) => return (status as u64, 0),
+    };
+
+    let app = LIBRARY_APP.get_or_init(|| Mutex::new(EnclaveApp::new(MAX_TICKETS)));
+    let (status, response) = match app.lock() {
+        Ok(mut app) => app.handle(op, input),
+        Err(_) => (STATUS_PANIC, b"enclave app lock poisoned".to_vec()),
+    };
+
+    if response.len() > output.len() {
+        return (STATUS_BUFFER_TOO_SMALL as u64, response.len() as u64);
+    }
+
+    output[..response.len()].copy_from_slice(&response);
+    (status as u64, response.len() as u64)
+}
+
+#[cfg(target_env = "sgx")]
+unsafe fn user_slice<'a>(ptr: u64, len: u64) -> Result<&'a [u8], u8> {
+    let len = checked_user_len(len)?;
+    if len == 0 {
+        return Ok(&[]);
+    }
+
+    let ptr = ptr as *const u8;
+    if ptr.is_null() || !is_user_range(ptr, len) {
+        return Err(STATUS_BAD_REQUEST);
+    }
+
+    Ok(unsafe { slice::from_raw_parts(ptr, len) })
+}
+
+#[cfg(target_env = "sgx")]
+unsafe fn user_slice_mut<'a>(ptr: u64, len: u64) -> Result<&'a mut [u8], u8> {
+    let len = checked_user_len(len)?;
+    if len == 0 {
+        return Ok(&mut []);
+    }
+
+    let ptr = ptr as *mut u8;
+    if ptr.is_null() || !is_user_range(ptr, len) {
+        return Err(STATUS_BAD_REQUEST);
+    }
+
+    Ok(unsafe { slice::from_raw_parts_mut(ptr, len) })
+}
+
+#[cfg(target_env = "sgx")]
+fn checked_user_len(len: u64) -> Result<usize, u8> {
+    let len = usize::try_from(len).map_err(|_| STATUS_BAD_REQUEST)?;
+    if len > MAX_PAYLOAD_LEN {
+        return Err(STATUS_BAD_REQUEST);
+    }
+    Ok(len)
+}
+
+#[cfg(target_env = "sgx")]
+fn is_user_range(ptr: *const u8, len: usize) -> bool {
+    if len == 0 {
+        return true;
+    }
+
+    let start = ptr as usize;
+    let Some(end) = start.checked_add(len - 1) else {
+        return false;
+    };
+
+    let base = image_base();
+    let enclave_size = unsafe { ENCLAVE_SIZE };
+    let Some(enclave_end) = base.checked_add(enclave_size.saturating_sub(1)) else {
+        return false;
+    };
+
+    end < base || start > enclave_end
+}
+
+#[cfg(target_env = "sgx")]
+fn image_base() -> usize {
+    let base: usize;
+    unsafe {
+        std::arch::asm!(
+            "lea IMAGE_BASE(%rip), {}",
+            lateout(reg) base,
+            options(att_syntax, nostack, preserves_flags, nomem, pure),
+        );
+    }
+    base
+}
+
+#[cfg(target_env = "sgx")]
+unsafe extern "C" {
+    static ENCLAVE_SIZE: usize;
 }
 
 fn encode_sealed_keys(sealed_enc_key: &[u8], sealed_prf_key: &[u8]) -> Vec<u8> {
@@ -212,7 +344,6 @@ fn to_io<E: std::fmt::Debug>(err: E) -> io::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use utils::child::Commands;
 
     #[test]
     fn attest_dispatch_rejects_non_64_byte_challenge() {

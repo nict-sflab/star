@@ -6,17 +6,17 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 
 use constant_time_utils::bytes::Long;
 use pingora_web::{Handler, PingoraHttpRequest, PingoraWebHttpResponse, StatusCode, WebError};
-use tokio::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::enclave::{EnclaveError, EnclaveRuntime};
 
 pub struct IssueApi {
-    enclave: Mutex<EnclaveRuntime>,
+    enclave: Arc<Mutex<EnclaveRuntime>>,
 }
 
 impl IssueApi {
     pub fn init(enclave: EnclaveRuntime) -> Self {
-        let enclave = Mutex::new(enclave);
+        let enclave = Arc::new(Mutex::new(enclave));
         IssueApi { enclave }
     }
 }
@@ -32,9 +32,15 @@ impl Handler for IssueApi {
             }
         };
 
-        let cred = match self.enclave.lock().await.issue_cred(&decoded) {
-            Ok(cred) => cred,
-            Err(_) => {
+        let enclave = Arc::clone(&self.enclave);
+        let cred = match tokio::task::spawn_blocking(move || {
+            let mut enclave = enclave.lock().map_err(|_| ())?;
+            enclave.issue_cred(&decoded).map_err(|_| ())
+        })
+        .await
+        {
+            Ok(Ok(cred)) => cred,
+            Ok(Err(_)) | Err(_) => {
                 return Ok(PingoraWebHttpResponse::text(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "",
