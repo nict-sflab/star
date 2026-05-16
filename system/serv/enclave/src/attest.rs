@@ -1,11 +1,13 @@
-use std::io::{self, Read};
-
-use base64::Engine;
-
+#[allow(dead_code)]
 const CHALLENGE_LEN: usize = 64;
+
+#[cfg(target_env = "sgx")]
 const SGX_QL_ALG_ECDSA_P256: u32 = 2;
+#[cfg(target_env = "sgx")]
 const ATT_KEY_ALGORITHM_OFFSET: usize = 154;
 
+#[cfg(target_env = "sgx")]
+#[allow(dead_code)]
 pub fn attest(report_data: [u8; CHALLENGE_LEN]) -> Result<Vec<u8>, String> {
     use aesm_client::sgx::AesmClientExt;
     use aesm_client::AesmClient;
@@ -30,6 +32,13 @@ pub fn attest(report_data: [u8; CHALLENGE_LEN]) -> Result<Vec<u8>, String> {
     Ok(quote.quote().to_vec())
 }
 
+#[cfg(not(target_env = "sgx"))]
+#[allow(dead_code)]
+pub fn attest(_: [u8; CHALLENGE_LEN]) -> Result<Vec<u8>, String> {
+    Err("SGX attestation is only available for target_env=sgx".to_string())
+}
+
+#[cfg(target_env = "sgx")]
 fn select_ecdsa_p256_key(aesm: &aesm_client::AesmClient) -> Result<Vec<u8>, String> {
     let key_ids = aesm
         .get_supported_att_key_ids()
@@ -41,6 +50,7 @@ fn select_ecdsa_p256_key(aesm: &aesm_client::AesmClient) -> Result<Vec<u8>, Stri
         .ok_or_else(|| "ECDSA/P-256 attestation key is not available".to_string())
 }
 
+#[cfg(target_env = "sgx")]
 fn read_le_u32(bytes: &[u8], offset: usize) -> Option<u32> {
     let bytes: [u8; 4] = bytes.get(offset..offset + 4)?.try_into().ok()?;
     Some(u32::from_le_bytes(bytes))

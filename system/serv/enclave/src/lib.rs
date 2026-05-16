@@ -1,5 +1,8 @@
 mod attest;
+mod peer_sync;
 mod seal;
+
+pub use peer_sync::{OP_PEER_SYNC_BEGIN, OP_PEER_SYNC_EXPORT, OP_PEER_SYNC_IMPORT};
 
 use rand::{rngs::OsRng, Rng};
 use star_core::serv::enclave::Enclave;
@@ -15,14 +18,20 @@ const SEALED_PRF_KEY_FILE: &str = "sealed_prf_key.bin";
 
 struct EnclaveApp {
     enclave: Enclave,
+    secrets: peer_sync::PeerSecrets,
+    max_tickets: u32,
     rng: OsRng,
+    peer_sync: peer_sync::PeerSync,
 }
 
 impl EnclaveApp {
-    fn new(enclave: Enclave) -> Self {
+    fn new(max_tickets: u32, enclave: Enclave, secrets: peer_sync::PeerSecrets) -> Self {
         Self {
             enclave,
+            secrets,
+            max_tickets,
             rng: OsRng,
+            peer_sync: peer_sync::PeerSync::new(),
         }
     }
 
@@ -32,14 +41,16 @@ impl EnclaveApp {
         rng.fill_bytes(&mut sk);
         rng.fill_bytes(&mut cipher_receiver);
 
-        let sealed_enc_key = seal::seal(ENC_KEY, &sk).map_err(to_io)?;
-        let sealed_prf_key = seal::seal(PRF_KEY, &cipher_receiver).map_err(to_io)?;
-        fs::write(SEALED_ENC_KEY_FILE, sealed_enc_key)?;
-        fs::write(SEALED_PRF_KEY_FILE, sealed_prf_key)?;
+        let secrets = peer_sync::PeerSecrets {
+            token_key: sk,
+            hpke_receiver_key: cipher_receiver,
+        };
+        write_sealed_secrets(&secrets)?;
 
-        let enclave = Enclave::new(max, sk, cipher_receiver).map_err(to_io)?;
+        let enclave =
+            Enclave::new(max, secrets.token_key, secrets.hpke_receiver_key).map_err(to_io)?;
 
-        Ok(Self::new(enclave))
+        Ok(Self::new(max, enclave, secrets))
     }
 
     fn load(max: u32) -> io::Result<Self> {
@@ -55,9 +66,14 @@ impl EnclaveApp {
             .try_into()
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "bad sealed prf key"))?;
 
-        let enclave = Enclave::new(max, sk, cipher_receiver).map_err(to_io)?;
+        let secrets = peer_sync::PeerSecrets {
+            token_key: sk,
+            hpke_receiver_key: cipher_receiver,
+        };
+        let enclave =
+            Enclave::new(max, secrets.token_key, secrets.hpke_receiver_key).map_err(to_io)?;
 
-        Ok(Self::new(enclave))
+        Ok(Self::new(max, enclave, secrets))
     }
 
     fn public_key(&self, _: &[u8]) -> (u8, Vec<u8>) {
@@ -83,6 +99,7 @@ impl EnclaveApp {
         }
     }
 
+    #[allow(dead_code)]
     fn attest(&self, payload: &[u8]) -> (u8, Vec<u8>) {
         let report_data: [u8; 64] = match payload.try_into() {
             Ok(report_data) => report_data,
@@ -94,6 +111,57 @@ impl EnclaveApp {
             Err(err) => (STATUS_PANIC, err.into_bytes()),
         }
     }
+
+    fn peer_sync_begin(&mut self, payload: &[u8]) -> (u8, Vec<u8>) {
+        if !payload.is_empty() {
+            return (
+                STATUS_BAD_REQUEST,
+                b"peer_sync_begin does not accept a payload".to_vec(),
+            );
+        }
+
+        match self.peer_sync.begin(&mut self.rng) {
+            Ok(challenge) => (STATUS_OK, challenge),
+            Err(err) => peer_sync_error(err),
+        }
+    }
+
+    fn peer_sync_export(&mut self, payload: &[u8]) -> (u8, Vec<u8>) {
+        match self
+            .peer_sync
+            .export(self.secrets.clone(), payload, &mut self.rng)
+        {
+            Ok(transfer) => (STATUS_OK, transfer),
+            Err(err) => peer_sync_error(err),
+        }
+    }
+
+    fn peer_sync_import(&mut self, payload: &[u8]) -> (u8, Vec<u8>) {
+        let secrets = match self.peer_sync.import(payload) {
+            Ok(secrets) => secrets,
+            Err(err) => return peer_sync_error(err),
+        };
+
+        match self.install_peer_secrets(secrets) {
+            Ok(()) => (STATUS_OK, b"peer secrets installed".to_vec()),
+            Err(err) => (STATUS_PANIC, err.to_string().into_bytes()),
+        }
+    }
+
+    fn install_peer_secrets(&mut self, secrets: peer_sync::PeerSecrets) -> io::Result<()> {
+        let enclave = Enclave::new(
+            self.max_tickets,
+            secrets.token_key,
+            secrets.hpke_receiver_key,
+        )
+        .map_err(to_io)?;
+
+        write_sealed_secrets(&secrets)?;
+
+        self.enclave = enclave;
+        self.secrets = secrets;
+        Ok(())
+    }
 }
 
 impl utils::child::Commands for EnclaveApp {
@@ -102,25 +170,43 @@ impl utils::child::Commands for EnclaveApp {
             OP_PUBLIC_KEY => self.public_key(payload),
             OP_ISSUE_CRED => self.issue_cred(payload),
             OP_ISSUE_TOKEN => self.issue_token(payload),
+            peer_sync::OP_PEER_SYNC_BEGIN => self.peer_sync_begin(payload),
+            peer_sync::OP_PEER_SYNC_EXPORT => self.peer_sync_export(payload),
+            peer_sync::OP_PEER_SYNC_IMPORT => self.peer_sync_import(payload),
             _ => (STATUS_BAD_REQUEST, b"unknown operation".to_vec()),
         }
     }
 }
-use rand::{rngs::StdRng, SeedableRng};
 
 use crate::seal::{ENC_KEY, PRF_KEY};
 
 pub fn run_stdio() -> io::Result<()> {
-    let rng = StdRng::seed_from_u64(10);
     let has_sealed_keys =
         Path::new(SEALED_ENC_KEY_FILE).exists() && Path::new(SEALED_PRF_KEY_FILE).exists();
     let mut app = if has_sealed_keys {
         EnclaveApp::load(MAX_TICKETS)?
     } else {
-        EnclaveApp::init(MAX_TICKETS, rng)?
+        EnclaveApp::init(MAX_TICKETS, OsRng)?
     };
 
     utils::child::run_stdio(&mut app)
+}
+
+fn write_sealed_secrets(secrets: &peer_sync::PeerSecrets) -> io::Result<()> {
+    let sealed_enc_key = seal::seal(ENC_KEY, &secrets.token_key).map_err(to_io)?;
+    let sealed_prf_key = seal::seal(PRF_KEY, &secrets.hpke_receiver_key).map_err(to_io)?;
+    fs::write(SEALED_ENC_KEY_FILE, sealed_enc_key)?;
+    fs::write(SEALED_PRF_KEY_FILE, sealed_prf_key)?;
+    Ok(())
+}
+
+fn peer_sync_error(err: peer_sync::PeerSyncError) -> (u8, Vec<u8>) {
+    let status = if err.is_bad_request() {
+        STATUS_BAD_REQUEST
+    } else {
+        STATUS_PANIC
+    };
+    (status, err.to_string().into_bytes())
 }
 
 fn to_io<E: std::fmt::Debug>(err: E) -> io::Error {

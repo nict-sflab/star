@@ -4,13 +4,19 @@ use aes_gcm::{
 };
 use rand::random;
 use serde::{Deserialize, Serialize};
-use sgx_isa::{Attributes, ErrorCode, Keyname, Keypolicy, Keyrequest, Miscselect, Report};
+use sgx_isa::{Attributes, Miscselect};
+#[cfg(target_env = "sgx")]
+use sgx_isa::{ErrorCode, Keyname, Keypolicy, Keyrequest, Report};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum SealError {
     #[error("SGX EGETKEY failed: {0:?}")]
+    #[cfg(target_env = "sgx")]
     Sgx(ErrorCode),
+
+    #[error("SGX sealing is only available for target_env=sgx")]
+    UnsupportedTarget,
 
     #[error("current enclave attributes do not match sealed metadata")]
     InvalidEnclaveAttributes,
@@ -40,7 +46,9 @@ pub struct SealedBlob {
 
 pub const PRF_KEY: [u8; 16] = *b"prf-key         ";
 pub const ENC_KEY: [u8; 16] = *b"enc-key         ";
+pub const PEER_SYNC_KEY: [u8; 16] = *b"peer-sync-key   ";
 
+#[cfg(target_env = "sgx")]
 fn egetkey(label: [u8; 16], seal_data: &SealData) -> Result<[u8; 16], SealError> {
     let mut keyid = [0u8; 32];
     keyid[..16].copy_from_slice(&label);
@@ -60,25 +68,46 @@ fn egetkey(label: [u8; 16], seal_data: &SealData) -> Result<[u8; 16], SealError>
     req.egetkey().map_err(SealError::Sgx)
 }
 
-fn seal_key(label: [u8; 16]) -> Result<([u8; 16], SealData), SealError> {
+#[cfg(not(target_env = "sgx"))]
+fn egetkey(_: [u8; 16], _: &SealData) -> Result<[u8; 16], SealError> {
+    Err(SealError::UnsupportedTarget)
+}
+
+#[cfg(target_env = "sgx")]
+fn current_seal_data(rand: [u8; 16]) -> Result<SealData, SealError> {
     let report = Report::for_self();
 
-    let seal_data = SealData {
-        rand: random(),
+    Ok(SealData {
+        rand,
         isvsvn: report.isvsvn,
         cpusvn: report.cpusvn,
         attributes: report.attributes,
         miscselect: report.miscselect,
-    };
+    })
+}
+
+#[cfg(not(target_env = "sgx"))]
+fn current_seal_data(_: [u8; 16]) -> Result<SealData, SealError> {
+    Err(SealError::UnsupportedTarget)
+}
+
+fn seal_key(label: [u8; 16]) -> Result<([u8; 16], SealData), SealError> {
+    let seal_data = current_seal_data(random())?;
 
     let key = egetkey(label, &seal_data)?;
     Ok((key, seal_data))
 }
 
-fn unseal_key(label: [u8; 16], seal_data: &SealData) -> Result<[u8; 16], SealError> {
-    let report = Report::for_self();
+pub fn peer_sync_key() -> Result<[u8; 16], SealError> {
+    let seal_data = current_seal_data([0u8; 16])?;
 
-    if report.attributes != seal_data.attributes || report.miscselect != seal_data.miscselect {
+    egetkey(PEER_SYNC_KEY, &seal_data)
+}
+
+fn unseal_key(label: [u8; 16], seal_data: &SealData) -> Result<[u8; 16], SealError> {
+    let current = current_seal_data([0u8; 16])?;
+
+    if current.attributes != seal_data.attributes || current.miscselect != seal_data.miscselect {
         return Err(SealError::InvalidEnclaveAttributes);
     }
 
