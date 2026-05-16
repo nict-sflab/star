@@ -82,8 +82,8 @@ pub fn build_server(
 
     proxy_svc.threads = env_usize("STAR_PROXY_THREADS");
 
-    let tls_cert_path = env_or_default("TLS_CERT_PATH", "");
-    let tls_key_path = env_or_default("TLS_KEY_PATH", "");
+    let tls_cert_path = env_or_default("TLS_CERT_PATH", "./examples/certs/server.crt");
+    let tls_key_path = env_or_default("TLS_KEY_PATH", "./examples/certs/server.key");
 
     if !tls_cert_path.is_empty() && !tls_key_path.is_empty() {
         println!("use tls");
