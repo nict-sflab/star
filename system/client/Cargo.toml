@@ -7,7 +7,7 @@ edition = "2024"
 async-trait = "0.1"
 base64 = "0.22.1"
 bytes = "1"
-constant-time-utils = { path = "../../../../constant-time-utils", default-features = false }
+constant-time-utils = { path = "../../../constant-time-utils", default-features = false }
 env_logger = "0.11"
 httparse = "1"
 log = "0.4"
@@ -15,7 +15,7 @@ openssl = "0.10.75"
 pingora = { version = "0.6.0", features = ["openssl"] }
 pingora-core = { version = "0.6.0", features = ["openssl"] }
 rand = { version = "0.8", default-features = false, features = ["getrandom"] }
-star-core = { path = "../../../core" }
+star-core = { path = "../../core" }
 tokio = { version = "1", features = ["full"] }
 ureq = "2"
 
