@@ -1,5 +1,5 @@
 use openssl::ssl::{ExtensionContext, SslAlert, SslConnector, SslMethod, SslVerifyMode};
-use star_app::tls_token::STAR_TLS_EXTENSION_TYPE;
+use star_app::tls::STAR_TLS_EXTENSION_TYPE;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};

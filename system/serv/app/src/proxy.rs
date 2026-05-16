@@ -8,9 +8,7 @@ use std::time::Duration;
 
 use simple_filter_box::core::FilterBox;
 
-use crate::cors::with_cors;
 use crate::filter::StarFilter;
-use crate::tls_token::request_from_tls_extension;
 
 pub struct StarProxy<T: FilterBox + Send> {
     pub filter: Arc<StarFilter<T>>,
@@ -22,21 +20,10 @@ async fn exit_filter(
     session: &mut Session,
 ) -> pingora::Result<bool> {
     let mut header = ResponseHeader::build(status, None)?;
-    with_cors(&mut header, session.req_header())?;
     session
         .write_response_header(Box::new(header), true)
         .await?;
     Ok(true)
-}
-
-fn request_from_tls_extension_required(session: &Session) -> Result<Vec<u8>, u16> {
-    let stream = session.as_downstream().stream().ok_or(403u16)?;
-    let ssl = stream.get_ssl().ok_or(403u16)?;
-    match request_from_tls_extension(ssl) {
-        Ok(request) => Ok(request),
-        Err("empty STAR TLS extension") => Err(400u16),
-        Err(_) => Err(403u16),
-    }
 }
 
 #[async_trait]

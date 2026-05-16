@@ -1,21 +1,17 @@
 #[path = "../common/latency_proxy.rs"]
 mod latency_proxy;
-#[path = "../common/rustls_provider.rs"]
-mod rustls_provider;
 
 use latency_proxy::StarLatencyProxy;
 use pingora::{listeners::tls::TlsSettings, server::Server};
 use pingora_proxy::http_proxy_service;
 use pingora_web::App as WebApp;
-use rustls_provider::ensure_rustls_ring_provider;
 use simple_filter_box::dashmap::DashMapFilterBox;
 use star_app::all_prefix;
 use star_app::api::{DEFAULT_PUBLIC_KEY_API, DEFAULT_REGISTER_API, IssueApi, PublicKeyApi};
-use star_app::cors::Cors;
 use star_app::enclave::{EnclaveRuntime, EnclaveRuntimes};
 use star_app::filter::StarFilter;
 use star_app::proxy::StarProxy;
-use star_app::tls_token::configure_tls_token_extension;
+use star_app::tls::configure_tls_token_extension;
 use std::env;
 use std::error::Error;
 use std::io::{Read, Write};
@@ -90,7 +86,6 @@ fn build_server_with_latency(
     tls_key_path: &str,
     latency_tx: mpsc::Sender<u64>,
 ) -> Result<Server, Box<dyn Error>> {
-    ensure_rustls_ring_provider();
     let mut issue_enclave = EnclaveRuntime::from_env()?;
     let filter_enclave = EnclaveRuntimes::from_env(10)?;
 
@@ -98,7 +93,6 @@ fn build_server_with_latency(
     server.bootstrap();
 
     let mut api_app = WebApp::default();
-    api_app.use_middleware(Cors::default());
     let public_key_api = PublicKeyApi::init(&mut issue_enclave)?;
     let issue_api = IssueApi::init(issue_enclave);
     api_app.get(DEFAULT_PUBLIC_KEY_API, Arc::new(public_key_api));

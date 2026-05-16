@@ -8,20 +8,19 @@ use std::sync::Arc;
 
 use crate::enclave::EnclaveRuntime;
 use crate::filter::StarFilter;
-use crate::tls_token::configure_tls_token_extension;
+use crate::tls::configure_tls_token_extension;
 use crate::{
     api::{DEFAULT_PUBLIC_KEY_API, DEFAULT_REGISTER_API},
-    cors::Cors,
     enclave::EnclaveRuntimes,
     proxy::StarProxy,
 };
 
 pub mod api;
-pub mod cors;
 pub mod enclave;
 pub mod filter;
 pub mod proxy;
-pub mod tls_token;
+pub(crate) mod tls_utils;
+pub mod tls;
 
 pub fn all_prefix(max: u32) -> Vec<u32> {
     (0u32..max).collect()
@@ -61,7 +60,6 @@ pub fn build_server(
     server.bootstrap();
 
     let mut api_app = WebApp::default();
-    api_app.use_middleware(Cors::default());
 
     let public_key_api = api::PublicKeyApi::init(&mut issue_enclave)?;
     let issue_api = api::IssueApi::init(issue_enclave);

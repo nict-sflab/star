@@ -1,4 +1,3 @@
-use data_encoding::{BASE32_NOPAD, BASE32_NOPAD_NOCASE};
 use foreign_types::ForeignTypeRef;
 use openssl::error::ErrorStack;
 use openssl::ex_data::Index;
@@ -10,24 +9,13 @@ use std::os::raw::{c_int, c_uchar, c_uint};
 use std::sync::{Arc, OnceLock};
 use std::{ptr, slice};
 
-use crate::filter::{StarFilter, StarFilterErrorStatus};
-
-pub const STAR_TLS_TOKEN_SUFFIX: &str = ".star-token.local";
-pub const STAR_TLS_EXTENSION_TYPE: u16 = 65280;
-
-const DNS_LABEL_MAX_LEN: usize = 63;
-
+use crate::filter::{StarFilter};
 static STAR_TLS_TOKEN_EX_INDEX: OnceLock<Index<Ssl, Vec<u8>>> = OnceLock::new();
 static STAR_TLS_DEBUG_ENABLED: OnceLock<bool> = OnceLock::new();
 
-unsafe extern "C" {
-    fn SSL_client_hello_get0_ext(
-        s: *mut openssl_sys::SSL,
-        type_: c_uint,
-        out: *mut *const c_uchar,
-        outlen: *mut usize,
-    ) -> c_int;
-}
+use crate::tls_utils;
+
+pub const STAR_TLS_EXTENSION_TYPE: u16 = 65280;
 
 fn star_tls_debug_enabled() -> bool {
     *STAR_TLS_DEBUG_ENABLED.get_or_init(|| {
@@ -48,85 +36,13 @@ macro_rules! star_tls_debug {
     };
 }
 
-fn split_dns_labels(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + (s.len() / DNS_LABEL_MAX_LEN));
-
-    for (idx, chunk) in s.as_bytes().chunks(DNS_LABEL_MAX_LEN).enumerate() {
-        if idx > 0 {
-            out.push('.');
-        }
-
-        out.push_str(std::str::from_utf8(chunk).expect("base32 output should be ASCII"));
-    }
-
-    out
-}
-
-pub fn sni_hostname_from_request(request: &[u8]) -> String {
-    let encoded = BASE32_NOPAD.encode(request).to_ascii_lowercase();
-    let hostname = format!("{}{}", split_dns_labels(&encoded), STAR_TLS_TOKEN_SUFFIX);
-
-    star_tls_debug!(
-        "generated SNI hostname: request_len={}, encoded_len={}, hostname_len={}",
-        request.len(),
-        encoded.len(),
-        hostname.len()
-    );
-
-    hostname
-}
-
-pub fn request_from_sni_hostname(hostname: &str) -> Result<Vec<u8>, &'static str> {
-    star_tls_debug!(
-        "parsing request from SNI hostname: hostname_len={}",
-        hostname.len()
-    );
-
-    let lower = hostname.to_ascii_lowercase();
-
-    let encoded = match lower.strip_suffix(STAR_TLS_TOKEN_SUFFIX) {
-        Some(encoded) => encoded,
-        None => {
-            star_tls_debug!(
-                "SNI hostname missing STAR suffix: hostname_len={}, suffix={}",
-                hostname.len(),
-                STAR_TLS_TOKEN_SUFFIX
-            );
-
-            return Err("missing STAR TLS token suffix");
-        }
-    };
-
-    let joined: String = encoded.chars().filter(|c| *c != '.').collect();
-
-    if joined.is_empty() {
-        star_tls_debug!(
-            "SNI token empty after removing labels: hostname_len={}",
-            hostname.len()
-        );
-
-        return Err("empty STAR TLS token");
-    }
-
-    match BASE32_NOPAD_NOCASE.decode(joined.as_bytes()) {
-        Ok(decoded) => {
-            star_tls_debug!(
-                "decoded request from SNI hostname: encoded_len={}, request_len={}",
-                joined.len(),
-                decoded.len()
-            );
-
-            Ok(decoded)
-        }
-        Err(_) => {
-            star_tls_debug!(
-                "failed to decode SNI token as base32: encoded_len={}",
-                joined.len()
-            );
-
-            Err("invalid STAR TLS token encoding")
-        }
-    }
+unsafe extern "C" {
+    fn SSL_client_hello_get0_ext(
+        s: *mut openssl_sys::SSL,
+        type_: c_uint,
+        out: *mut *const c_uchar,
+        outlen: *mut usize,
+    ) -> c_int;
 }
 
 fn token_ex_index() -> Result<Index<Ssl, Vec<u8>>, openssl::error::ErrorStack> {
@@ -145,35 +61,6 @@ fn token_ex_index() -> Result<Index<Ssl, Vec<u8>>, openssl::error::ErrorStack> {
     Ok(*STAR_TLS_TOKEN_EX_INDEX.get().expect("TLS token index set"))
 }
 
-fn alert_for_filter_error(status: &StarFilterErrorStatus) -> SslAlert {
-    match status {
-        StarFilterErrorStatus::InvalidToken => SslAlert::DECODE_ERROR,
-        StarFilterErrorStatus::InvalidRoute => SslAlert::ILLEGAL_PARAMETER,
-        StarFilterErrorStatus::DuplicatedToken => SslAlert::ILLEGAL_PARAMETER,
-        StarFilterErrorStatus::Internal => SslAlert::DECODE_ERROR,
-    }
-}
-
-fn filter_error_name(status: &StarFilterErrorStatus) -> &'static str {
-    match status {
-        StarFilterErrorStatus::InvalidToken => "InvalidToken",
-        StarFilterErrorStatus::InvalidRoute => "InvalidRoute",
-        StarFilterErrorStatus::DuplicatedToken => "DuplicatedToken",
-        StarFilterErrorStatus::Internal => "Internal",
-    }
-}
-
-fn alert_name(alert: SslAlert) -> &'static str {
-    match alert {
-        SslAlert::DECODE_ERROR => "DECODE_ERROR",
-        SslAlert::ILLEGAL_PARAMETER => "ILLEGAL_PARAMETER",
-        _ => "OTHER",
-    }
-}
-
-/// Read the raw STAR custom extension from the current ClientHello.
-///
-/// This must only be called inside OpenSSL's ClientHello callback.
 fn star_tls_extension_from_client_hello<'a>(ssl: &'a SslRef) -> Option<&'a [u8]> {
     let mut out = ptr::null();
     let mut out_len = 0usize;
@@ -302,14 +189,14 @@ where
             }
 
             if let Err(filter_err) = filter.filter_client_hello(ext_data) {
-                let alert = alert_for_filter_error(&filter_err);
+                let alert = tls_utils::alert_for_filter_error(&filter_err);
 
                 star_tls_debug!(
                     "rejecting custom extension: reason=filter_rejected, extension_type={}, ext_data_len={}, filter_error={}, alert={}",
                     STAR_TLS_EXTENSION_TYPE,
                     ext_data.len(),
-                    filter_error_name(&filter_err),
-                    alert_name(alert)
+                    tls_utils::filter_error_name(&filter_err),
+                    tls_utils::alert_name(alert)
                 );
 
                 return Err(alert);
@@ -333,39 +220,4 @@ where
     );
 
     Ok(())
-}
-
-pub fn request_from_tls_extension(ssl: &SslRef) -> Result<Vec<u8>, &'static str> {
-    star_tls_debug!("reading request from TLS extension ex_data");
-
-    let token_index = match STAR_TLS_TOKEN_EX_INDEX.get() {
-        Some(token_index) => token_index,
-        None => {
-            star_tls_debug!("failed to read TLS extension: reason=extension_not_configured");
-
-            return Err("STAR TLS extension not configured");
-        }
-    };
-
-    let request = match ssl.ex_data(*token_index) {
-        Some(request) => request,
-        None => {
-            star_tls_debug!("failed to read TLS extension: reason=missing_ex_data");
-
-            return Err("missing STAR TLS extension");
-        }
-    };
-
-    if request.is_empty() {
-        star_tls_debug!("failed to read TLS extension: reason=empty_ex_data");
-
-        return Err("empty STAR TLS extension");
-    }
-
-    star_tls_debug!(
-        "read request from TLS extension ex_data: request_len={}",
-        request.len()
-    );
-
-    Ok(request.clone())
 }

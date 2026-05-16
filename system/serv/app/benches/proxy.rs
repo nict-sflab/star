@@ -14,7 +14,7 @@ use simple_filter_box::dashmap::DashMapFilterBox;
 use star_app::enclave::{EnclaveRuntime, EnclaveRuntimes};
 use star_app::filter::StarFilter;
 use star_app::proxy::StarProxy;
-use star_app::tls_token::configure_tls_token_extension;
+use star_app::tls::configure_tls_token_extension;
 use star_core::{client::User, secure_channel::client::SecureChannelClient};
 use std::net::ToSocketAddrs;
 use std::sync::{Arc, mpsc};

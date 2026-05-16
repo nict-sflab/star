@@ -1,7 +1,7 @@
 use crate::api::{DEFAULT_PUBLIC_KEY_API, DEFAULT_REGISTER_API};
 use crate::{all_prefix, build_server};
 
-use crate::tls_token::STAR_TLS_EXTENSION_TYPE;
+use crate::tls::STAR_TLS_EXTENSION_TYPE;
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use constant_time_utils::time;
