@@ -36,15 +36,9 @@ impl Handler for IssueApi {
             }
         };
 
-        let enclave = Arc::clone(&self.enclave);
-        let cred = match tokio::task::spawn_blocking(move || {
-            let mut enclave = enclave.lock().map_err(|_| ())?;
-            enclave.issue_cred(&decoded).map_err(|_| ())
-        })
-        .await
-        {
-            Ok(Ok(cred)) => cred,
-            Ok(Err(_)) | Err(_) => {
+        let cred = match self.enclave.lock().unwrap().issue_cred(&decoded) {
+            Ok(cred) => cred,
+            Err(_) => {
                 return Ok(PingoraWebHttpResponse::text(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "",

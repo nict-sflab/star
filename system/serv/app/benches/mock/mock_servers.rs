@@ -1,27 +1,23 @@
 #[path = "../common/latency_proxy.rs"]
 mod latency_proxy;
-#[path = "../common/rustls_provider.rs"]
-mod rustls_provider;
 
 use latency_proxy::StarLatencyProxy;
 use pingora::{listeners::tls::TlsSettings, server::Server};
 use pingora_proxy::http_proxy_service;
 use pingora_web::App as WebApp;
-use rustls_provider::ensure_rustls_ring_provider;
 use simple_filter_box::dashmap::DashMapFilterBox;
 use star_app::all_prefix;
 use star_app::api::{DEFAULT_PUBLIC_KEY_API, DEFAULT_REGISTER_API, IssueApi, PublicKeyApi};
-use star_app::cors::Cors;
 use star_app::enclave::{EnclaveRuntime, EnclaveRuntimes};
 use star_app::filter::StarFilter;
 use star_app::proxy::StarProxy;
+use star_app::tls::configure_tls_token_extension;
 use std::env;
 use std::error::Error;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, mpsc};
 use std::thread;
-use tokio::sync::Mutex;
 
 const E2E_API_ADDR_ENV: &str = "STAR_E2E_API_ADDR";
 const E2E_PROXY_ADDR_ENV: &str = "STAR_E2E_PROXY_ADDR";
@@ -32,9 +28,9 @@ const E2E_PROXY_THREADS_ENV: &str = "STAR_E2E_PROXY_THREADS";
 const E2E_TLS_CERT_PATH_ENV: &str = "STAR_E2E_TLS_CERT_PATH";
 const E2E_TLS_KEY_PATH_ENV: &str = "STAR_E2E_TLS_KEY_PATH";
 
-const DEFAULT_API_ADDR: &str = "0.0.0.0:8080";
-const DEFAULT_PROXY_ADDR: &str = "0.0.0.0:8443";
-const DEFAULT_UPSTREAM_ADDR: &str = "127.0.0.1:3000";
+const DEFAULT_API_ADDR: &str = "127.0.0.1:8080";
+const DEFAULT_PROXY_ADDR: &str = "127.0.0.1:8443";
+const DEFAULT_UPSTREAM_ADDR: &str = "127.0.0.1:3001";
 const DEFAULT_MAX_PREFIX: u32 = 2;
 const DEFAULT_API_THREADS: usize = 1;
 const DEFAULT_PROXY_THREADS: usize = 2;
@@ -90,7 +86,6 @@ fn build_server_with_latency(
     tls_key_path: &str,
     latency_tx: mpsc::Sender<u64>,
 ) -> Result<Server, Box<dyn Error>> {
-    ensure_rustls_ring_provider();
     let mut issue_enclave = EnclaveRuntime::from_env()?;
     let filter_enclave = EnclaveRuntimes::from_env(10)?;
 
@@ -98,7 +93,6 @@ fn build_server_with_latency(
     server.bootstrap();
 
     let mut api_app = WebApp::default();
-    api_app.use_middleware(Cors::default());
     let public_key_api = PublicKeyApi::init(&mut issue_enclave)?;
     let issue_api = IssueApi::init(issue_enclave);
     api_app.get(DEFAULT_PUBLIC_KEY_API, Arc::new(public_key_api));
@@ -109,18 +103,18 @@ fn build_server_with_latency(
     api_svc.add_tcp(api_addr);
     server.add_service(api_svc);
 
-    let filter = BenchFilter::new(
+    let filter = Arc::new(BenchFilter::new(
         DashMapFilterBox::new(),
         prefixes,
         max_prefix,
         filter_enclave,
-    );
+    ));
 
     let mut proxy_svc = http_proxy_service(
         &server.configuration,
         StarLatencyProxy {
             inner: StarProxy {
-                filter: Mutex::new(filter),
+                filter: Arc::clone(&filter),
                 upstream_addr: upstream_addr.to_string(),
             },
             latency_tx,
@@ -129,8 +123,13 @@ fn build_server_with_latency(
     );
     proxy_svc.threads = Some(proxy_threads);
 
-    let tls_settings =
+    let mut tls_settings =
         TlsSettings::intermediate(tls_cert_path, tls_key_path).expect("build pingora TLS settings");
+    if !ONLY_PROXY {
+        configure_tls_token_extension(&mut tls_settings, filter)
+            .expect("configure STAR TLS extension");
+    }
+
     proxy_svc.add_tls_with_settings(proxy_addr, None, tls_settings);
 
     server.add_service(proxy_svc);

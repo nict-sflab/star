@@ -8,17 +8,8 @@
   <button onclick="submit()">Submit</button>
   <script>
     const submit = async () => {
-      const star = await authStar();
-      console.log("auth headers:", star.proof)
-      
-      const headers = new Headers({
-        "Content-Type": "text/xml",
-        "X-STAR": star.proof,
-      });
-
-      const resp = await fetch(`http://localhost:${star.route}/`, {
-        method: "POST",
-        headers,
+      const resp = await fetch(`http://localhost:18080/`, {
+        method: "GET",
       })
 
       console.log("response:", resp)

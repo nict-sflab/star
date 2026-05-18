@@ -5,25 +5,23 @@ use pingora_web::App as WebApp;
 use simple_filter_box::dashmap::DashMapFilterBox;
 use std::env;
 use std::error::Error;
-use std::sync::{Arc, Once};
-use tokio::sync::Mutex;
+use std::sync::Arc;
 
 use crate::enclave::EnclaveRuntime;
 use crate::filter::StarFilter;
+use crate::tls::configure_tls_token_extension;
 use crate::{
     api::{DEFAULT_PUBLIC_KEY_API, DEFAULT_REGISTER_API},
-    cors::Cors,
     enclave::EnclaveRuntimes,
     proxy::StarProxy,
 };
 
 pub mod api;
-pub mod cors;
 pub mod enclave;
 pub mod filter;
 pub mod proxy;
-
-static RUSTLS_PROVIDER_INIT: Once = Once::new();
+pub(crate) mod tls_utils;
+pub mod tls;
 
 pub fn all_prefix(max: u32) -> Vec<u32> {
     (0u32..max).collect()
@@ -38,13 +36,6 @@ fn env_or_default(name: &str, default: &str) -> String {
 
 fn env_usize(name: &str) -> Option<usize> {
     env::var(name).ok()?.parse::<usize>().ok()
-}
-
-fn ensure_rustls_provider() {
-    RUSTLS_PROVIDER_INIT.call_once(|| {
-        // Rustls 0.23 may have multiple providers compiled in transitively; choose one explicitly.
-        let _ = rustls::crypto::ring::default_provider().install_default();
-    });
 }
 
 pub fn build_server(
@@ -90,18 +81,23 @@ fn build_server_with_startup_attestation(
     max_prefix: u32,
     emit_startup_attestation: bool,
 ) -> Result<Server, Box<dyn Error>> {
-    ensure_rustls_provider();
     let filter_enclave = EnclaveRuntimes::from_env(2)?;
+    let filter_enclave = EnclaveRuntimes::from_env(10)?;
     let mut issue_enclave = EnclaveRuntime::from_env()?;
 
     let filter_box = DashMapFilterBox::new();
-    let filter = StarFilter::new(filter_box, prefixes, max_prefix, filter_enclave);
+
+    let filter = Arc::new(StarFilter::new(
+        filter_box,
+        prefixes,
+        max_prefix,
+        filter_enclave,
+    ));
 
     let mut server = Server::new(None)?;
     server.bootstrap();
 
     let mut api_app = WebApp::default();
-    api_app.use_middleware(Cors::default());
 
     let public_key = issue_enclave.public_key()?;
     if emit_startup_attestation {
@@ -124,20 +120,26 @@ fn build_server_with_startup_attestation(
         &server.configuration,
         StarProxy {
             upstream_addr: upstream_addr.to_string(),
-            filter: Mutex::new(filter),
+            filter: Arc::clone(&filter),
         },
     );
+
     proxy_svc.threads = env_usize("STAR_PROXY_THREADS");
 
-    let tls_cert_path = env_or_default("TLS_CERT_PATH", "");
-    let tls_key_path = env_or_default("TLS_KEY_PATH", "");
+    let tls_cert_path = env_or_default("TLS_CERT_PATH", "./examples/certs/server.crt");
+    let tls_key_path = env_or_default("TLS_KEY_PATH", "./examples/certs/server.key");
 
-    if tls_cert_path != "" && tls_key_path != "" {
+    if !tls_cert_path.is_empty() && !tls_key_path.is_empty() {
         println!("use tls");
-        let tls_settings = TlsSettings::intermediate(&tls_cert_path, &tls_key_path)?;
+
+        let mut tls_settings = TlsSettings::intermediate(&tls_cert_path, &tls_key_path)?;
+
+        configure_tls_token_extension(&mut tls_settings, filter)?;
+
         proxy_svc.add_tls_with_settings(proxy_addr, None, tls_settings);
     } else {
         println!("use plain");
+
         proxy_svc.add_tcp(proxy_addr);
     }
 

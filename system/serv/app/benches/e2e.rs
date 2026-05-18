@@ -3,7 +3,7 @@ mod common;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use common::http::{get_text, post_text};
 use common::retry::{StartupProbe, wait_until_ready};
-use common::tls::build_pinned_tls_agent;
+use common::tls::{StarTlsClient, build_pinned_tls_agent};
 use constant_time_utils::time;
 use criterion::{
     AxisScale, BenchmarkId, Criterion, PlotConfiguration, Throughput, criterion_group,
@@ -13,6 +13,7 @@ use rand_core::OsRng;
 use star_core::client::User;
 use star_core::secure_channel::client::SecureChannelClient;
 use std::collections::VecDeque;
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -33,6 +34,10 @@ const E2E_TLS_CERT_PATH_ENV: &str = "STAR_E2E_TLS_CERT_PATH";
 const E2E_CLIENT_THREADS_ENV: &str = "STAR_E2E_CLIENT_THREADS";
 const E2E_CLIENT_SWEEP_ENV: &str = "STAR_E2E_CLIENT_SWEEP";
 
+fn current_star_period() -> u64 {
+    u64::from_be_bytes(time::current_period())
+}
+
 fn bench_tls_cert_path() -> String {
     common::manifest_path(TLS_CERT_RELATIVE_PATH)
 }
@@ -47,6 +52,22 @@ fn proxy_url_from_addr(proxy_addr: &str) -> String {
     } else {
         format!("https://{proxy_addr}/")
     }
+}
+
+fn authority_from_urlish(addr: &str) -> String {
+    let addr = addr
+        .strip_prefix("https://")
+        .or_else(|| addr.strip_prefix("http://"))
+        .unwrap_or(addr);
+    addr.trim_end_matches('/').to_string()
+}
+
+fn resolve_proxy_addr(authority: &str) -> SocketAddr {
+    authority
+        .to_socket_addrs()
+        .expect("resolve proxy authority")
+        .next()
+        .expect("proxy authority should resolve")
 }
 
 fn api_url(api_addr: &str, path: &str) -> String {
@@ -66,17 +87,71 @@ fn wait_for_api_ready(public_key_url: &str) {
     );
 }
 
+fn response_snippet(response: ureq::Response) -> String {
+    const LIMIT: usize = 300;
+
+    match response.into_string() {
+        Ok(body) => {
+            let mut snippet: String = body.chars().take(LIMIT).collect();
+            if body.chars().count() > LIMIT {
+                snippet.push_str("...");
+            }
+            snippet
+        }
+        Err(err) => format!("<failed to read response body: {err}>"),
+    }
+}
+
+fn is_expected_unauthorized_tls_error(message: &str) -> bool {
+    message.contains("illegal parameter")
+        || message.contains("DecodeError")
+        || message.contains("decode error")
+        || message.contains("tls connection init failed")
+}
+
+fn is_invalid_token_tls_error(message: &str) -> bool {
+    message.contains("alert decode error")
+        || message.contains("SSL alert number 50")
+        || message.contains("bad extension")
+        || message.contains("custom_ext_parse")
+        || message.contains("decode error")
+        || message.contains("DecodeError")
+        || message.contains("tls connect failed")
+        || message.contains("TLSHandshakeFailure")
+}
+
 fn wait_for_proxy_ready(proxy_url: &str, tls_cert_path: &str) {
     let ready_agent = build_pinned_tls_agent(tls_cert_path, PROXY_READ_TIMEOUT);
+
     wait_until_ready(
         "proxy",
         STARTUP_RETRIES,
         STARTUP_RETRY_DELAY,
         || match ready_agent.get(proxy_url).set("Connection", "close").call() {
-            Err(ureq::Error::Status(403, _)) => StartupProbe::Ready,
-            Err(ureq::Error::Transport(err)) => StartupProbe::Retry(err.to_string()),
-            Err(ureq::Error::Status(code, _)) => StartupProbe::Fatal(format!("status {code}")),
-            Ok(_) => StartupProbe::Fatal("expected unauthorized probe request".to_string()),
+            Err(ureq::Error::Status(401 | 403, _)) => StartupProbe::Ready,
+
+            Err(ureq::Error::Transport(err)) => {
+                let message = err.to_string();
+
+                if is_expected_unauthorized_tls_error(&message) {
+                    StartupProbe::Ready
+                } else {
+                    StartupProbe::Retry(message)
+                }
+            }
+
+            Err(ureq::Error::Status(code, response)) => StartupProbe::Fatal(format!(
+                "expected unauthorized probe request to {proxy_url}, got status {code}, body {:?}",
+                response_snippet(response),
+            )),
+
+            Ok(response) => {
+                let status = response.status();
+                StartupProbe::Fatal(format!(
+                    "expected unauthorized probe request to {proxy_url}, but request succeeded with status {status}, body {:?}",
+                    response_snippet(response),
+                ))
+            }
         },
     );
 }
@@ -98,17 +173,21 @@ fn default_client_sweep() -> Vec<usize> {
     let baseline = parse_usize_env(E2E_CLIENT_THREADS_ENV, DEFAULT_CLIENT_THREADS).max(1);
     let mut sweep = vec![1usize];
     let mut next = 2usize;
+
     while next < baseline {
         sweep.push(next);
         next = next.saturating_mul(2);
     }
+
     if !sweep.contains(&baseline) {
         sweep.push(baseline);
     }
+
     let extended = baseline.saturating_mul(2);
     if !sweep.contains(&extended) {
         sweep.push(extended);
     }
+
     sweep
 }
 
@@ -143,6 +222,7 @@ fn e2e_client_sweep() -> Vec<usize> {
         Ok(raw) => parse_client_sweep(&raw),
         Err(_) => default_client_sweep(),
     };
+
     normalize_client_sweep(sweep)
 }
 
@@ -151,7 +231,7 @@ struct RemoteTarget {
     tls_cert_path: String,
     public_key_url: String,
     register_url: String,
-    proxy_url: String,
+    proxy_addr: SocketAddr,
 }
 
 impl RemoteTarget {
@@ -163,6 +243,8 @@ impl RemoteTarget {
         let public_key_url = api_url(&api_addr, "/star/public_key");
         let register_url = api_url(&api_addr, "/star/register");
         let proxy_url = proxy_url_from_addr(&proxy_addr);
+        let proxy_authority = authority_from_urlish(&proxy_url);
+        let proxy_addr = resolve_proxy_addr(&proxy_authority);
 
         wait_for_api_ready(&public_key_url);
         wait_for_proxy_ready(&proxy_url, &tls_cert_path);
@@ -175,19 +257,30 @@ impl RemoteTarget {
             tls_cert_path,
             public_key_url,
             register_url,
-            proxy_url,
+            proxy_addr,
         }
     }
 }
 
+struct PreparedRequest {
+    period: u64,
+    token: Vec<u8>,
+}
+
+#[derive(Debug)]
+enum ProxyRequestError {
+    Status(u16),
+    Transport(String),
+}
+
 struct BenchClient {
     target: RemoteTarget,
+    tls_client: StarTlsClient,
     user: User,
     counter: u64,
     prepared_period: u64,
     rng: OsRng,
-    agent: ureq::Agent,
-    prepared_tokens: VecDeque<String>,
+    prepared_requests: VecDeque<PreparedRequest>,
 }
 
 impl BenchClient {
@@ -217,16 +310,16 @@ impl BenchClient {
     fn new(target: RemoteTarget) -> Self {
         let mut rng = OsRng;
         let user = Self::register_user(&target, &mut rng);
-        let agent = build_pinned_tls_agent(&target.tls_cert_path, PROXY_READ_TIMEOUT);
+        let tls_client = StarTlsClient::new().expect("init STAR TLS client");
 
         Self {
             target,
+            tls_client,
             user,
             counter: 0,
-            prepared_period: u64::from_be_bytes(time::current_period()),
+            prepared_period: current_star_period(),
             rng,
-            agent,
-            prepared_tokens: VecDeque::with_capacity(PREPARED_REQUEST_BUFFER),
+            prepared_requests: VecDeque::with_capacity(PREPARED_REQUEST_BUFFER),
         }
     }
 
@@ -235,79 +328,149 @@ impl BenchClient {
         self.counter = 0;
     }
 
-    fn build_token(&mut self) -> String {
-        if self.counter >= MAX_COUNT_PER_CREDENTIAL {
-            self.rotate_credential();
-        }
-
-        let token_request = self
-            .user
-            .request_auth(self.counter, self.prepared_period, &mut self.rng)
-            .expect("build auth request");
-        self.counter += 1;
-        URL_SAFE.encode(token_request)
-    }
-
     fn refresh_prepared_period(&mut self) {
-        let current_period = u64::from_be_bytes(time::current_period());
+        let current_period = current_star_period();
+
         if current_period != self.prepared_period {
             self.prepared_period = current_period;
-            self.prepared_tokens.clear();
+            self.prepared_requests.clear();
         }
+    }
+
+    fn build_request(&mut self) -> PreparedRequest {
+        self.refresh_prepared_period();
+
+        if self.counter >= MAX_COUNT_PER_CREDENTIAL {
+            self.rotate_credential();
+
+            // Credential rotation performs API I/O and may cross a STAR period
+            // boundary. Re-check the period before creating the auth token.
+            self.refresh_prepared_period();
+        }
+
+        let period = self.prepared_period;
+        let token = self
+            .user
+            .request_auth(self.counter, period, &mut self.rng)
+            .expect("build auth request");
+
+        self.counter += 1;
+
+        PreparedRequest { period, token }
     }
 
     fn prepare_tokens(&mut self, min_len: usize) {
         self.refresh_prepared_period();
-        while self.prepared_tokens.len() < min_len {
-            let token = self.build_token();
-            self.prepared_tokens.push_back(token);
+
+        while self.prepared_requests.len() < min_len {
+            self.refresh_prepared_period();
+
+            let request = self.build_request();
+
+            if request.period == current_star_period() {
+                self.prepared_requests.push_back(request);
+            } else {
+                // The period rolled exactly while building the token.
+                // Drop this token and retry in the next loop iteration.
+                self.refresh_prepared_period();
+            }
         }
     }
 
-    fn take_prepared_token(&mut self) -> String {
+    fn take_prepared_request(&mut self) -> PreparedRequest {
+        loop {
+            self.refresh_prepared_period();
+
+            let current_period = current_star_period();
+
+            while let Some(request) = self.prepared_requests.pop_front() {
+                if request.period == current_period {
+                    return request;
+                }
+
+                // Drop stale prepared tokens. They would be rejected during
+                // ClientHello parsing and surface as TLS decode_error.
+            }
+
+            let request = self.build_request();
+
+            if request.period == current_star_period() {
+                return request;
+            }
+
+            self.refresh_prepared_period();
+        }
+    }
+
+    fn build_fresh_request_for_retry(&mut self) -> PreparedRequest {
+        self.prepared_requests.clear();
         self.refresh_prepared_period();
-        match self.prepared_tokens.pop_front() {
-            Some(token) => token,
-            None => self.build_token(),
+
+        loop {
+            let request = self.build_request();
+
+            if request.period == current_star_period() {
+                return request;
+            }
+
+            self.refresh_prepared_period();
         }
     }
 
-    fn request_with_token(&mut self, token: &str) -> Result<(), u16> {
-        let response = self
-            .agent
-            .get(&self.target.proxy_url)
-            .set("Connection", "close")
-            .set("X-STAR", token)
-            .call();
+    fn request_with_token(&mut self, token_request: &[u8]) -> Result<(), ProxyRequestError> {
+        match self
+            .tls_client
+            .get(self.target.proxy_addr, token_request, PROXY_READ_TIMEOUT)
+        {
+            Ok((status, body)) => {
+                if status != 200 {
+                    return Err(ProxyRequestError::Status(status));
+                }
 
-        match response {
-            Ok(resp) => {
-                let body = resp.into_string().expect("read proxy body");
                 assert_eq!(body.trim(), "OK");
                 Ok(())
             }
-            Err(ureq::Error::Status(code, _)) => Err(code),
-            Err(ureq::Error::Transport(err)) => {
-                panic!("proxy request transport error: {err}");
-            }
+            Err(err) => Err(ProxyRequestError::Transport(err)),
         }
     }
 
     fn send_prepared_request(&mut self) {
-        let token = self.take_prepared_token();
-        match self.request_with_token(&token) {
+        let request = self.take_prepared_request();
+
+        match self.request_with_token(&request.token) {
             Ok(()) => {}
-            Err(401) => {
-                // Tokens can expire when period rolls between preparation and send.
-                // Retry once with a freshly generated token for the current period.
-                self.refresh_prepared_period();
-                let retry_token = self.build_token();
-                if let Err(code) = self.request_with_token(&retry_token) {
-                    panic!("unexpected proxy status during benchmark after 401 retry: {code}");
+
+            Err(ProxyRequestError::Status(401)) => {
+                // If the token expires between the final local period check
+                // and server-side ClientHello validation, retry once.
+                let retry_request = self.build_fresh_request_for_retry();
+
+                if let Err(err) = self.request_with_token(&retry_request.token) {
+                    panic!("unexpected proxy error during benchmark after 401 retry: {err:?}");
                 }
             }
-            Err(code) => {
+
+            Err(ProxyRequestError::Transport(message))
+                if is_invalid_token_tls_error(&message) =>
+            {
+                // STAR token validation happens during TLS ClientHello parsing.
+                // Expired tokens may therefore appear as TLS handshake failures,
+                // not HTTP 401/403 responses.
+                let retry_request = self.build_fresh_request_for_retry();
+
+                if let Err(err) = self.request_with_token(&retry_request.token) {
+                    panic!(
+                        "unexpected proxy error during benchmark after TLS invalid-token retry: {err:?}"
+                    );
+                }
+            }
+
+            Err(ProxyRequestError::Status(code)) => {
                 panic!("unexpected proxy status during benchmark: {code}");
+            }
+
+            Err(ProxyRequestError::Transport(message)) => {
+                panic!("proxy request transport error: {message}");
             }
         }
     }
@@ -324,6 +487,7 @@ enum ClientWorkerCommand {
 
 fn run_client_worker(target: RemoteTarget, rx: mpsc::Receiver<ClientWorkerCommand>) {
     let mut client = BenchClient::new(target);
+
     loop {
         match rx.recv().expect("client worker channel should stay open") {
             ClientWorkerCommand::Prepare {
@@ -369,6 +533,7 @@ impl ClientWorkers {
         F: FnMut(mpsc::Sender<()>) -> ClientWorkerCommand,
     {
         let mut done_rxs = Vec::with_capacity(self.senders.len());
+
         for tx in &self.senders {
             let (done_tx, done_rx) = mpsc::channel();
             tx.send(build_command(done_tx)).expect(dispatch_message);
@@ -405,6 +570,7 @@ impl Drop for ClientWorkers {
         for tx in &self.senders {
             let _ = tx.send(ClientWorkerCommand::Shutdown);
         }
+
         for handle in self.handles.drain(..) {
             let _ = handle.join();
         }
@@ -433,14 +599,17 @@ fn timed_request_batches(clients: &ClientWorkers, batches: usize) -> Duration {
 fn bench_star_e2e_throughput(c: &mut Criterion) {
     let target = RemoteTarget::from_env();
     let client_sweep = e2e_client_sweep();
+
     println!("criterion report path: {REPORT_PATH}");
 
     let mut group = c.benchmark_group("star_e2e_proxy_throughput");
     group.sample_size(20);
     group.measurement_time(Duration::from_secs(8));
     group.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Linear));
+
     for client_threads in client_sweep {
         let clients = ClientWorkers::start(&target, client_threads);
+
         clients.prepare_for_batches(1);
         clients.run_batch();
 
@@ -457,6 +626,7 @@ fn bench_star_e2e_throughput(c: &mut Criterion) {
             },
         );
     }
+
     group.finish();
 }
 

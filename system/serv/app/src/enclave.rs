@@ -2,25 +2,30 @@ use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::io;
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Condvar, Mutex};
 
 use aesm_client::AesmClient;
 use enclave_runner::{EnclaveBuilder, Library};
 use enclave_runner_sgx::EnclaveBuilder as SgxEnclaveBuilder;
 use sgxs_loaders::isgx::Device as SgxDevice;
-use tokio::sync::Mutex;
 
 const SGX_TARGET: &str = "x86_64-fortanix-unknown-sgx";
 const STAR_ENCLAVE_SGXS: &str = "STAR_ENCLAVE_SGXS";
 const STAR_ENCLAVE_HEAP_SIZE: &str = "STAR_ENCLAVE_HEAP_SIZE";
 const STAR_ENCLAVE_STACK_SIZE: &str = "STAR_ENCLAVE_STACK_SIZE";
 const STAR_ENCLAVE_THREADS: &str = "STAR_ENCLAVE_THREADS";
+
 const DEFAULT_ENCLAVE_HEAP_SIZE: &str = "33554432";
 const DEFAULT_ENCLAVE_STACK_SIZE: &str = "131072";
+
 const SEALED_ENC_KEY_FILE: &str = "sealed_enc_key.bin";
 const SEALED_PRF_KEY_FILE: &str = "sealed_prf_key.bin";
+
 const MAX_PAYLOAD_LEN: usize = 16 * 1024 * 1024;
+
 pub const ATTESTATION_REPORT_DATA_LEN: usize = 64;
 pub const ENCLAVE_PUBLIC_KEY_LEN: usize = 32;
 
@@ -40,7 +45,39 @@ const ISSUE_TOKEN_RESPONSE_CAPACITY: usize = 32;
 const ATTEST_RESPONSE_CAPACITY: usize = 32;
 
 pub struct EnclaveRuntimes {
-    inner: Mutex<Vec<EnclaveRuntime>>,
+    runtime: EnclaveRuntime,
+    permits: Mutex<PermitState>,
+    available: Condvar,
+}
+
+struct PermitState {
+    available: usize,
+    total: usize,
+}
+
+pub struct EnclaveLease<'a> {
+    runtimes: &'a EnclaveRuntimes,
+}
+
+impl<'a> Deref for EnclaveLease<'a> {
+    type Target = EnclaveRuntime;
+
+    fn deref(&self) -> &Self::Target {
+        &self.runtimes.runtime
+    }
+}
+
+impl<'a> Drop for EnclaveLease<'a> {
+    fn drop(&mut self) {
+        let Ok(mut guard) = self.runtimes.permits.lock() else {
+            return;
+        };
+
+        if guard.available < guard.total {
+            guard.available += 1;
+            self.runtimes.available.notify_one();
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -70,7 +107,9 @@ impl fmt::Display for EnclaveError {
                 "enclave returned status {status} with {} bytes",
                 payload.len()
             ),
-            Self::ResponseTooLarge { len } => write!(f, "enclave response is too large: {len}"),
+            Self::ResponseTooLarge { len } => {
+                write!(f, "enclave response is too large: {len}")
+            }
             Self::Storage(err) => write!(f, "sealed key storage failed: {err}"),
         }
     }
@@ -93,29 +132,55 @@ impl Error for EnclaveError {
 
 impl EnclaveRuntimes {
     pub fn init(num: u8) -> Result<Self, EnclaveError> {
-        let sgxs = default_enclave_sgxs()?;
-        let mut in_use = vec![];
-
-        for _ in 0..num {
-            let enclave = EnclaveRuntime::init_library(&sgxs)?;
-            in_use.push(enclave);
-        }
+        let total = num as usize;
+        let runtime = EnclaveRuntime::from_env()?;
 
         Ok(EnclaveRuntimes {
-            inner: Mutex::new(in_use),
+            runtime,
+            permits: Mutex::new(PermitState {
+                available: total,
+                total,
+            }),
+            available: Condvar::new(),
         })
     }
 
     pub fn from_env(num: u8) -> Result<Self, EnclaveError> {
-        EnclaveRuntimes::init(num)
+        Self::init(num)
     }
 
-    pub async fn pick(&mut self) -> Option<EnclaveRuntime> {
-        self.inner.lock().await.pop()
+    pub async fn pick(&self) -> Option<EnclaveLease<'_>> {
+        self.pick_blocking()
     }
 
-    pub async fn release(&mut self, enclave: EnclaveRuntime) {
-        self.inner.lock().await.push(enclave);
+    pub fn pick_blocking(&self) -> Option<EnclaveLease<'_>> {
+        let mut guard = self.permits.lock().ok()?;
+
+        if guard.total == 0 {
+            return None;
+        }
+
+        while guard.available == 0 {
+            guard = self.available.wait(guard).ok()?;
+        }
+
+        guard.available -= 1;
+
+        Some(EnclaveLease { runtimes: self })
+    }
+
+    pub fn available_count(&self) -> usize {
+        match self.permits.lock() {
+            Ok(guard) => guard.available,
+            Err(_) => 0,
+        }
+    }
+
+    pub fn total_count(&self) -> usize {
+        match self.permits.lock() {
+            Ok(guard) => guard.total,
+            Err(_) => 0,
+        }
     }
 }
 
@@ -131,12 +196,12 @@ impl EnclaveRuntime {
 
     fn init_library(sgxs: &PathBuf) -> Result<Self, EnclaveError> {
         let library = LibraryRuntime::load(sgxs)?;
-        let mut runtime = EnclaveRuntime { library };
+        let runtime = EnclaveRuntime { library };
         runtime.initialize()?;
         Ok(runtime)
     }
 
-    fn initialize(&mut self) -> Result<(), EnclaveError> {
+    fn initialize(&self) -> Result<(), EnclaveError> {
         let key_paths = sealed_key_paths();
         let init_payload = read_sealed_keys(&key_paths)?;
         let response = self.call(OP_INIT, &init_payload)?;
@@ -149,9 +214,10 @@ impl EnclaveRuntime {
         Ok(())
     }
 
-    pub fn public_key(&mut self) -> Result<[u8; 32], EnclaveError> {
+    pub fn public_key(&self) -> Result<[u8; ENCLAVE_PUBLIC_KEY_LEN], EnclaveError> {
         let response = self.call(OP_PUBLIC_KEY, &[])?;
         let len = response.len();
+
         response
             .as_slice()
             .try_into()
@@ -159,35 +225,36 @@ impl EnclaveRuntime {
     }
 
     pub fn public_key_attestation(
-        &mut self,
+        &self,
         public_key: [u8; ENCLAVE_PUBLIC_KEY_LEN],
     ) -> Result<Vec<u8>, EnclaveError> {
         self.attest(report_data_for_public_key(public_key))
     }
 
-    pub fn issue_cred(&mut self, cipher: &[u8]) -> Result<Vec<u8>, EnclaveError> {
+    pub fn issue_cred(&self, cipher: &[u8]) -> Result<Vec<u8>, EnclaveError> {
         self.call(OP_ISSUE_CRED, cipher)
     }
 
     pub fn issue_token(
-        &mut self,
+        &self,
         cipher: &[u8],
         current_period: [u8; 8],
     ) -> Result<Vec<u8>, EnclaveError> {
         let mut payload = Vec::with_capacity(current_period.len() + cipher.len());
         payload.extend_from_slice(&current_period);
         payload.extend_from_slice(cipher);
+
         self.call(OP_ISSUE_TOKEN, &payload)
     }
 
     pub fn attest(
-        &mut self,
+        &self,
         report_data: [u8; ATTESTATION_REPORT_DATA_LEN],
     ) -> Result<Vec<u8>, EnclaveError> {
         self.call(OP_ATTEST, &report_data)
     }
 
-    fn call(&mut self, op: u64, payload: &[u8]) -> Result<Vec<u8>, EnclaveError> {
+    fn call(&self, op: u64, payload: &[u8]) -> Result<Vec<u8>, EnclaveError> {
         self.library.call(op, payload)
     }
 }
@@ -204,9 +271,8 @@ struct LibraryRuntime {
     library: Library,
 }
 
-// enclave_runner::Library internally serializes TCS access and is safe to move
-// with the runtime object that owns it.
 unsafe impl Send for LibraryRuntime {}
+unsafe impl Sync for LibraryRuntime {}
 
 impl LibraryRuntime {
     fn load(sgxs: &PathBuf) -> Result<Self, EnclaveError> {
@@ -214,7 +280,9 @@ impl LibraryRuntime {
             .map_err(EnclaveError::Build)?
             .einittoken_provider(AesmClient::new())
             .build();
+
         let sgx_builder = SgxEnclaveBuilder::new(sgxs);
+
         let library = EnclaveBuilder::new(sgx_builder)
             .build(&mut device)
             .map_err(|err| EnclaveError::Library(err.to_string()))?;
@@ -222,7 +290,7 @@ impl LibraryRuntime {
         Ok(Self { library })
     }
 
-    fn call(&mut self, op: u64, payload: &[u8]) -> Result<Vec<u8>, EnclaveError> {
+    fn call(&self, op: u64, payload: &[u8]) -> Result<Vec<u8>, EnclaveError> {
         let mut output = vec![0u8; initial_response_capacity(op, payload.len())];
 
         loop {
@@ -244,6 +312,7 @@ impl LibraryRuntime {
                 if len > MAX_PAYLOAD_LEN {
                     return Err(EnclaveError::ResponseTooLarge { len });
                 }
+
                 output.resize(len, 0);
                 continue;
             }
@@ -253,6 +322,7 @@ impl LibraryRuntime {
             }
 
             output.truncate(len);
+
             if status == STATUS_OK {
                 return Ok(output);
             }
@@ -277,6 +347,7 @@ fn default_enclave_sgxs() -> Result<PathBuf, EnclaveError> {
 
     let enclave_dir = PathBuf::from(manifest_dir).join("../enclave");
     let manifest_path = enclave_dir.join("Cargo.toml");
+
     build_enclave_sgxs(&manifest_path)?;
 
     Ok(enclave_dir
@@ -309,6 +380,7 @@ fn build_enclave_sgxs(manifest_path: &Path) -> Result<(), EnclaveError> {
     let target_dir = manifest_dir.join("target").join(SGX_TARGET).join("release");
     let elf_path = target_dir.join("enclave");
     let sgxs_path = target_dir.join("enclave.sgxs");
+
     run_command(
         Command::new("ftxsgx-elf2sgxs")
             .arg(&elf_path)
@@ -346,12 +418,14 @@ fn default_enclave_threads() -> String {
 
 fn run_command(command: &mut Command) -> Result<(), EnclaveError> {
     let output = command.output().map_err(EnclaveError::Build)?;
+
     if output.status.success() {
         return Ok(());
     }
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
+
     Err(EnclaveError::BuildFailed(format!(
         "{}\nstdout:\n{}\nstderr:\n{}",
         output.status, stdout, stderr
@@ -378,6 +452,7 @@ struct SealedKeyPaths {
 #[cfg(test)]
 fn sealed_key_paths() -> SealedKeyPaths {
     let dir = std::env::temp_dir().join(format!("star-app-sgx-test-{}", std::process::id()));
+
     SealedKeyPaths {
         enc: dir.join(SEALED_ENC_KEY_FILE),
         prf: dir.join(SEALED_PRF_KEY_FILE),
@@ -389,6 +464,7 @@ fn sealed_key_paths() -> SealedKeyPaths {
     let enc = std::env::var_os("STAR_SEALED_ENC_KEY_FILE")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(SEALED_ENC_KEY_FILE));
+
     let prf = std::env::var_os("STAR_SEALED_PRF_KEY_FILE")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(SEALED_PRF_KEY_FILE));
@@ -422,6 +498,7 @@ fn write_sealed_keys(
     if let Some(parent) = paths.enc.parent() {
         fs::create_dir_all(parent).map_err(EnclaveError::Storage)?;
     }
+
     if let Some(parent) = paths.prf.parent() {
         fs::create_dir_all(parent).map_err(EnclaveError::Storage)?;
     }
@@ -432,8 +509,10 @@ fn write_sealed_keys(
 
 fn encode_sealed_keys(sealed_enc_key: &[u8], sealed_prf_key: &[u8]) -> Vec<u8> {
     let mut payload = Vec::with_capacity(8 + sealed_enc_key.len() + sealed_prf_key.len());
+
     append_blob(&mut payload, sealed_enc_key);
     append_blob(&mut payload, sealed_prf_key);
+
     payload
 }
 
@@ -444,8 +523,10 @@ fn append_blob(payload: &mut Vec<u8>, blob: &[u8]) {
 
 fn decode_sealed_keys(payload: &[u8]) -> Result<(&[u8], &[u8]), EnclaveError> {
     let mut remaining = payload;
+
     let sealed_enc_key = take_blob(&mut remaining)?;
     let sealed_prf_key = take_blob(&mut remaining)?;
+
     if !remaining.is_empty() {
         return Err(EnclaveError::InvalidSealedKeys(
             "trailing bytes in init response".to_string(),
@@ -461,10 +542,14 @@ fn take_blob<'a>(payload: &mut &'a [u8]) -> Result<&'a [u8], EnclaveError> {
         .ok_or_else(|| EnclaveError::InvalidSealedKeys("missing blob length".to_string()))?
         .try_into()
         .expect("fixed slice");
+
     let len = u32::from_be_bytes(len) as usize;
+
     let blob = payload
         .get(4..4 + len)
         .ok_or_else(|| EnclaveError::InvalidSealedKeys("truncated blob".to_string()))?;
+
     *payload = &payload[4 + len..];
+
     Ok(blob)
 }
