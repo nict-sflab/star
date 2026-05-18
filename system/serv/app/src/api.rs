@@ -17,6 +17,10 @@ pub struct IssueApi {
 impl IssueApi {
     pub fn init(enclave: EnclaveRuntime) -> Self {
         let enclave = Arc::new(Mutex::new(enclave));
+        Self::init_shared(enclave)
+    }
+
+    pub fn init_shared(enclave: Arc<Mutex<EnclaveRuntime>>) -> Self {
         IssueApi { enclave }
     }
 }
@@ -61,7 +65,11 @@ impl PublicKeyApi {
     pub fn init(enclave: &mut EnclaveRuntime) -> Result<Self, EnclaveError> {
         let public_key = enclave.public_key()?;
 
-        Ok(PublicKeyApi { public_key })
+        Ok(Self::from_public_key(public_key))
+    }
+
+    pub fn from_public_key(public_key: Long) -> Self {
+        PublicKeyApi { public_key }
     }
 }
 

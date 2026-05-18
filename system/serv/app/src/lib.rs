@@ -1,3 +1,4 @@
+use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use pingora::{listeners::tls::TlsSettings, server::Server};
 use pingora_proxy::http_proxy_service;
 use pingora_web::App as WebApp;
@@ -53,6 +54,42 @@ pub fn build_server(
     prefixes: Vec<u32>,
     max_prefix: u32,
 ) -> Result<Server, Box<dyn Error>> {
+    build_server_with_startup_attestation(
+        api_addr,
+        proxy_addr,
+        upstream_addr,
+        prefixes,
+        max_prefix,
+        true,
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn build_server_without_startup_attestation(
+    api_addr: &str,
+    proxy_addr: &str,
+    upstream_addr: &str,
+    prefixes: Vec<u32>,
+    max_prefix: u32,
+) -> Result<Server, Box<dyn Error>> {
+    build_server_with_startup_attestation(
+        api_addr,
+        proxy_addr,
+        upstream_addr,
+        prefixes,
+        max_prefix,
+        false,
+    )
+}
+
+fn build_server_with_startup_attestation(
+    api_addr: &str,
+    proxy_addr: &str,
+    upstream_addr: &str,
+    prefixes: Vec<u32>,
+    max_prefix: u32,
+    emit_startup_attestation: bool,
+) -> Result<Server, Box<dyn Error>> {
     ensure_rustls_provider();
     let filter_enclave = EnclaveRuntimes::from_env(2)?;
     let mut issue_enclave = EnclaveRuntime::from_env()?;
@@ -66,8 +103,14 @@ pub fn build_server(
     let mut api_app = WebApp::default();
     api_app.use_middleware(Cors::default());
 
-    let public_key_api = api::PublicKeyApi::init(&mut issue_enclave)?;
-    let issue_api = api::IssueApi::init(issue_enclave);
+    let public_key = issue_enclave.public_key()?;
+    if emit_startup_attestation {
+        print_startup_attestation(&mut issue_enclave, public_key)?;
+    }
+
+    let public_key_api = api::PublicKeyApi::from_public_key(public_key);
+    let issue_enclave = Arc::new(std::sync::Mutex::new(issue_enclave));
+    let issue_api = api::IssueApi::init_shared(Arc::clone(&issue_enclave));
 
     api_app.get(DEFAULT_PUBLIC_KEY_API, Arc::new(public_key_api));
     api_app.post(DEFAULT_REGISTER_API, Arc::new(issue_api));
@@ -101,6 +144,19 @@ pub fn build_server(
     server.add_service(proxy_svc);
 
     Ok(server)
+}
+
+fn print_startup_attestation(
+    issue_enclave: &mut EnclaveRuntime,
+    public_key: [u8; 32],
+) -> Result<(), Box<dyn Error>> {
+    let quote = issue_enclave.public_key_attestation(public_key)?;
+    println!(
+        "STAR_ATTESTATION_PUBLIC_KEY_BASE64={}",
+        URL_SAFE.encode(public_key)
+    );
+    println!("STAR_ATTESTATION_QUOTE_BASE64={}", URL_SAFE.encode(quote));
+    Ok(())
 }
 
 #[cfg(test)]

@@ -1,0 +1,8 @@
+[workspace]
+members = [
+    "app",
+    "enclave",
+    "tools",
+    "utils",
+]
+resolver = "3"

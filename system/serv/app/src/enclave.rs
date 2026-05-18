@@ -21,11 +21,14 @@ const DEFAULT_ENCLAVE_STACK_SIZE: &str = "131072";
 const SEALED_ENC_KEY_FILE: &str = "sealed_enc_key.bin";
 const SEALED_PRF_KEY_FILE: &str = "sealed_prf_key.bin";
 const MAX_PAYLOAD_LEN: usize = 16 * 1024 * 1024;
+pub const ATTESTATION_REPORT_DATA_LEN: usize = 64;
+pub const ENCLAVE_PUBLIC_KEY_LEN: usize = 32;
 
 const OP_INIT: u64 = 0;
 const OP_PUBLIC_KEY: u64 = 1;
 const OP_ISSUE_CRED: u64 = 2;
 const OP_ISSUE_TOKEN: u64 = 3;
+const OP_ATTEST: u64 = 4;
 
 const STATUS_OK: u64 = 0;
 const STATUS_BUFFER_TOO_SMALL: u64 = 5;
@@ -34,6 +37,7 @@ const INIT_RESPONSE_CAPACITY: usize = 4096;
 const PUBLIC_KEY_RESPONSE_CAPACITY: usize = 32;
 const ISSUE_CRED_RESPONSE_CAPACITY: usize = 128;
 const ISSUE_TOKEN_RESPONSE_CAPACITY: usize = 32;
+const ATTEST_RESPONSE_CAPACITY: usize = 8192;
 
 pub struct EnclaveRuntimes {
     inner: Mutex<Vec<EnclaveRuntime>>,
@@ -154,6 +158,13 @@ impl EnclaveRuntime {
             .map_err(|_| EnclaveError::InvalidPublicKeyLength { len })
     }
 
+    pub fn public_key_attestation(
+        &mut self,
+        public_key: [u8; ENCLAVE_PUBLIC_KEY_LEN],
+    ) -> Result<Vec<u8>, EnclaveError> {
+        self.attest(report_data_for_public_key(public_key))
+    }
+
     pub fn issue_cred(&mut self, cipher: &[u8]) -> Result<Vec<u8>, EnclaveError> {
         self.call(OP_ISSUE_CRED, cipher)
     }
@@ -169,9 +180,24 @@ impl EnclaveRuntime {
         self.call(OP_ISSUE_TOKEN, &payload)
     }
 
+    pub fn attest(
+        &mut self,
+        report_data: [u8; ATTESTATION_REPORT_DATA_LEN],
+    ) -> Result<Vec<u8>, EnclaveError> {
+        self.call(OP_ATTEST, &report_data)
+    }
+
     fn call(&mut self, op: u64, payload: &[u8]) -> Result<Vec<u8>, EnclaveError> {
         self.library.call(op, payload)
     }
+}
+
+pub fn report_data_for_public_key(
+    public_key: [u8; ENCLAVE_PUBLIC_KEY_LEN],
+) -> [u8; ATTESTATION_REPORT_DATA_LEN] {
+    let mut report_data = [0u8; ATTESTATION_REPORT_DATA_LEN];
+    report_data[..ENCLAVE_PUBLIC_KEY_LEN].copy_from_slice(&public_key);
+    report_data
 }
 
 struct LibraryRuntime {
@@ -339,6 +365,7 @@ fn initial_response_capacity(op: u64, payload_len: usize) -> usize {
         OP_PUBLIC_KEY => PUBLIC_KEY_RESPONSE_CAPACITY,
         OP_ISSUE_CRED => ISSUE_CRED_RESPONSE_CAPACITY,
         OP_ISSUE_TOKEN => ISSUE_TOKEN_RESPONSE_CAPACITY,
+        OP_ATTEST => ATTEST_RESPONSE_CAPACITY,
         _ => 1024,
     }
 }
