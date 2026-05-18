@@ -37,7 +37,7 @@ const INIT_RESPONSE_CAPACITY: usize = 4096;
 const PUBLIC_KEY_RESPONSE_CAPACITY: usize = 32;
 const ISSUE_CRED_RESPONSE_CAPACITY: usize = 128;
 const ISSUE_TOKEN_RESPONSE_CAPACITY: usize = 32;
-const ATTEST_RESPONSE_CAPACITY: usize = 8192;
+const ATTEST_RESPONSE_CAPACITY: usize = 32;
 
 pub struct EnclaveRuntimes {
     inner: Mutex<Vec<EnclaveRuntime>>,

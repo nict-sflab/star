@@ -1,4 +1,8 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    env,
+    sync::{Arc, Mutex as StdMutex},
+    time::Duration,
+};
 
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 use rand_core::OsRng;
@@ -21,11 +25,13 @@ const MAX_COUNT: u32 = 1_000_000;
 const PARALLEL_OPS_PER_WORKER: usize = 64;
 const FIXED_PREFIX_MAX: u32 = 4;
 const FIXED_CONCURRENCY: usize = FIXED_PREFIX_MAX as usize;
+const DEFAULT_FILTER_ENCLAVES: u8 = 2;
 const CHECK_DUPLICATION_BATCH_OPS: usize = FIXED_CONCURRENCY * PARALLEL_OPS_PER_WORKER;
 const ISSUE_TOKEN_GROUP_NAME: &str = "star_filter_issue_token_and_route";
 const CHECK_DUPLICATION_PARALLEL_GROUP_NAME: &str = "star_filter_check_duplication_parallel";
 const CHECK_DUPLICATION_SINGLE_THREAD_GROUP_NAME: &str =
     "star_filter_check_duplication_single_thread";
+const DIAGNOSTICS_GROUP_NAME: &str = "star_filter_diagnostics";
 const FIXED_BATCH_BENCH_NAME: &str = "fixed_batch_256_ops_per_iter";
 const FIXED_PER_OP_BENCH_NAME: &str = "fixed_per_op";
 
@@ -48,9 +54,17 @@ fn fixed_prefixes() -> Vec<u32> {
     (0..FIXED_PREFIX_MAX).collect()
 }
 
+fn filter_enclave_count() -> u8 {
+    env::var("STAR_FILTER_BENCH_ENCLAVES")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_FILTER_ENCLAVES)
+}
+
 fn build_filter() -> HashMapStarFilter {
     let filter_box = DashMapFilterBox::new();
-    let enclave = EnclaveRuntimes::from_env(10).expect("filter enclave pool");
+    let enclave = EnclaveRuntimes::from_env(filter_enclave_count()).expect("filter enclave pool");
 
     StarFilter::new(filter_box, fixed_prefixes(), FIXED_PREFIX_MAX, enclave)
 }
@@ -111,6 +125,67 @@ fn bench_issue_token_and_route(c: &mut Criterion) {
             }
         })
     });
+    group.finish();
+}
+
+fn bench_diagnostics(c: &mut Criterion) {
+    if env::var_os("STAR_FILTER_BENCH_DIAGNOSTICS").is_none() {
+        return;
+    }
+
+    let rt = current_thread_runtime();
+    let request = Arc::new(build_request());
+
+    let mut group = c.benchmark_group(DIAGNOSTICS_GROUP_NAME);
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(1));
+
+    let public_key_enclave = Arc::new(StdMutex::new(
+        EnclaveRuntime::from_env().expect("public key enclave"),
+    ));
+    group.throughput(Throughput::Elements(1));
+    group.bench_function("public_key_ecall", |b| {
+        let enclave = Arc::clone(&public_key_enclave);
+        b.iter(|| {
+            let key = enclave
+                .lock()
+                .expect("enclave mutex")
+                .public_key()
+                .expect("public key");
+            black_box(key);
+        });
+    });
+
+    let issue_token_enclave = Arc::new(StdMutex::new(
+        EnclaveRuntime::from_env().expect("issue token enclave"),
+    ));
+    group.throughput(Throughput::Elements(1));
+    group.bench_function("issue_token_direct_ecall", |b| {
+        let enclave = Arc::clone(&issue_token_enclave);
+        let request = Arc::clone(&request);
+        b.iter(|| {
+            let token = enclave
+                .lock()
+                .expect("enclave mutex")
+                .issue_token(
+                    black_box(request.as_slice()),
+                    constant_time_utils::time::current_period(),
+                )
+                .expect("issue token");
+            black_box(token);
+        });
+    });
+
+    group.throughput(Throughput::Elements(1));
+    group.bench_function("spawn_blocking_noop", |b| {
+        b.to_async(&rt).iter(|| async {
+            let value = tokio::task::spawn_blocking(|| 1u64)
+                .await
+                .expect("spawn_blocking join");
+            black_box(value);
+        });
+    });
+
     group.finish();
 }
 
@@ -230,6 +305,7 @@ fn bench_check_duplication_single_thread(c: &mut Criterion) {
 criterion_group!(
     benches,
     bench_issue_token_and_route,
+    bench_diagnostics,
     bench_check_duplication_parallel,
     bench_check_duplication_single_thread
 );
