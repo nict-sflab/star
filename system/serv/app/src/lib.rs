@@ -81,7 +81,6 @@ fn build_server_with_startup_attestation(
     max_prefix: u32,
     emit_startup_attestation: bool,
 ) -> Result<Server, Box<dyn Error>> {
-    let filter_enclave = EnclaveRuntimes::from_env(2)?;
     let filter_enclave = EnclaveRuntimes::from_env(10)?;
     let mut issue_enclave = EnclaveRuntime::from_env()?;
 
@@ -105,7 +104,7 @@ fn build_server_with_startup_attestation(
     }
 
     let public_key_api = api::PublicKeyApi::from_public_key(public_key);
-    let issue_enclave = Arc::new(std::sync::Mutex::new(issue_enclave));
+    let issue_enclave = Arc::new(issue_enclave);
     let issue_api = api::IssueApi::init_shared(Arc::clone(&issue_enclave));
 
     api_app.get(DEFAULT_PUBLIC_KEY_API, Arc::new(public_key_api));

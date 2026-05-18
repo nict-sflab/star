@@ -132,8 +132,8 @@ impl Error for EnclaveError {
 
 impl EnclaveRuntimes {
     pub fn init(num: u8) -> Result<Self, EnclaveError> {
-        let total = num as usize;
         let runtime = EnclaveRuntime::from_env()?;
+        let total = (num as usize).min(enclave_thread_count());
 
         Ok(EnclaveRuntimes {
             runtime,
@@ -291,47 +291,57 @@ impl LibraryRuntime {
     }
 
     fn call(&self, op: u64, payload: &[u8]) -> Result<Vec<u8>, EnclaveError> {
-        let mut output = vec![0u8; initial_response_capacity(op, payload.len())];
-
-        loop {
-            let (status, len) = unsafe {
-                self.library.call(
-                    op,
-                    payload.as_ptr() as u64,
-                    payload.len() as u64,
-                    output.as_mut_ptr() as u64,
-                    output.len() as u64,
-                )
+        std::thread::scope(|scope| {
+            let handle = scope.spawn(|| call_library(&self.library, op, payload));
+            match handle.join() {
+                Ok(result) => result,
+                Err(panic) => std::panic::resume_unwind(panic),
             }
-            .map_err(|err| EnclaveError::Library(err.to_string()))?;
+        })
+    }
+}
 
-            let len = usize::try_from(len)
-                .map_err(|_| EnclaveError::ResponseTooLarge { len: usize::MAX })?;
+fn call_library(library: &Library, op: u64, payload: &[u8]) -> Result<Vec<u8>, EnclaveError> {
+    let mut output = vec![0u8; initial_response_capacity(op, payload.len())];
 
-            if status == STATUS_BUFFER_TOO_SMALL {
-                if len > MAX_PAYLOAD_LEN {
-                    return Err(EnclaveError::ResponseTooLarge { len });
-                }
+    loop {
+        let (status, len) = unsafe {
+            library.call(
+                op,
+                payload.as_ptr() as u64,
+                payload.len() as u64,
+                output.as_mut_ptr() as u64,
+                output.len() as u64,
+            )
+        }
+        .map_err(|err| EnclaveError::Library(err.to_string()))?;
 
-                output.resize(len, 0);
-                continue;
-            }
+        let len =
+            usize::try_from(len).map_err(|_| EnclaveError::ResponseTooLarge { len: usize::MAX })?;
 
-            if len > output.len() {
+        if status == STATUS_BUFFER_TOO_SMALL {
+            if len > MAX_PAYLOAD_LEN {
                 return Err(EnclaveError::ResponseTooLarge { len });
             }
 
-            output.truncate(len);
-
-            if status == STATUS_OK {
-                return Ok(output);
-            }
-
-            return Err(EnclaveError::Remote {
-                status,
-                payload: output,
-            });
+            output.resize(len, 0);
+            continue;
         }
+
+        if len > output.len() {
+            return Err(EnclaveError::ResponseTooLarge { len });
+        }
+
+        output.truncate(len);
+
+        if status == STATUS_OK {
+            return Ok(output);
+        }
+
+        return Err(EnclaveError::Remote {
+            status,
+            payload: output,
+        });
     }
 }
 
@@ -408,12 +418,22 @@ fn env_or_default(name: &str, default: &str) -> String {
 }
 
 fn default_enclave_threads() -> String {
-    std::env::var(STAR_ENCLAVE_THREADS).unwrap_or_else(|_| {
-        std::thread::available_parallelism()
-            .map(|threads| threads.get())
-            .unwrap_or(1)
-            .to_string()
-    })
+    std::env::var(STAR_ENCLAVE_THREADS)
+        .unwrap_or_else(|_| default_enclave_thread_count().to_string())
+}
+
+fn enclave_thread_count() -> usize {
+    std::env::var(STAR_ENCLAVE_THREADS)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or_else(default_enclave_thread_count)
+}
+
+fn default_enclave_thread_count() -> usize {
+    std::thread::available_parallelism()
+        .map(|threads| threads.get())
+        .unwrap_or(1)
 }
 
 fn run_command(command: &mut Command) -> Result<(), EnclaveError> {

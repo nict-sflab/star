@@ -1,13 +1,13 @@
 mod attest;
 mod seal;
 
-use rand::{rngs::OsRng, RngCore};
+use rand::{RngCore, rngs::OsRng};
 use star_core::serv::enclave::Enclave;
 use std::io;
 #[cfg(target_env = "sgx")]
 use std::slice;
 #[cfg(target_env = "sgx")]
-use std::sync::{Mutex, OnceLock};
+use std::sync::{OnceLock, RwLock};
 
 const PERIOD_LEN: usize = 8;
 const MAX_TICKETS: u32 = 3_000_000_000;
@@ -27,33 +27,28 @@ const STATUS_BUFFER_TOO_SMALL: u8 = 5;
 
 struct EnclaveApp {
     enclave: Option<Enclave>,
-    rng: OsRng,
     max: u32,
 }
 
 impl EnclaveApp {
     fn new(max: u32) -> Self {
-        Self {
-            enclave: None,
-            rng: OsRng,
-            max,
-        }
+        Self { enclave: None, max }
     }
 
     #[cfg(test)]
     fn with_enclave(enclave: Enclave) -> Self {
         Self {
             enclave: Some(enclave),
-            rng: OsRng,
             max: MAX_TICKETS,
         }
     }
 
     fn init_fresh(&mut self) -> io::Result<Vec<u8>> {
+        let mut rng = OsRng;
         let mut sk = [0u8; 32];
         let mut cipher_receiver: [u8; 32] = [0u8; 32];
-        self.rng.fill_bytes(&mut sk);
-        self.rng.fill_bytes(&mut cipher_receiver);
+        rng.fill_bytes(&mut sk);
+        rng.fill_bytes(&mut cipher_receiver);
 
         let sealed_enc_key = seal::seal(ENC_KEY, &sk).map_err(to_io)?;
         let sealed_prf_key = seal::seal(PRF_KEY, &cipher_receiver).map_err(to_io)?;
@@ -115,7 +110,7 @@ impl EnclaveApp {
         }
     }
 
-    fn issue_cred(&mut self, payload: &[u8]) -> (u8, Vec<u8>) {
+    fn issue_cred(&self, payload: &[u8]) -> (u8, Vec<u8>) {
         let Some(enclave) = self.enclave.as_ref() else {
             return (
                 STATUS_NOT_INITIALIZED,
@@ -123,7 +118,8 @@ impl EnclaveApp {
             );
         };
 
-        let cred = enclave.issue_cred(payload, &mut self.rng);
+        let mut rng = OsRng;
+        let cred = enclave.issue_cred(payload, &mut rng);
         (STATUS_OK, cred)
     }
 
@@ -158,14 +154,20 @@ impl EnclaveApp {
         }
     }
 
-    fn handle(&mut self, op: u8, payload: &[u8]) -> (u8, Vec<u8>) {
+    fn handle_shared(&self, op: u8, payload: &[u8]) -> (u8, Vec<u8>) {
         match op {
-            OP_INIT => self.init(payload),
             OP_PUBLIC_KEY => self.public_key(payload),
             OP_ISSUE_CRED => self.issue_cred(payload),
             OP_ISSUE_TOKEN => self.issue_token(payload),
             OP_ATTEST => self.attest(payload),
             _ => (STATUS_BAD_REQUEST, b"unknown operation".to_vec()),
+        }
+    }
+
+    fn handle(&mut self, op: u8, payload: &[u8]) -> (u8, Vec<u8>) {
+        match op {
+            OP_INIT => self.init(payload),
+            _ => self.handle_shared(op, payload),
         }
     }
 }
@@ -174,7 +176,7 @@ use crate::seal::{ENC_KEY, PRF_KEY};
 pub fn run() {}
 
 #[cfg(target_env = "sgx")]
-static LIBRARY_APP: OnceLock<Mutex<EnclaveApp>> = OnceLock::new();
+static LIBRARY_APP: OnceLock<RwLock<EnclaveApp>> = OnceLock::new();
 
 #[cfg(target_env = "sgx")]
 #[allow(improper_ctypes_definitions)]
@@ -206,10 +208,17 @@ fn library_entry(
         Err(status) => return (status as u64, 0),
     };
 
-    let app = LIBRARY_APP.get_or_init(|| Mutex::new(EnclaveApp::new(MAX_TICKETS)));
-    let (status, response) = match app.lock() {
-        Ok(mut app) => app.handle(op, input),
-        Err(_) => (STATUS_PANIC, b"enclave app lock poisoned".to_vec()),
+    let app = LIBRARY_APP.get_or_init(|| RwLock::new(EnclaveApp::new(MAX_TICKETS)));
+    let (status, response) = if op == OP_INIT {
+        match app.write() {
+            Ok(mut app) => app.handle(op, input),
+            Err(_) => (STATUS_PANIC, b"enclave app lock poisoned".to_vec()),
+        }
+    } else {
+        match app.read() {
+            Ok(app) => app.handle_shared(op, input),
+            Err(_) => (STATUS_PANIC, b"enclave app lock poisoned".to_vec()),
+        }
     };
 
     if response.len() > output.len() {
