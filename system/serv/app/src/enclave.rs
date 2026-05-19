@@ -1,6 +1,5 @@
 use std::error::Error;
 use std::fmt;
-use std::fs;
 use std::io;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
@@ -11,6 +10,7 @@ use aesm_client::AesmClient;
 use enclave_runner::{EnclaveBuilder, Library};
 use enclave_runner_sgx::EnclaveBuilder as SgxEnclaveBuilder;
 use sgxs_loaders::isgx::Device as SgxDevice;
+use star_attestation::QVE_TARGET_INFO_LEN;
 
 const SGX_TARGET: &str = "x86_64-fortanix-unknown-sgx";
 const STAR_ENCLAVE_SGXS: &str = "STAR_ENCLAVE_SGXS";
@@ -20,9 +20,6 @@ const STAR_ENCLAVE_THREADS: &str = "STAR_ENCLAVE_THREADS";
 
 const DEFAULT_ENCLAVE_HEAP_SIZE: &str = "33554432";
 const DEFAULT_ENCLAVE_STACK_SIZE: &str = "131072";
-
-const SEALED_ENC_KEY_FILE: &str = "sealed_enc_key.bin";
-const SEALED_PRF_KEY_FILE: &str = "sealed_prf_key.bin";
 
 const MAX_PAYLOAD_LEN: usize = 16 * 1024 * 1024;
 
@@ -34,15 +31,19 @@ const OP_PUBLIC_KEY: u64 = 1;
 const OP_ISSUE_CRED: u64 = 2;
 const OP_ISSUE_TOKEN: u64 = 3;
 const OP_ATTEST: u64 = 4;
+const OP_TRANSFER_PUBLIC_KEY: u64 = 5;
+const OP_INSTALL_KEYS: u64 = 6;
+const OP_QVE_TARGET_INFO: u64 = 7;
 
 const STATUS_OK: u64 = 0;
 const STATUS_BUFFER_TOO_SMALL: u64 = 5;
 
-const INIT_RESPONSE_CAPACITY: usize = 4096;
 const PUBLIC_KEY_RESPONSE_CAPACITY: usize = 32;
 const ISSUE_CRED_RESPONSE_CAPACITY: usize = 128;
 const ISSUE_TOKEN_RESPONSE_CAPACITY: usize = 32;
 const ATTEST_RESPONSE_CAPACITY: usize = 32;
+const INSTALL_KEYS_RESPONSE_CAPACITY: usize = 0;
+const QVE_TARGET_INFO_RESPONSE_CAPACITY: usize = QVE_TARGET_INFO_LEN;
 
 pub struct EnclaveRuntimes {
     runtime: EnclaveRuntime,
@@ -87,6 +88,7 @@ pub enum EnclaveError {
     InvalidPublicKeyLength { len: usize },
     InvalidSealedKeys(String),
     Library(String),
+    Qve(String),
     Remote { status: u64, payload: Vec<u8> },
     ResponseTooLarge { len: usize },
     Storage(io::Error),
@@ -102,6 +104,7 @@ impl fmt::Display for EnclaveError {
             }
             Self::InvalidSealedKeys(err) => write!(f, "invalid sealed keys: {err}"),
             Self::Library(err) => write!(f, "enclave library call failed: {err}"),
+            Self::Qve(err) => write!(f, "QvE verification failed: {err}"),
             Self::Remote { status, payload } => write!(
                 f,
                 "enclave returned status {status} with {} bytes",
@@ -123,6 +126,7 @@ impl Error for EnclaveError {
             Self::InvalidPublicKeyLength { .. } => None,
             Self::InvalidSealedKeys(_) => None,
             Self::Library(_) => None,
+            Self::Qve(_) => None,
             Self::Remote { .. } => None,
             Self::ResponseTooLarge { .. } => None,
             Self::Storage(err) => Some(err),
@@ -182,6 +186,22 @@ impl EnclaveRuntimes {
             Err(_) => 0,
         }
     }
+
+    pub fn transfer_key_attestation(&self) -> Result<Vec<u8>, EnclaveError> {
+        self.runtime.transfer_key_attestation()
+    }
+
+    pub fn qve_target_info(&self) -> Result<Vec<u8>, EnclaveError> {
+        self.runtime.qve_target_info()
+    }
+
+    pub fn install_keys(
+        &self,
+        manager_evidence: &[u8],
+        envelope: &[u8],
+    ) -> Result<(), EnclaveError> {
+        self.runtime.install_keys(manager_evidence, envelope)
+    }
 }
 
 pub struct EnclaveRuntime {
@@ -202,15 +222,7 @@ impl EnclaveRuntime {
     }
 
     fn initialize(&self) -> Result<(), EnclaveError> {
-        let key_paths = sealed_key_paths();
-        let init_payload = read_sealed_keys(&key_paths)?;
-        let response = self.call(OP_INIT, &init_payload)?;
-
-        if init_payload.is_empty() {
-            let (sealed_enc_key, sealed_prf_key) = decode_sealed_keys(&response)?;
-            write_sealed_keys(&key_paths, sealed_enc_key, sealed_prf_key)?;
-        }
-
+        self.call(OP_INIT, &[])?;
         Ok(())
     }
 
@@ -222,13 +234,6 @@ impl EnclaveRuntime {
             .as_slice()
             .try_into()
             .map_err(|_| EnclaveError::InvalidPublicKeyLength { len })
-    }
-
-    pub fn public_key_attestation(
-        &self,
-        public_key: [u8; ENCLAVE_PUBLIC_KEY_LEN],
-    ) -> Result<Vec<u8>, EnclaveError> {
-        self.attest(report_data_for_public_key(public_key))
     }
 
     pub fn issue_cred(&self, cipher: &[u8]) -> Result<Vec<u8>, EnclaveError> {
@@ -254,6 +259,42 @@ impl EnclaveRuntime {
         self.call(OP_ATTEST, &report_data)
     }
 
+    pub fn transfer_public_key(&self) -> Result<[u8; ENCLAVE_PUBLIC_KEY_LEN], EnclaveError> {
+        let response = self.call(OP_TRANSFER_PUBLIC_KEY, &[])?;
+        let len = response.len();
+
+        response
+            .as_slice()
+            .try_into()
+            .map_err(|_| EnclaveError::InvalidPublicKeyLength { len })
+    }
+
+    pub fn transfer_key_attestation(&self) -> Result<Vec<u8>, EnclaveError> {
+        let public_key = self.transfer_public_key()?;
+        self.attest(report_data_for_public_key(public_key))
+    }
+
+    pub fn qve_target_info(&self) -> Result<Vec<u8>, EnclaveError> {
+        let response = self.call(OP_QVE_TARGET_INFO, &[])?;
+        if response.len() != QVE_TARGET_INFO_LEN {
+            return Err(EnclaveError::Qve(format!(
+                "enclave returned targetinfo with invalid length {}",
+                response.len()
+            )));
+        }
+        Ok(response)
+    }
+
+    pub fn install_keys(
+        &self,
+        manager_evidence: &[u8],
+        envelope: &[u8],
+    ) -> Result<(), EnclaveError> {
+        let payload = encode_install_request(manager_evidence, envelope);
+        self.call(OP_INSTALL_KEYS, &payload)?;
+        Ok(())
+    }
+
     fn call(&self, op: u64, payload: &[u8]) -> Result<Vec<u8>, EnclaveError> {
         self.library.call(op, payload)
     }
@@ -262,9 +303,7 @@ impl EnclaveRuntime {
 pub fn report_data_for_public_key(
     public_key: [u8; ENCLAVE_PUBLIC_KEY_LEN],
 ) -> [u8; ATTESTATION_REPORT_DATA_LEN] {
-    let mut report_data = [0u8; ATTESTATION_REPORT_DATA_LEN];
-    report_data[..ENCLAVE_PUBLIC_KEY_LEN].copy_from_slice(&public_key);
-    report_data
+    star_attestation::report_data_for_public_key(public_key)
 }
 
 struct LibraryRuntime {
@@ -454,122 +493,22 @@ fn run_command(command: &mut Command) -> Result<(), EnclaveError> {
 
 fn initial_response_capacity(op: u64, payload_len: usize) -> usize {
     match op {
-        OP_INIT if payload_len == 0 => INIT_RESPONSE_CAPACITY,
+        OP_INIT if payload_len == 0 => 0,
         OP_INIT => 0,
         OP_PUBLIC_KEY => PUBLIC_KEY_RESPONSE_CAPACITY,
         OP_ISSUE_CRED => ISSUE_CRED_RESPONSE_CAPACITY,
         OP_ISSUE_TOKEN => ISSUE_TOKEN_RESPONSE_CAPACITY,
         OP_ATTEST => ATTEST_RESPONSE_CAPACITY,
+        OP_TRANSFER_PUBLIC_KEY => PUBLIC_KEY_RESPONSE_CAPACITY,
+        OP_INSTALL_KEYS => INSTALL_KEYS_RESPONSE_CAPACITY,
+        OP_QVE_TARGET_INFO => QVE_TARGET_INFO_RESPONSE_CAPACITY,
         _ => 1024,
     }
 }
 
-struct SealedKeyPaths {
-    enc: PathBuf,
-    prf: PathBuf,
-}
-
-#[cfg(test)]
-fn sealed_key_paths() -> SealedKeyPaths {
-    let dir = std::env::temp_dir().join(format!("star-app-sgx-test-{}", std::process::id()));
-
-    SealedKeyPaths {
-        enc: dir.join(SEALED_ENC_KEY_FILE),
-        prf: dir.join(SEALED_PRF_KEY_FILE),
-    }
-}
-
-#[cfg(not(test))]
-fn sealed_key_paths() -> SealedKeyPaths {
-    let enc = std::env::var_os("STAR_SEALED_ENC_KEY_FILE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(SEALED_ENC_KEY_FILE));
-
-    let prf = std::env::var_os("STAR_SEALED_PRF_KEY_FILE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(SEALED_PRF_KEY_FILE));
-
-    SealedKeyPaths { enc, prf }
-}
-
-fn read_sealed_keys(paths: &SealedKeyPaths) -> Result<Vec<u8>, EnclaveError> {
-    let enc = read_optional(&paths.enc)?;
-    let prf = read_optional(&paths.prf)?;
-
-    match (enc, prf) {
-        (Some(enc), Some(prf)) => Ok(encode_sealed_keys(&enc, &prf)),
-        _ => Ok(Vec::new()),
-    }
-}
-
-fn read_optional(path: &PathBuf) -> Result<Option<Vec<u8>>, EnclaveError> {
-    match fs::read(path) {
-        Ok(bytes) => Ok(Some(bytes)),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(err) => Err(EnclaveError::Storage(err)),
-    }
-}
-
-fn write_sealed_keys(
-    paths: &SealedKeyPaths,
-    sealed_enc_key: &[u8],
-    sealed_prf_key: &[u8],
-) -> Result<(), EnclaveError> {
-    if let Some(parent) = paths.enc.parent() {
-        fs::create_dir_all(parent).map_err(EnclaveError::Storage)?;
-    }
-
-    if let Some(parent) = paths.prf.parent() {
-        fs::create_dir_all(parent).map_err(EnclaveError::Storage)?;
-    }
-
-    fs::write(&paths.enc, sealed_enc_key).map_err(EnclaveError::Storage)?;
-    fs::write(&paths.prf, sealed_prf_key).map_err(EnclaveError::Storage)
-}
-
-fn encode_sealed_keys(sealed_enc_key: &[u8], sealed_prf_key: &[u8]) -> Vec<u8> {
-    let mut payload = Vec::with_capacity(8 + sealed_enc_key.len() + sealed_prf_key.len());
-
-    append_blob(&mut payload, sealed_enc_key);
-    append_blob(&mut payload, sealed_prf_key);
-
-    payload
-}
-
-fn append_blob(payload: &mut Vec<u8>, blob: &[u8]) {
-    payload.extend_from_slice(&(blob.len() as u32).to_be_bytes());
-    payload.extend_from_slice(blob);
-}
-
-fn decode_sealed_keys(payload: &[u8]) -> Result<(&[u8], &[u8]), EnclaveError> {
-    let mut remaining = payload;
-
-    let sealed_enc_key = take_blob(&mut remaining)?;
-    let sealed_prf_key = take_blob(&mut remaining)?;
-
-    if !remaining.is_empty() {
-        return Err(EnclaveError::InvalidSealedKeys(
-            "trailing bytes in init response".to_string(),
-        ));
-    }
-
-    Ok((sealed_enc_key, sealed_prf_key))
-}
-
-fn take_blob<'a>(payload: &mut &'a [u8]) -> Result<&'a [u8], EnclaveError> {
-    let len: [u8; 4] = payload
-        .get(..4)
-        .ok_or_else(|| EnclaveError::InvalidSealedKeys("missing blob length".to_string()))?
-        .try_into()
-        .expect("fixed slice");
-
-    let len = u32::from_be_bytes(len) as usize;
-
-    let blob = payload
-        .get(4..4 + len)
-        .ok_or_else(|| EnclaveError::InvalidSealedKeys("truncated blob".to_string()))?;
-
-    *payload = &payload[4 + len..];
-
-    Ok(blob)
+fn encode_install_request(manager_evidence: &[u8], envelope: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    star_attestation::append_blob(&mut out, manager_evidence);
+    star_attestation::append_blob(&mut out, envelope);
+    out
 }

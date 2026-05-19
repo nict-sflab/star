@@ -926,6 +926,7 @@ dependencies = [
  "serde",
  "sgx-isa",
  "star-core",
+ "star_attestation",
  "thiserror 1.0.69",
 ]
 
@@ -1794,6 +1795,18 @@ checksum = "b49715b7073f385ba4bc528e5747d02e66cb39c6146efb66b781f131f0fb399c"
 dependencies = [
  "once_cell",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "key-manager"
+version = "0.1.0"
+dependencies = [
+ "aesm-client",
+ "hpke",
+ "rand 0.8.6",
+ "sgx-isa",
+ "star-core",
+ "star_attestation",
 ]
 
 [[package]]
@@ -3373,6 +3386,7 @@ dependencies = [
  "enclave-runner-sgx",
  "env_logger",
  "foreign-types",
+ "libloading 0.8.9",
  "log",
  "openssl",
  "openssl-sys",
@@ -3388,10 +3402,20 @@ dependencies = [
  "sgxs-loaders",
  "simple-filter-box",
  "star-core",
+ "star_attestation",
  "star_tools",
  "tiny_http",
  "tokio",
  "ureq",
+]
+
+[[package]]
+name = "star_attestation"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "sgx-isa",
+ "sha2",
 ]
 
 [[package]]

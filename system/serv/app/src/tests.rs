@@ -1,5 +1,6 @@
 use crate::api::{DEFAULT_PUBLIC_KEY_API, DEFAULT_REGISTER_API};
-use crate::enclave::{EnclaveRuntime, report_data_for_public_key};
+use crate::enclave::report_data_for_public_key;
+use crate::key_manager::KeyManagerRuntime;
 use crate::{all_prefix, build_server_without_startup_attestation};
 
 use crate::tls::STAR_TLS_EXTENSION_TYPE;
@@ -14,12 +15,12 @@ use star_core::secure_channel::client::SecureChannelClient;
 use star_tools::{QuoteVerificationPolicy, decode_quote_input};
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Read, Write};
+use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::sync::Mutex as StdMutex;
 use std::sync::mpsc;
-use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::thread;
 use std::time::{Duration, Instant};
 use tiny_http::{Response, Server as TinyServer};
@@ -67,7 +68,6 @@ fn get_text_retry(url: &str) -> String {
 fn post_text_retry(url: &str, body: &[u8]) -> String {
     retry_request(|| Ok(ureq::post(url).send_bytes(body)?.into_string()?))
 }
-
 
 fn https_get_with_star_extension(
     proxy_addr: SocketAddr,
@@ -138,7 +138,6 @@ fn https_get_with_connector(
 
     Ok((status, body.to_string()))
 }
-
 
 fn unused_loopback_addr() -> String {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
@@ -322,6 +321,7 @@ fn test_all() {
     unsafe {
         std::env::set_var("TLS_CERT_PATH", tls_cert_path.as_str());
         std::env::set_var("TLS_KEY_PATH", tls_key_path.as_str());
+        std::env::set_var("STAR_ALLOW_DEBUG_ENCLAVES", "1");
     }
 
     let server_handle = thread::spawn(move || {
@@ -420,10 +420,12 @@ fn public_key_attestation_quote_verifies_with_tools_policy() {
             .unwrap_or("127.0.0.1:5555"),
     );
 
-    let enclave = EnclaveRuntime::from_env().expect("initialize enclave");
-    let public_key = enclave.public_key().expect("read enclave public key");
-    let quote = enclave
-        .public_key_attestation(public_key)
+    let key_manager = KeyManagerRuntime::from_env().expect("initialize key-manager");
+    let public_key = key_manager
+        .public_key()
+        .expect("read key-manager public key");
+    let quote = key_manager
+        .public_key_attestation()
         .expect("get public key attestation quote");
 
     let startup_log = format!(

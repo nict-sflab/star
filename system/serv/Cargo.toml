@@ -1,7 +1,9 @@
 [workspace]
 members = [
+    "attestation",
     "app",
     "enclave",
+    "key-manager",
     "tools",
     "utils",
 ]

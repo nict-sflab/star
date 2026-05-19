@@ -18,16 +18,51 @@ material.
 
 ## Start With Attestation
 
-The service attests the enclave public key at startup and prints both values to
-stdout:
+The service starts a separate `key-manager` enclave. The key-manager owns the
+STAR credential key and HPKE receiver key, attests the service public key, and
+only exports the key bundle to serving enclaves after checking their remote
+attestation evidence inside the key-manager enclave. Each serving enclave checks
+the key-manager evidence inside the serving enclave before accepting the
+encrypted key bundle.
+
+Trusted peer policy is evaluated inside the enclaves, not by the host. Key
+sharing pins exact peer `MRENCLAVE` values; `MRSIGNER` is not accepted as the
+peer trust boundary. Set these variables before building the `.sgxs` files so
+the values are embedded in the enclave binaries:
+
+```bash
+export STAR_TRUSTED_KEY_MANAGER_MRENCLAVE=<32-byte hex MRENCLAVE>
+export STAR_TRUSTED_ENCLAVE_MRENCLAVE=<32-byte hex MRENCLAVE>
+
+# Development enclaves only.
+export STAR_ALLOW_DEBUG_KEY_MANAGER=1
+export STAR_ALLOW_DEBUG_ENCLAVE=1
+```
+
+The host prints the key-manager and serving-enclave remote attestation quotes to
+stdout before key transfer, plus the QvE evidence used for enclave-to-enclave
+key sharing:
 
 ```text
 STAR_ATTESTATION_PUBLIC_KEY_BASE64=<public key>
-STAR_ATTESTATION_QUOTE_BASE64=<quote>
+STAR_ATTESTATION_QUOTE_BASE64=<key-manager quote>
+STAR_KEY_MANAGER_QUOTE_BASE64=<key-manager quote>
+STAR_FILTER_ENCLAVE_TRANSFER_QUOTE_BASE64=<serving enclave transfer quote>
+STAR_ISSUE_ENCLAVE_TRANSFER_QUOTE_BASE64=<serving enclave transfer quote>
+STAR_FILTER_ENCLAVE_QVE_EVIDENCE_FOR_KEY_MANAGER_BASE64=<QvE evidence>
+STAR_ISSUE_ENCLAVE_QVE_EVIDENCE_FOR_KEY_MANAGER_BASE64=<QvE evidence>
+STAR_KEY_MANAGER_QVE_EVIDENCE_FOR_FILTER_ENCLAVE_BASE64=<QvE evidence>
+STAR_KEY_MANAGER_QVE_EVIDENCE_FOR_ISSUE_ENCLAVE_BASE64=<QvE evidence>
 ```
 
-The quote binds the enclave public key by setting SGX `report_data` to
-`public_key || 32 zero bytes`.
+The key-manager quote binds the service public key by setting SGX `report_data`
+to `public_key || 32 zero bytes`. Serving enclave transfer quotes bind their
+ephemeral transfer public keys the same way. The host carries quotes and
+ciphertexts, but the policy decision is made in enclave code. For key sharing,
+the host asks Intel DCAP QVL/QvE to produce QvE evidence targeted to the verifier
+enclave. The verifier enclave checks the QvE report MAC, QvE report-data hash,
+QvE identity, DCAP result, collateral freshness, exact peer `MRENCLAVE`, debug
+policy, and `report_data` public-key binding before using the attested HPKE key.
 
 Example:
 
