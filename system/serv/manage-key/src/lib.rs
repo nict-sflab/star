@@ -1,6 +1,7 @@
 #![cfg_attr(not(target_env = "sgx"), allow(dead_code))]
 
 mod attest;
+mod seal;
 
 use hpke::{
     Deserializable, HpkeError, OpModeS, Serializable,
@@ -10,6 +11,7 @@ use hpke::{
     setup_sender,
 };
 use rand::{RngCore, rngs::OsRng};
+use std::{env, fs, io, path::PathBuf};
 #[cfg(target_env = "sgx")]
 use sgx_isa::{AttributesFlags, Report, Targetinfo};
 #[cfg(target_env = "sgx")]
@@ -35,6 +37,10 @@ const STATUS_BAD_REQUEST: u8 = 2;
 const STATUS_PANIC: u8 = 4;
 const STATUS_BUFFER_TOO_SMALL: u8 = 5;
 
+const KEY_BUNDLE_SEAL_LABEL: [u8; 16] = *b"key-bundle      ";
+const KEY_BUNDLE_PATH_ENV: &str = "KEY_MANAGER_SEALED_KEYS_PATH";
+const DEFAULT_KEY_BUNDLE_PATH: &str = "key-manager.keys.sealed";
+
 struct KeyManagerApp {
     keys: KeyBundle,
 }
@@ -48,16 +54,45 @@ impl KeyManagerApp {
 
     fn init(&mut self, payload: &[u8]) -> (u8, Vec<u8>) {
         if payload.is_empty() {
-            return (STATUS_OK, Vec::new());
+            return self.init_from_storage_or_create();
         }
 
-        match decode_key_bundle(payload) {
-            Ok(keys) => {
+        self.init_from_sealed_payload(payload)
+    }
+
+    fn init_from_storage_or_create(&mut self) -> (u8, Vec<u8>) {
+        match read_persisted_key_bundle() {
+            Ok(Some(sealed)) => self.init_from_sealed_payload(&sealed),
+            Ok(None) => {
+                let keys = KeyBundle::random(&mut OsRng);
+                let sealed = match seal_key_bundle(keys) {
+                    Ok(sealed) => sealed,
+                    Err(err) => return (STATUS_PANIC, err.into_bytes()),
+                };
+
+                if let Err(err) = persist_key_bundle(&sealed) {
+                    return (STATUS_PANIC, err.into_bytes());
+                }
+
                 self.keys = keys;
-                (STATUS_OK, Vec::new())
+                (STATUS_OK, sealed)
             }
-            Err(err) => (STATUS_BAD_REQUEST, err.into_bytes()),
+            Err(err) => (STATUS_PANIC, err.into_bytes()),
         }
+    }
+
+    fn init_from_sealed_payload(&mut self, sealed: &[u8]) -> (u8, Vec<u8>) {
+        let keys = match decode_sealed_key_bundle(sealed) {
+            Ok(keys) => keys,
+            Err(err) => return (STATUS_BAD_REQUEST, err.into_bytes()),
+        };
+
+        if let Err(err) = persist_key_bundle(sealed) {
+            return (STATUS_PANIC, err.into_bytes());
+        }
+
+        self.keys = keys;
+        (STATUS_OK, sealed.to_vec())
     }
 
     fn public_key(&self, _: &[u8]) -> (u8, Vec<u8>) {
@@ -277,6 +312,46 @@ fn decode_key_bundle(payload: &[u8]) -> Result<KeyBundle, String> {
     })
 }
 
+fn seal_key_bundle(bundle: KeyBundle) -> Result<Vec<u8>, String> {
+    seal::seal(KEY_BUNDLE_SEAL_LABEL, &encode_key_bundle(bundle))
+        .map_err(|err| format!("seal key bundle: {err}"))
+}
+
+fn decode_sealed_key_bundle(sealed: &[u8]) -> Result<KeyBundle, String> {
+    let plaintext = seal::unseal(KEY_BUNDLE_SEAL_LABEL, sealed)
+        .map_err(|err| format!("unseal key bundle: {err}"))?;
+    decode_key_bundle(&plaintext)
+}
+
+fn key_bundle_path() -> PathBuf {
+    env::var_os(KEY_BUNDLE_PATH_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_KEY_BUNDLE_PATH))
+}
+
+fn read_persisted_key_bundle() -> Result<Option<Vec<u8>>, String> {
+    let path = key_bundle_path();
+    match fs::read(&path) {
+        Ok(sealed) if sealed.is_empty() => {
+            Err(format!("sealed key bundle file is empty: {}", path.display()))
+        }
+        Ok(sealed) => Ok(Some(sealed)),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(format!("read sealed key bundle {}: {err}", path.display())),
+    }
+}
+
+fn persist_key_bundle(sealed: &[u8]) -> Result<(), String> {
+    let path = key_bundle_path();
+    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("create sealed key bundle dir {}: {err}", parent.display()))?;
+    }
+
+    fs::write(&path, sealed)
+        .map_err(|err| format!("write sealed key bundle {}: {err}", path.display()))
+}
+
 pub fn run() {}
 
 #[cfg(target_env = "sgx")]
@@ -418,6 +493,21 @@ mod tests {
 
         assert_eq!(decoded.enc_key, bundle.enc_key);
         assert_eq!(decoded.hpke_receiver_key, bundle.hpke_receiver_key);
+    }
+
+    #[cfg(not(target_env = "sgx"))]
+    #[test]
+    fn init_rejects_plain_key_bundle_outside_sgx() {
+        let mut app = KeyManagerApp::new();
+        let plaintext = encode_key_bundle(KeyBundle {
+            enc_key: [1u8; 32],
+            hpke_receiver_key: [2u8; 32],
+        });
+
+        let (status, payload) = app.init(&plaintext);
+
+        assert_eq!(status, STATUS_BAD_REQUEST);
+        assert!(String::from_utf8(payload).unwrap().contains("unseal key bundle"));
     }
 
     #[cfg(not(target_env = "sgx"))]
