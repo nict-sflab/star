@@ -1,10 +1,9 @@
 [workspace]
 members = [
-    "attestation",
+    "utils/attest",
     "app",
     "enclave",
-    "key-manager",
-    "tools",
-    "utils",
+    "manage-key",
+    "tools/verifier",
 ]
 resolver = "3"

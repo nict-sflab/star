@@ -20,7 +20,7 @@ log = "0.4"
 constant-time-utils = { path = "../../../../constant-time-utils", default-features = false }
 simple-filter-box = { path = "../../../../simple-filter-box", default-features = false, features = ["dashmap"] }
 star-core = { path = "../../../core" }
-star_attestation = { path = "../attestation" }
+star_attestation = { path = "../utils/attest" }
 aesm-client = { version = "0.6.2", features = ["sgxs"] }
 enclave-runner = "0.8"
 enclave-runner-sgx = "0.1"
@@ -37,7 +37,7 @@ openssl-sys = "0.9"
 default = []
 
 [dev-dependencies]
-star_tools = { path = "../tools" }
+star_tools = { path = "../tools/verifier" }
 ureq = "2"
 tiny_http = "0.12"
 criterion = { version = "0.5", features = ["async_tokio", "html_reports"] }

@@ -222,7 +222,7 @@ fn default_key_manager_sgxs() -> Result<PathBuf, EnclaveError> {
         None => ".",
     };
 
-    let key_manager_dir = PathBuf::from(manifest_dir).join("../key-manager");
+    let key_manager_dir = PathBuf::from(manifest_dir).join("../manage-key");
     let manifest_path = key_manager_dir.join("Cargo.toml");
 
     build_key_manager_sgxs(&manifest_path)
