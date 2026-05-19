@@ -397,16 +397,10 @@ fn default_enclave_sgxs() -> Result<PathBuf, EnclaveError> {
     let enclave_dir = PathBuf::from(manifest_dir).join("../enclave");
     let manifest_path = enclave_dir.join("Cargo.toml");
 
-    build_enclave_sgxs(&manifest_path)?;
-
-    Ok(enclave_dir
-        .join("target")
-        .join(SGX_TARGET)
-        .join("release")
-        .join("enclave.sgxs"))
+    build_enclave_sgxs(&manifest_path)
 }
 
-fn build_enclave_sgxs(manifest_path: &Path) -> Result<(), EnclaveError> {
+fn build_enclave_sgxs(manifest_path: &Path) -> Result<PathBuf, EnclaveError> {
     let manifest_dir = manifest_path.parent().ok_or_else(|| {
         EnclaveError::BuildFailed(format!(
             "missing parent directory for {}",
@@ -426,7 +420,7 @@ fn build_enclave_sgxs(manifest_path: &Path) -> Result<(), EnclaveError> {
             .arg(manifest_path),
     )?;
 
-    let target_dir = manifest_dir.join("target").join(SGX_TARGET).join("release");
+    let target_dir = sgx_release_target_dir(manifest_dir, "enclave")?;
     let elf_path = target_dir.join("enclave");
     let sgxs_path = target_dir.join("enclave.sgxs");
 
@@ -449,7 +443,34 @@ fn build_enclave_sgxs(manifest_path: &Path) -> Result<(), EnclaveError> {
             .arg(default_enclave_threads())
             .arg("--output")
             .arg(&sgxs_path),
-    )
+    )?;
+
+    Ok(sgxs_path)
+}
+
+fn sgx_release_target_dir(manifest_dir: &Path, binary_name: &str) -> Result<PathBuf, EnclaveError> {
+    let mut candidates = Vec::new();
+
+    if let Some(target_dir) = std::env::var_os("CARGO_TARGET_DIR") {
+        candidates.push(PathBuf::from(target_dir));
+    }
+
+    if let Some(parent) = manifest_dir.parent() {
+        candidates.push(parent.join("target"));
+    }
+
+    candidates.push(manifest_dir.join("target"));
+
+    for candidate in candidates {
+        let target_dir = candidate.join(SGX_TARGET).join("release");
+        if target_dir.join(binary_name).is_file() {
+            return Ok(target_dir);
+        }
+    }
+
+    Err(EnclaveError::BuildFailed(format!(
+        "cargo built {binary_name}, but the SGX ELF was not found"
+    )))
 }
 
 fn env_or_default(name: &str, default: &str) -> String {

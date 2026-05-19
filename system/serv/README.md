@@ -112,4 +112,5 @@ by the local policy.
 
 The verifier loads QVL from `--qvl`, `SGX_DCAP_QVL`, or
 `libsgx_dcap_quoteverify.so`. The quote provider path can be set with `--qpl` or
-`SGX_DCAP_QPL`.
+`SGX_DCAP_QPL`. Startup key sharing uses QvE report evidence; if QvE is not in
+a standard library directory, set `SGX_DCAP_QVE` to `libsgx_qve.signed.so.1`.

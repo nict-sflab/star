@@ -4,8 +4,10 @@ use std::path::{Path, PathBuf};
 use std::ptr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(unix)]
+use libloading::os::unix::{Library as UnixLibrary, RTLD_GLOBAL, RTLD_NOW};
 use libloading::{Library, Symbol};
-use rand::RngCore;
+use rand::{TryRngCore, rngs::OsRng};
 use star_attestation::{
     QVE_REPORT_INFO_LEN, QVE_TARGET_INFO_LEN, QveEvidence, encode_qve_evidence,
 };
@@ -14,6 +16,7 @@ use crate::enclave::EnclaveError;
 
 const SGX_QL_SUCCESS: u32 = 0x0000;
 const SGX_QL_QV_RESULT_UNSPECIFIED: u32 = 0x0000a006;
+const SGX_QV_QVE_PATH: i32 = 0;
 const SGX_QV_QPL_PATH: i32 = 1;
 const QVE_NONCE_OFFSET: usize = 0;
 const QVE_NONCE_LEN: usize = 16;
@@ -30,14 +33,18 @@ pub fn evidence_for_verifier(
         )));
     }
 
+    let _sgx_runtime = preload_sgx_runtime()?;
     let library = load_qvl()?;
+    configure_qve(&library)?;
     configure_qpl(&library)?;
 
     let supplemental_data_size = supplemental_data_size(&library)?;
     let mut supplemental_data = vec![0u8; supplemental_data_size as usize];
     let mut report_info = vec![0u8; QVE_REPORT_INFO_LEN];
 
-    rand::rng().fill_bytes(&mut report_info[QVE_NONCE_OFFSET..QVE_NONCE_OFFSET + QVE_NONCE_LEN]);
+    OsRng
+        .try_fill_bytes(&mut report_info[QVE_NONCE_OFFSET..QVE_NONCE_OFFSET + QVE_NONCE_LEN])
+        .map_err(|err| EnclaveError::Qve(format!("generate QvE nonce: {err}")))?;
     report_info[QVE_TARGET_INFO_OFFSET..QVE_TARGET_INFO_OFFSET + QVE_TARGET_INFO_LEN]
         .copy_from_slice(verifier_target_info);
 
@@ -99,6 +106,72 @@ type SgxQvVerifyQuote = unsafe extern "C" fn(
     p_supplemental_data: *mut u8,
 ) -> u32;
 
+#[cfg(unix)]
+fn preload_sgx_runtime() -> Result<Vec<UnixLibrary>, EnclaveError> {
+    Ok(vec![load_global_library("libsgx_urts.so.2", "SGX_URTS")?])
+}
+
+#[cfg(not(unix))]
+fn preload_sgx_runtime() -> Result<Vec<()>, EnclaveError> {
+    Ok(Vec::new())
+}
+
+#[cfg(unix)]
+fn load_global_library(name: &str, env_name: &str) -> Result<UnixLibrary, EnclaveError> {
+    let flags = RTLD_NOW | RTLD_GLOBAL;
+
+    if let Some(path) = std::env::var_os(env_name).map(PathBuf::from) {
+        return unsafe { UnixLibrary::open(Some(path.as_os_str()), flags) }.map_err(|err| {
+            EnclaveError::Qve(format!(
+                "load {name} from {env_name}={}: {err}",
+                path.display()
+            ))
+        });
+    }
+
+    if let Ok(library) = unsafe { UnixLibrary::open(Some(name), flags) } {
+        return Ok(library);
+    }
+
+    for path in candidate_library_paths(name) {
+        if !path.is_file() {
+            continue;
+        }
+
+        if let Ok(library) = unsafe { UnixLibrary::open(Some(path.as_os_str()), flags) } {
+            return Ok(library);
+        }
+    }
+
+    Err(EnclaveError::Qve(format!(
+        "load {name}: set {env_name} or make the SGX runtime library visible"
+    )))
+}
+
+#[cfg(unix)]
+fn candidate_library_paths(name: &str) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+
+    for env_name in ["SGX_DCAP_QVL", "SGX_DCAP_QPL"] {
+        if let Some(path) = std::env::var_os(env_name).map(PathBuf::from) {
+            if let Some(parent) = path.parent() {
+                paths.push(parent.join(name));
+            }
+        }
+    }
+
+    for dir in [
+        "/run/current-system/sw/lib",
+        "/usr/lib/x86_64-linux-gnu",
+        "/usr/lib64",
+        "/usr/lib",
+    ] {
+        paths.push(PathBuf::from(dir).join(name));
+    }
+
+    paths
+}
+
 fn supplemental_data_size(library: &Library) -> Result<u32, EnclaveError> {
     type SgxQvGetQuoteSupplementalDataSize = unsafe extern "C" fn(p_data_size: *mut u32) -> u32;
 
@@ -139,29 +212,92 @@ fn load_qvl() -> Result<Library, EnclaveError> {
     }
 }
 
-fn configure_qpl(library: &Library) -> Result<(), EnclaveError> {
-    type SgxQvSetPath = unsafe extern "C" fn(path_type: i32, p_path: *const i8) -> u32;
+fn configure_qve(library: &Library) -> Result<(), EnclaveError> {
+    let Some(path) = qve_enclave_path() else {
+        return Ok(());
+    };
 
+    configure_qv_path(library, SGX_QV_QVE_PATH, &path, "SGX_QV_QVE_PATH")
+}
+
+fn configure_qpl(library: &Library) -> Result<(), EnclaveError> {
     let Some(path) = std::env::var_os("SGX_DCAP_QPL").map(PathBuf::from) else {
         return Ok(());
     };
+
+    configure_qv_path(library, SGX_QV_QPL_PATH, &path, "SGX_QV_QPL_PATH")
+}
+
+fn configure_qv_path(
+    library: &Library,
+    path_type: i32,
+    path: &Path,
+    path_type_name: &str,
+) -> Result<(), EnclaveError> {
+    type SgxQvSetPath = unsafe extern "C" fn(path_type: i32, p_path: *const i8) -> u32;
 
     let set_path: Symbol<SgxQvSetPath> = unsafe {
         library
             .get(b"sgx_qv_set_path")
             .map_err(|err| EnclaveError::Qve(format!("QVL does not export set_path: {err}")))?
     };
-    let path = cstring_path(&path)?;
-    let status = unsafe { set_path(SGX_QV_QPL_PATH, path.as_ptr()) };
+    let path = cstring_path(path)?;
+    let status = unsafe { set_path(path_type, path.as_ptr()) };
 
     if status == SGX_QL_SUCCESS {
         Ok(())
     } else {
         Err(EnclaveError::Qve(format!(
-            "sgx_qv_set_path(SGX_QV_QPL_PATH) failed: {} / 0x{status:04x}",
+            "sgx_qv_set_path({path_type_name}) failed: {} / 0x{status:04x}",
             quote3_error_name(status)
         )))
     }
+}
+
+pub(crate) fn qve_enclave_path() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("SGX_DCAP_QVE").map(PathBuf::from) {
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+
+    for name in ["libsgx_qve.signed.so.1", "libsgx_qve.signed.so"] {
+        for dir in library_search_dirs() {
+            let path = dir.join(name);
+            if path.is_file() {
+                return Some(path);
+            }
+        }
+    }
+
+    None
+}
+
+fn library_search_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+
+    for env_name in ["SGX_DCAP_QVL", "SGX_DCAP_QPL"] {
+        if let Some(path) = std::env::var_os(env_name).map(PathBuf::from) {
+            if let Some(parent) = path.parent() {
+                dirs.push(parent.to_path_buf());
+            }
+        }
+    }
+
+    if let Some(ld_library_path) = std::env::var_os("LD_LIBRARY_PATH") {
+        dirs.extend(std::env::split_paths(&ld_library_path));
+    }
+
+    for dir in [
+        "/run/current-system/sw/lib",
+        "/usr/lib/x86_64-linux-gnu",
+        "/usr/lib64",
+        "/usr/lib",
+    ] {
+        dirs.push(PathBuf::from(dir));
+    }
+
+    dirs
 }
 
 fn cstring_path(path: &Path) -> Result<CString, EnclaveError> {

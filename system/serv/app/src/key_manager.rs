@@ -225,16 +225,10 @@ fn default_key_manager_sgxs() -> Result<PathBuf, EnclaveError> {
     let key_manager_dir = PathBuf::from(manifest_dir).join("../key-manager");
     let manifest_path = key_manager_dir.join("Cargo.toml");
 
-    build_key_manager_sgxs(&manifest_path)?;
-
-    Ok(key_manager_dir
-        .join("target")
-        .join(SGX_TARGET)
-        .join("release")
-        .join("key-manager.sgxs"))
+    build_key_manager_sgxs(&manifest_path)
 }
 
-fn build_key_manager_sgxs(manifest_path: &Path) -> Result<(), EnclaveError> {
+fn build_key_manager_sgxs(manifest_path: &Path) -> Result<PathBuf, EnclaveError> {
     let manifest_dir = manifest_path.parent().ok_or_else(|| {
         EnclaveError::BuildFailed(format!(
             "missing parent directory for {}",
@@ -254,7 +248,7 @@ fn build_key_manager_sgxs(manifest_path: &Path) -> Result<(), EnclaveError> {
             .arg(manifest_path),
     )?;
 
-    let target_dir = manifest_dir.join("target").join(SGX_TARGET).join("release");
+    let target_dir = sgx_release_target_dir(manifest_dir, "key-manager")?;
     let elf_path = target_dir.join("key-manager");
     let sgxs_path = target_dir.join("key-manager.sgxs");
 
@@ -277,7 +271,34 @@ fn build_key_manager_sgxs(manifest_path: &Path) -> Result<(), EnclaveError> {
             .arg(default_key_manager_threads())
             .arg("--output")
             .arg(&sgxs_path),
-    )
+    )?;
+
+    Ok(sgxs_path)
+}
+
+fn sgx_release_target_dir(manifest_dir: &Path, binary_name: &str) -> Result<PathBuf, EnclaveError> {
+    let mut candidates = Vec::new();
+
+    if let Some(target_dir) = std::env::var_os("CARGO_TARGET_DIR") {
+        candidates.push(PathBuf::from(target_dir));
+    }
+
+    if let Some(parent) = manifest_dir.parent() {
+        candidates.push(parent.join("target"));
+    }
+
+    candidates.push(manifest_dir.join("target"));
+
+    for candidate in candidates {
+        let target_dir = candidate.join(SGX_TARGET).join("release");
+        if target_dir.join(binary_name).is_file() {
+            return Ok(target_dir);
+        }
+    }
+
+    Err(EnclaveError::BuildFailed(format!(
+        "cargo built {binary_name}, but the SGX ELF was not found"
+    )))
 }
 
 fn env_or_default(name: &str, default: &str) -> String {

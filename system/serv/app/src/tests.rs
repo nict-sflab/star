@@ -245,6 +245,21 @@ impl Drop for AesmProxy {
     }
 }
 
+fn start_aesm_proxy_for_sgx_tests() -> (Option<AesmProxy>, EnvVarGuard) {
+    let aesm_proxy = match AesmProxy::start_on("127.0.0.1:5555") {
+        Ok(proxy) => Some(proxy),
+        Err(err) if err.kind() == io::ErrorKind::AddrInUse => None,
+        Err(err) => panic!("start AESM proxy: {err}"),
+    };
+    let aesm_proxy_addr = aesm_proxy
+        .as_ref()
+        .map(|proxy| proxy.addr.clone())
+        .unwrap_or_else(|| "127.0.0.1:5555".to_string());
+    let aesm_proxy_env = EnvVarGuard::set("AESM_PROXY", aesm_proxy_addr);
+
+    (aesm_proxy, aesm_proxy_env)
+}
+
 fn aesm_socket_path() -> PathBuf {
     std::env::var_os("AESM_SOCKET")
         .map(PathBuf::from)
@@ -308,6 +323,11 @@ fn test_all() {
     let _sgx_test_guard = SGX_TEST_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if crate::qve::qve_enclave_path().is_none() {
+        eprintln!("skipping test_all: Intel QvE enclave libsgx_qve.signed.so is not installed");
+        return;
+    }
+    let (_aesm_proxy, _aesm_proxy_env) = start_aesm_proxy_for_sgx_tests();
     let api_addr = unused_loopback_addr();
     let proxy_addr = unused_loopback_addr();
     let (upstream_addr, upstream_handle) = spawn_upstream();
@@ -407,18 +427,7 @@ fn public_key_attestation_quote_verifies_with_tools_policy() {
     let _sgx_test_guard = SGX_TEST_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let aesm_proxy = match AesmProxy::start_on("127.0.0.1:5555") {
-        Ok(proxy) => Some(proxy),
-        Err(err) if err.kind() == io::ErrorKind::AddrInUse => None,
-        Err(err) => panic!("start AESM proxy: {err}"),
-    };
-    let _aesm_proxy_env = EnvVarGuard::set(
-        "AESM_PROXY",
-        aesm_proxy
-            .as_ref()
-            .map(|proxy| proxy.addr.as_str())
-            .unwrap_or("127.0.0.1:5555"),
-    );
+    let (_aesm_proxy, _aesm_proxy_env) = start_aesm_proxy_for_sgx_tests();
 
     let key_manager = KeyManagerRuntime::from_env().expect("initialize key-manager");
     let public_key = key_manager
