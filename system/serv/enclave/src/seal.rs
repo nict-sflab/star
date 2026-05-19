@@ -1,9 +1,11 @@
-use aes_gcm::{
+use chacha20poly1305::{
     aead::{Aead, KeyInit},
-    Aes128Gcm, Nonce,
+    ChaCha20Poly1305, Nonce,
 };
+use hkdf::Hkdf;
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use sgx_isa::{Attributes, Miscselect};
 #[cfg(target_env = "sgx")]
 use sgx_isa::{ErrorCode, Keyname, Keypolicy, Keyrequest, Report};
@@ -19,7 +21,7 @@ pub enum SealError {
     #[error("current enclave attributes do not match sealed metadata")]
     InvalidEnclaveAttributes,
 
-    #[error("AES-GCM encryption/decryption failed")]
+    #[error("ChaCha20-Poly1305 encryption/decryption failed")]
     Crypto,
 
     #[error("serialization failed: {0}")]
@@ -56,12 +58,12 @@ fn random_bytes<const N: usize>() -> [u8; N] {
 }
 
 fn seal_with_key(
-    key_bytes: [u8; 16],
+    key_bytes: [u8; 32],
     seal_data: SealData,
     plaintext: &[u8],
     nonce_bytes: [u8; 12],
 ) -> Result<Vec<u8>, SealError> {
-    let cipher = Aes128Gcm::new_from_slice(&key_bytes).map_err(|_| SealError::Crypto)?;
+    let cipher = ChaCha20Poly1305::new_from_slice(&key_bytes).map_err(|_| SealError::Crypto)?;
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     let ciphertext = cipher
@@ -77,13 +79,23 @@ fn seal_with_key(
     Ok(bincode::serialize(&blob)?)
 }
 
-fn unseal_with_key(key_bytes: [u8; 16], blob: &SealedBlob) -> Result<Vec<u8>, SealError> {
-    let cipher = Aes128Gcm::new_from_slice(&key_bytes).map_err(|_| SealError::Crypto)?;
+fn unseal_with_key(key_bytes: [u8; 32], blob: &SealedBlob) -> Result<Vec<u8>, SealError> {
+    let cipher = ChaCha20Poly1305::new_from_slice(&key_bytes).map_err(|_| SealError::Crypto)?;
     let nonce = Nonce::from_slice(&blob.nonce);
 
     cipher
         .decrypt(nonce, blob.ciphertext.as_ref())
         .map_err(|_| SealError::Crypto)
+}
+
+fn derive_aead_key(sgx_key: [u8; 16], seal_data: &SealData) -> Result<[u8; 32], SealError> {
+    let hk = Hkdf::<Sha256>::new(Some(&seal_data.rand), &sgx_key);
+    let mut key = [0u8; 32];
+
+    hk.expand(b"sgx sealing chacha20poly1305 aead key", &mut key)
+        .map_err(|_| SealError::Crypto)?;
+
+    Ok(key)
 }
 
 #[cfg(target_env = "sgx")]
@@ -107,7 +119,7 @@ fn egetkey(label: [u8; 16], seal_data: &SealData) -> Result<[u8; 16], SealError>
 }
 
 #[cfg(target_env = "sgx")]
-fn seal_key(label: [u8; 16]) -> Result<([u8; 16], SealData), SealError> {
+fn seal_key(label: [u8; 16]) -> Result<([u8; 32], SealData), SealError> {
     let report = Report::for_self();
 
     let seal_data = SealData {
@@ -118,28 +130,30 @@ fn seal_key(label: [u8; 16]) -> Result<([u8; 16], SealData), SealError> {
         miscselect: report.miscselect,
     };
 
-    let key = egetkey(label, &seal_data)?;
+    let sgx_key = egetkey(label, &seal_data)?;
+    let key = derive_aead_key(sgx_key, &seal_data)?;
     Ok((key, seal_data))
 }
 
 #[cfg(not(target_env = "sgx"))]
-fn seal_key(_: [u8; 16]) -> Result<([u8; 16], SealData), SealError> {
+fn seal_key(_: [u8; 16]) -> Result<([u8; 32], SealData), SealError> {
     Err(SealError::UnsupportedTarget)
 }
 
 #[cfg(target_env = "sgx")]
-fn unseal_key(label: [u8; 16], seal_data: &SealData) -> Result<[u8; 16], SealError> {
+fn unseal_key(label: [u8; 16], seal_data: &SealData) -> Result<[u8; 32], SealError> {
     let report = Report::for_self();
 
     if report.attributes != seal_data.attributes || report.miscselect != seal_data.miscselect {
         return Err(SealError::InvalidEnclaveAttributes);
     }
 
-    egetkey(label, seal_data)
+    let sgx_key = egetkey(label, seal_data)?;
+    derive_aead_key(sgx_key, seal_data)
 }
 
 #[cfg(not(target_env = "sgx"))]
-fn unseal_key(_: [u8; 16], _: &SealData) -> Result<[u8; 16], SealError> {
+fn unseal_key(_: [u8; 16], _: &SealData) -> Result<[u8; 32], SealError> {
     Err(SealError::UnsupportedTarget)
 }
 
@@ -172,7 +186,7 @@ mod tests {
 
     #[test]
     fn sealed_blob_crypto_round_trips_with_supplied_key() {
-        let key = [0x42u8; 16];
+        let key = [0x42u8; 32];
         let nonce = [0x24u8; 12];
         let plaintext = b"sealed enclave payload";
 
@@ -189,7 +203,7 @@ mod tests {
 
     #[test]
     fn sealed_blob_rejects_modified_ciphertext() {
-        let key = [0x42u8; 16];
+        let key = [0x42u8; 32];
         let sealed = seal_with_key(
             key,
             fake_seal_data(),
