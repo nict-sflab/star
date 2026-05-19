@@ -157,13 +157,38 @@ impl OpenSslRejectHarness {
 
 impl StarFilterRejectHarness {
     fn replayed_token() -> Self {
+        let harness = Self::new(build_token_request());
+
+        let outcome = process_client_hello(&harness.acceptor, harness.client_hello.as_slice());
+        assert_eq!(outcome, ClientHelloOutcome::PendingMoreInput);
+
+        harness
+    }
+
+    fn invalid_credential() -> Self {
+        let harness = Self::new(build_invalid_credential_token_request());
+
+        assert_eq!(
+            process_client_hello(&harness.acceptor, harness.client_hello.as_slice()),
+            ClientHelloOutcome::Rejected
+        );
+        assert!(matches!(
+            harness
+                .filter
+                .filter_client_hello(harness.token_request.as_slice()),
+            Err(StarFilterErrorStatus::InvalidToken)
+        ));
+
+        harness
+    }
+
+    fn new(token_request: Vec<u8>) -> Self {
         let filter = Arc::new(BenchFilter::new(
             DashMapFilterBox::new(),
             vec![0],
             1,
             EnclaveRuntimes::from_env(FILTER_ENCLAVE_POOL_SIZE).expect("filter enclave pool"),
         ));
-        let token_request = build_token_request();
         let connector = connector_with_star_extension(Some(token_request.clone()));
         let client_hello = record_client_hello(&connector);
         let mut builder = base_acceptor_builder();
@@ -210,17 +235,12 @@ impl StarFilterRejectHarness {
             )
             .expect("configure STAR TLS extension");
 
-        let harness = Self {
+        Self {
             acceptor: builder.build(),
             filter,
             token_request,
             client_hello,
-        };
-
-        let outcome = process_client_hello(&harness.acceptor, harness.client_hello.as_slice());
-        assert_eq!(outcome, ClientHelloOutcome::PendingMoreInput);
-
-        harness
+        }
     }
 
     fn timed_openssl_and_filter_rejections(&self, iters: u64) -> Duration {
@@ -250,6 +270,21 @@ impl StarFilterRejectHarness {
                 result,
                 Err(StarFilterErrorStatus::DuplicatedToken)
             ));
+        }
+
+        total
+    }
+
+    fn timed_invalid_credential_filter_only_rejections(&self, iters: u64) -> Duration {
+        let mut total = Duration::ZERO;
+
+        for _ in 0..iters {
+            let start = Instant::now();
+            let result = self
+                .filter
+                .filter_client_hello(black_box(self.token_request.as_slice()));
+            total += start.elapsed();
+            assert!(matches!(result, Err(StarFilterErrorStatus::InvalidToken)));
         }
 
         total
@@ -296,6 +331,13 @@ fn build_token_request() -> Vec<u8> {
     let period = u64::from_be_bytes(constant_time_utils::time::current_period());
     user.request_auth(0, period, &mut rng)
         .expect("token request")
+}
+
+fn build_invalid_credential_token_request() -> Vec<u8> {
+    let mut token_request = build_token_request();
+    let byte = token_request.last_mut().expect("token request is empty");
+    *byte ^= 0x01;
+    token_request
 }
 
 fn base_acceptor_builder() -> openssl::ssl::SslAcceptorBuilder {
@@ -390,6 +432,7 @@ fn configure_group(group: &mut criterion::BenchmarkGroup<'_, criterion::measurem
 fn bench_client_hello_reject_no_network(c: &mut Criterion) {
     let openssl = OpenSslRejectHarness::missing_extension();
     let star_filter = StarFilterRejectHarness::replayed_token();
+    let invalid_credential = StarFilterRejectHarness::invalid_credential();
 
     assert_eq!(
         process_client_hello(&openssl.acceptor, openssl.client_hello.as_slice()),
@@ -405,6 +448,19 @@ fn bench_client_hello_reject_no_network(c: &mut Criterion) {
             .filter_client_hello(star_filter.token_request.as_slice()),
         Err(StarFilterErrorStatus::DuplicatedToken)
     ));
+    assert_eq!(
+        process_client_hello(
+            &invalid_credential.acceptor,
+            invalid_credential.client_hello.as_slice()
+        ),
+        ClientHelloOutcome::Rejected
+    );
+    assert!(matches!(
+        invalid_credential
+            .filter
+            .filter_client_hello(invalid_credential.token_request.as_slice()),
+        Err(StarFilterErrorStatus::InvalidToken)
+    ));
 
     let mut group = c.benchmark_group("client_hello_reject_no_network");
     configure_group(&mut group);
@@ -419,6 +475,16 @@ fn bench_client_hello_reject_no_network(c: &mut Criterion) {
 
     group.bench_function("star_filter_replayed_token_filter_only", |b| {
         b.iter_custom(|iters| star_filter.timed_filter_only_rejections(iters));
+    });
+
+    group.bench_function("star_filter_invalid_credential_openssl_parse", |b| {
+        b.iter_custom(|iters| invalid_credential.timed_openssl_and_filter_rejections(iters));
+    });
+
+    group.bench_function("star_filter_invalid_credential_filter_only", |b| {
+        b.iter_custom(|iters| {
+            invalid_credential.timed_invalid_credential_filter_only_rejections(iters)
+        });
     });
 
     group.finish();
