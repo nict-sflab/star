@@ -45,19 +45,7 @@ name = "filter"
 harness = false
 
 [[bench]]
-name = "e2e"
-harness = false
-
-[[bench]]
-name = "dos"
-harness = false
-
-[[bench]]
 name = "proxy"
-harness = false
-
-[[bench]]
-name = "client"
 harness = false
 
 [[bench]]
@@ -65,7 +53,7 @@ name = "storage"
 harness = false
 
 [[bench]]
-name = "client_hello_reject"
+name = "tls"
 harness = false
 
 [[bin]]
