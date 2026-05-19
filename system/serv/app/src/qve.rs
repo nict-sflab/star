@@ -129,10 +129,6 @@ fn load_global_library(name: &str, env_name: &str) -> Result<UnixLibrary, Enclav
         });
     }
 
-    if let Ok(library) = unsafe { UnixLibrary::open(Some(name), flags) } {
-        return Ok(library);
-    }
-
     for path in candidate_library_paths(name) {
         if !path.is_file() {
             continue;
@@ -141,6 +137,10 @@ fn load_global_library(name: &str, env_name: &str) -> Result<UnixLibrary, Enclav
         if let Ok(library) = unsafe { UnixLibrary::open(Some(path.as_os_str()), flags) } {
             return Ok(library);
         }
+    }
+
+    if let Ok(library) = unsafe { UnixLibrary::open(Some(name), flags) } {
+        return Ok(library);
     }
 
     Err(EnclaveError::Qve(format!(
@@ -160,6 +160,8 @@ fn candidate_library_paths(name: &str) -> Vec<PathBuf> {
         }
     }
 
+    paths.extend(nix_sgx_psw_library_paths(name));
+
     for dir in [
         "/run/current-system/sw/lib",
         "/usr/lib/x86_64-linux-gnu",
@@ -169,6 +171,26 @@ fn candidate_library_paths(name: &str) -> Vec<PathBuf> {
         paths.push(PathBuf::from(dir).join(name));
     }
 
+    paths
+}
+
+#[cfg(unix)]
+fn nix_sgx_psw_library_paths(name: &str) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir("/nix/store") else {
+        return Vec::new();
+    };
+
+    let mut paths = Vec::new();
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        let file_name = file_name.to_string_lossy();
+        if file_name.contains("sgx-psw-") {
+            paths.push(entry.path().join("lib").join(name));
+        }
+    }
+
+    paths.sort();
+    paths.reverse();
     paths
 }
 

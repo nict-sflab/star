@@ -2,6 +2,7 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use pingora::{listeners::tls::TlsSettings, server::Server};
 use pingora_proxy::http_proxy_service;
 use pingora_web::App as WebApp;
+use rand::{TryRngCore, rngs::OsRng};
 use simple_filter_box::dashmap::DashMapFilterBox;
 use std::env;
 use std::error::Error;
@@ -55,6 +56,68 @@ pub fn build_server(
         max_prefix,
         true,
     )
+}
+
+pub fn install_key_manager_keys_for_pool(
+    key_manager: &KeyManagerRuntime,
+    recipient: &EnclaveRuntimes,
+) -> Result<(), Box<dyn Error>> {
+    let key_manager_quote = key_manager.public_key_attestation()?;
+    let recipient_quote = recipient.transfer_key_attestation()?;
+    let key_manager_target_info = key_manager.qve_target_info()?;
+    let recipient_target_info = recipient.qve_target_info()?;
+
+    let recipient_evidence_for_key_manager =
+        qve::evidence_for_verifier(&recipient_quote, &key_manager_target_info)?;
+    let key_manager_evidence_for_recipient =
+        qve::evidence_for_verifier(&key_manager_quote, &recipient_target_info)?;
+
+    let keys = key_manager.export_keys(&recipient_evidence_for_key_manager)?;
+    recipient.install_keys(&key_manager_evidence_for_recipient, &keys)?;
+
+    Ok(())
+}
+
+pub fn install_key_manager_keys_for_enclave(
+    key_manager: &KeyManagerRuntime,
+    recipient: &enclave::EnclaveRuntime,
+) -> Result<(), Box<dyn Error>> {
+    let key_manager_quote = key_manager.public_key_attestation()?;
+    let recipient_quote = recipient.transfer_key_attestation()?;
+    let key_manager_target_info = key_manager.qve_target_info()?;
+    let recipient_target_info = recipient.qve_target_info()?;
+
+    let recipient_evidence_for_key_manager =
+        qve::evidence_for_verifier(&recipient_quote, &key_manager_target_info)?;
+    let key_manager_evidence_for_recipient =
+        qve::evidence_for_verifier(&key_manager_quote, &recipient_target_info)?;
+
+    let keys = key_manager.export_keys(&recipient_evidence_for_key_manager)?;
+    recipient.install_keys(&key_manager_evidence_for_recipient, &keys)?;
+
+    Ok(())
+}
+
+pub fn benchmark_key_bundle() -> Result<Vec<u8>, Box<dyn Error>> {
+    let mut bundle = vec![0u8; 64];
+    OsRng.try_fill_bytes(&mut bundle)?;
+    Ok(bundle)
+}
+
+pub fn install_benchmark_keys_for_pool(
+    recipient: &EnclaveRuntimes,
+    key_bundle: &[u8],
+) -> Result<(), Box<dyn Error>> {
+    recipient.install_benchmark_keys(key_bundle)?;
+    Ok(())
+}
+
+pub fn install_benchmark_keys_for_enclave(
+    recipient: &enclave::EnclaveRuntime,
+    key_bundle: &[u8],
+) -> Result<(), Box<dyn Error>> {
+    recipient.install_benchmark_keys(key_bundle)?;
+    Ok(())
 }
 
 #[cfg(test)]

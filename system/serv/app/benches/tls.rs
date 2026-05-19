@@ -14,8 +14,11 @@ use openssl::ssl::{
 };
 use rand_core::OsRng;
 use simple_filter_box::dashmap::DashMapFilterBox;
+use star_app::benchmark_key_bundle;
 use star_app::enclave::{EnclaveRuntime, EnclaveRuntimes};
 use star_app::filter::{StarFilter, StarFilterErrorStatus};
+use star_app::install_benchmark_keys_for_enclave;
+use star_app::install_benchmark_keys_for_pool;
 use star_app::tls::STAR_TLS_EXTENSION_TYPE;
 use star_core::{client::User, secure_channel::client::SecureChannelClient};
 
@@ -157,7 +160,8 @@ impl OpenSslRejectHarness {
 
 impl StarFilterRejectHarness {
     fn replayed_token() -> Self {
-        let harness = Self::new(build_token_request());
+        let (filter, token_request) = build_keyed_filter_and_token_request();
+        let harness = Self::new(filter, token_request);
 
         let outcome = process_client_hello(&harness.acceptor, harness.client_hello.as_slice());
         assert_eq!(outcome, ClientHelloOutcome::PendingMoreInput);
@@ -166,7 +170,8 @@ impl StarFilterRejectHarness {
     }
 
     fn invalid_credential() -> Self {
-        let harness = Self::new(build_invalid_credential_token_request());
+        let (filter, token_request) = build_keyed_filter_and_invalid_credential_request();
+        let harness = Self::new(filter, token_request);
 
         assert_eq!(
             process_client_hello(&harness.acceptor, harness.client_hello.as_slice()),
@@ -182,13 +187,7 @@ impl StarFilterRejectHarness {
         harness
     }
 
-    fn new(token_request: Vec<u8>) -> Self {
-        let filter = Arc::new(BenchFilter::new(
-            DashMapFilterBox::new(),
-            vec![0],
-            1,
-            EnclaveRuntimes::from_env(FILTER_ENCLAVE_POOL_SIZE).expect("filter enclave pool"),
-        ));
+    fn new(filter: Arc<BenchFilter>, token_request: Vec<u8>) -> Self {
         let connector = connector_with_star_extension(Some(token_request.clone()));
         let client_hello = record_client_hello(&connector);
         let mut builder = base_acceptor_builder();
@@ -315,8 +314,39 @@ fn record_client_hello(connector: &SslConnector) -> Vec<u8> {
     client_hello
 }
 
-fn build_token_request() -> Vec<u8> {
-    let mut issue_enclave = EnclaveRuntime::from_env().expect("issue enclave");
+fn build_keyed_filter_and_token_request() -> (Arc<BenchFilter>, Vec<u8>) {
+    build_keyed_filter_and_request(build_token_request)
+}
+
+fn build_keyed_filter_and_invalid_credential_request() -> (Arc<BenchFilter>, Vec<u8>) {
+    build_keyed_filter_and_request(build_invalid_credential_token_request)
+}
+
+fn build_keyed_filter_and_request(
+    build_request: impl FnOnce(&EnclaveRuntime) -> Vec<u8>,
+) -> (Arc<BenchFilter>, Vec<u8>) {
+    let key_bundle = benchmark_key_bundle().expect("benchmark key bundle");
+    let filter_enclave =
+        EnclaveRuntimes::from_env(FILTER_ENCLAVE_POOL_SIZE).expect("filter enclave pool");
+    let issue_enclave = EnclaveRuntime::from_env().expect("issue enclave");
+
+    install_benchmark_keys_for_pool(&filter_enclave, &key_bundle)
+        .expect("install filter enclave benchmark keys");
+    install_benchmark_keys_for_enclave(&issue_enclave, &key_bundle)
+        .expect("install issue enclave benchmark keys");
+
+    let filter = Arc::new(BenchFilter::new(
+        DashMapFilterBox::new(),
+        vec![0],
+        1,
+        filter_enclave,
+    ));
+    let token_request = build_request(&issue_enclave);
+
+    (filter, token_request)
+}
+
+fn build_token_request(issue_enclave: &EnclaveRuntime) -> Vec<u8> {
     let sender =
         SecureChannelClient::new(issue_enclave.public_key().expect("public key")).expect("sender");
     let mut user = User::new(MAX_COUNT_PER_CREDENTIAL, sender);
@@ -333,11 +363,24 @@ fn build_token_request() -> Vec<u8> {
         .expect("token request")
 }
 
-fn build_invalid_credential_token_request() -> Vec<u8> {
-    let mut token_request = build_token_request();
-    let byte = token_request.last_mut().expect("token request is empty");
-    *byte ^= 0x01;
-    token_request
+fn build_invalid_credential_token_request(issue_enclave: &EnclaveRuntime) -> Vec<u8> {
+    let sender =
+        SecureChannelClient::new(issue_enclave.public_key().expect("public key")).expect("sender");
+    let mut user = User::new(MAX_COUNT_PER_CREDENTIAL, sender);
+    let mut rng = OsRng;
+
+    let (cred_request, shared_key) = user.request_credential(&mut rng);
+    let cred_cipher = issue_enclave
+        .issue_cred(&cred_request)
+        .expect("issue credential");
+    user.receive_credential(&cred_cipher, &shared_key);
+
+    let credential = user.credential.as_mut().expect("credential");
+    credential.code[0] ^= 0x01;
+
+    let period = u64::from_be_bytes(constant_time_utils::time::current_period());
+    user.request_auth(0, period, &mut rng)
+        .expect("token request")
 }
 
 fn base_acceptor_builder() -> openssl::ssl::SslAcceptorBuilder {

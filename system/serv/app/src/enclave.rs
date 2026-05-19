@@ -202,6 +202,10 @@ impl EnclaveRuntimes {
     ) -> Result<(), EnclaveError> {
         self.runtime.install_keys(manager_evidence, envelope)
     }
+
+    pub fn install_benchmark_keys(&self, key_bundle: &[u8]) -> Result<(), EnclaveError> {
+        self.runtime.install_benchmark_keys(key_bundle)
+    }
 }
 
 pub struct EnclaveRuntime {
@@ -292,6 +296,11 @@ impl EnclaveRuntime {
     ) -> Result<(), EnclaveError> {
         let payload = encode_install_request(manager_evidence, envelope);
         self.call(OP_INSTALL_KEYS, &payload)?;
+        Ok(())
+    }
+
+    pub fn install_benchmark_keys(&self, key_bundle: &[u8]) -> Result<(), EnclaveError> {
+        self.call(OP_INIT, key_bundle)?;
         Ok(())
     }
 

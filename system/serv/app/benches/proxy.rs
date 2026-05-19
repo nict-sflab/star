@@ -11,8 +11,11 @@ use pingora::server::Server;
 use pingora_proxy::http_proxy_service;
 use rand_core::OsRng;
 use simple_filter_box::dashmap::DashMapFilterBox;
+use star_app::benchmark_key_bundle;
 use star_app::enclave::{EnclaveRuntime, EnclaveRuntimes};
 use star_app::filter::StarFilter;
+use star_app::install_benchmark_keys_for_enclave;
+use star_app::install_benchmark_keys_for_pool;
 use star_app::proxy::StarProxy;
 use star_app::tls::configure_tls_token_extension;
 use star_core::{client::User, secure_channel::client::SecureChannelClient};
@@ -36,13 +39,11 @@ const PROXY_ONLY: bool = false;
 
 type BenchFilter = StarFilter<DashMapFilterBox>;
 
-fn build_star_proxy(upstream_addr: String) -> StarProxy<DashMapFilterBox> {
-    let filter = BenchFilter::new(
-        DashMapFilterBox::new(),
-        vec![0],
-        1,
-        EnclaveRuntimes::from_env(10).expect("filter enclave pool"),
-    );
+fn build_star_proxy(
+    upstream_addr: String,
+    filter_enclave: EnclaveRuntimes,
+) -> StarProxy<DashMapFilterBox> {
+    let filter = BenchFilter::new(DashMapFilterBox::new(), vec![0], 1, filter_enclave);
 
     StarProxy {
         filter: Arc::new(filter),
@@ -74,8 +75,7 @@ impl TokenGenerator {
         user
     }
 
-    fn new() -> Self {
-        let mut issue_enclave = EnclaveRuntime::from_env().expect("issue enclave");
+    fn new(mut issue_enclave: EnclaveRuntime) -> Self {
         let mut rng = OsRng;
         let user = Self::register_user(&mut issue_enclave, &mut rng);
 
@@ -134,7 +134,7 @@ fn spawn_upstream(bind_addr: &str) -> thread::JoinHandle<()> {
 
 fn spawn_proxy(
     proxy_addr: String,
-    upstream_addr: String,
+    proxy: StarProxy<DashMapFilterBox>,
     cert_pem_path: String,
     key_pem_path: String,
     latency_tx: mpsc::Sender<u64>,
@@ -143,14 +143,12 @@ fn spawn_proxy(
         let mut server = Server::new(None).expect("create pingora server");
         server.bootstrap();
 
-        let inner = build_star_proxy(upstream_addr);
-
         let mut proxy_svc = http_proxy_service(
             &server.configuration,
             StarLatencyProxy {
                 inner: StarProxy {
-                    filter: Arc::clone(&inner.filter),
-                    upstream_addr: inner.upstream_addr.clone(),
+                    filter: Arc::clone(&proxy.filter),
+                    upstream_addr: proxy.upstream_addr.clone(),
                 },
                 latency_tx,
                 bypass_request_filter: PROXY_ONLY,
@@ -167,7 +165,7 @@ fn spawn_proxy(
             .expect("set server TLS group");
 
         if !PROXY_ONLY {
-            configure_tls_token_extension(&mut tls_settings, inner.filter)
+            configure_tls_token_extension(&mut tls_settings, proxy.filter)
                 .expect("configure STAR TLS extension");
         }
 
@@ -196,12 +194,22 @@ impl BenchHarness {
         let proxy_addr = reserve_local_addr();
 
         let upstream_handle = spawn_upstream(&upstream_addr);
+        let key_bundle = benchmark_key_bundle().expect("benchmark key bundle");
+        let filter_enclave = EnclaveRuntimes::from_env(10).expect("filter enclave pool");
+        let issue_enclave = EnclaveRuntime::from_env().expect("issue enclave");
+
+        install_benchmark_keys_for_pool(&filter_enclave, &key_bundle)
+            .expect("install filter enclave benchmark keys");
+        install_benchmark_keys_for_enclave(&issue_enclave, &key_bundle)
+            .expect("install issue enclave benchmark keys");
+
+        let proxy = build_star_proxy(upstream_addr, filter_enclave);
 
         let (latency_tx, latency_rx) = mpsc::channel();
 
         let proxy_handle = spawn_proxy(
             proxy_addr.clone(),
-            upstream_addr,
+            proxy,
             cert_pem_path,
             key_pem_path,
             latency_tx,
@@ -217,7 +225,7 @@ impl BenchHarness {
             proxy_addr,
             star_tls_client: StarTlsClient::new().expect("build STAR TLS client"),
             latency_rx,
-            token_generator: TokenGenerator::new(),
+            token_generator: TokenGenerator::new(issue_enclave),
             _upstream_handle: upstream_handle,
             _proxy_handle: proxy_handle,
         };
