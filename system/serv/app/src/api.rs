@@ -6,17 +6,21 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 
 use constant_time_utils::bytes::Long;
 use pingora_web::{Handler, PingoraHttpRequest, PingoraWebHttpResponse, StatusCode, WebError};
-use std::sync::Mutex;
+use std::sync::Arc;
 
 use crate::enclave::{EnclaveError, EnclaveRuntime};
 
 pub struct IssueApi {
-    enclave: Mutex<EnclaveRuntime>,
+    enclave: Arc<EnclaveRuntime>,
 }
 
 impl IssueApi {
     pub fn init(enclave: EnclaveRuntime) -> Self {
-        let enclave = Mutex::new(enclave);
+        let enclave = Arc::new(enclave);
+        Self::init_shared(enclave)
+    }
+
+    pub fn init_shared(enclave: Arc<EnclaveRuntime>) -> Self {
         IssueApi { enclave }
     }
 }
@@ -32,7 +36,7 @@ impl Handler for IssueApi {
             }
         };
 
-        let cred = match self.enclave.lock().unwrap().issue_cred(&decoded) {
+        let cred = match self.enclave.issue_cred(&decoded) {
             Ok(cred) => cred,
             Err(_) => {
                 return Ok(PingoraWebHttpResponse::text(
@@ -55,7 +59,11 @@ impl PublicKeyApi {
     pub fn init(enclave: &mut EnclaveRuntime) -> Result<Self, EnclaveError> {
         let public_key = enclave.public_key()?;
 
-        Ok(PublicKeyApi { public_key })
+        Ok(Self::from_public_key(public_key))
+    }
+
+    pub fn from_public_key(public_key: Long) -> Self {
+        PublicKeyApi { public_key }
     }
 }
 

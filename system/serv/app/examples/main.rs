@@ -12,7 +12,7 @@ fn render_html(title: &str, headline: &str, body: &str) -> String {
 }
 
 fn spawn_upstream() -> (String, thread::JoinHandle<()>) {
-    let server = TinyServer::http("127.0.0.1:3000").expect("bind upstream");
+    let server = TinyServer::http("0.0.0.0:3000").expect("bind upstream");
     let addr = server
         .server_addr()
         .to_ip()
@@ -28,7 +28,7 @@ fn spawn_upstream() -> (String, thread::JoinHandle<()>) {
 }
 
 fn spawn_html_server() -> (String, thread::JoinHandle<()>) {
-    let server = TinyServer::http("127.0.0.1:3001").expect("bind html server");
+    let server = TinyServer::http("0.0.0.0:3001").expect("bind html server");
     let addr = server
         .server_addr()
         .to_ip()
@@ -55,8 +55,8 @@ fn main() {
     let (upstream_addr, _upstream_handle) = spawn_upstream();
     let (_html_addr, _html_handle) = spawn_html_server();
     let server = build_server(
-        "127.0.0.1:8080",
-        "127.0.0.1:8081",
+        "0.0.0.0:8080",
+        "0.0.0.0:18081",
         &upstream_addr,
         all_prefix(1),
         1,

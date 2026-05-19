@@ -58,6 +58,7 @@ impl<T: FilterBox + Send> StarFilter<T> {
         request: &[u8],
     ) -> Result<(Entry, u32), StarFilterErrorStatus> {
         let current_period = constant_time_utils::time::current_period();
+        let prefix_max = self.prefix_max;
 
         let mut enclave = self
             .enclaves
@@ -65,42 +66,36 @@ impl<T: FilterBox + Send> StarFilter<T> {
             .await
             .ok_or(StarFilterErrorStatus::Internal)?;
 
-        let result = (|| {
-            let token_bytes = enclave
-                .issue_token(request, current_period)
-                .map_err(|_| StarFilterErrorStatus::Internal)?;
+        let token_bytes = enclave
+            .issue_token(request, current_period)
+            .map_err(|_| StarFilterErrorStatus::Internal)?;
 
-            if token_bytes.len() < 32 {
-                return Err(StarFilterErrorStatus::InvalidToken);
-            }
+        if token_bytes.len() < 32 {
+            return Err(StarFilterErrorStatus::InvalidToken);
+        }
 
-            let token_entry: Entry = token_bytes[..32]
-                .try_into()
-                .map_err(|_| StarFilterErrorStatus::InvalidToken)?;
+        let token_entry: Entry = token_bytes[..32]
+            .try_into()
+            .map_err(|_| StarFilterErrorStatus::InvalidToken)?;
 
-            let token = Token::new(token_entry);
-            let route = token.route(self.prefix_max);
+        let token = Token::new(token_entry);
+        let route = token.route(prefix_max);
 
-            Ok((token.token, route))
-        })();
-
-        self.enclaves.release(enclave).await;
-
-        result
+        Ok((token.token, route))
     }
-
     pub fn issue_token_and_route_sync(
         &self,
         request: &[u8],
     ) -> Result<(Entry, u32), StarFilterErrorStatus> {
         let current_period = constant_time_utils::time::current_period();
 
-        let mut enclave = self
-            .enclaves
-            .pick_blocking()
-            .ok_or(StarFilterErrorStatus::Internal)?;
-
+  
         let result = (|| {
+            let enclave = self
+                .enclaves
+                .pick_blocking()
+                .ok_or(StarFilterErrorStatus::Internal)?;
+
             let token_bytes = enclave
                 .issue_token(request, current_period)
                 .map_err(|_| StarFilterErrorStatus::Internal)?;
@@ -119,7 +114,6 @@ impl<T: FilterBox + Send> StarFilter<T> {
             Ok((token.token, route))
         })();
 
-        self.enclaves.release_blocking(enclave);
 
         result
     }

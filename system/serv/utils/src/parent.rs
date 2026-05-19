@@ -47,9 +47,10 @@ pub struct Subprocess {
 }
 
 impl Subprocess {
-    pub fn init(bin: &str) -> Result<Self, SubprocessError> {
-        let mut child = Command::new(&bin)
+    pub fn init(bin: &str, args: &[String]) -> Result<Self, SubprocessError> {
+        let mut child = Command::new(bin)
             .stdin(Stdio::piped())
+            .args(args)
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()
