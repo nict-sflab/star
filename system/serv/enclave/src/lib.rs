@@ -16,7 +16,6 @@ use sgx_isa::{AttributesFlags, Report, Targetinfo};
 use star_attestation::parse_measurement_hex;
 use star_attestation::{PUBLIC_KEY_LEN, QuotePolicy, take_blob, verify_qve_evidence_public_key};
 use star_core::serv::enclave::Enclave;
-use std::io;
 #[cfg(target_env = "sgx")]
 use std::slice;
 #[cfg(target_env = "sgx")]
@@ -65,35 +64,27 @@ impl EnclaveApp {
         }
     }
 
-    fn init_direct(&mut self, payload: &[u8]) -> io::Result<Vec<u8>> {
-        let KeyBundle {
-            enc_key,
-            hpke_receiver_key,
-        } = decode_key_bundle(payload).map_err(to_io)?;
-
-        let enclave = Enclave::new(self.max, enc_key, hpke_receiver_key).map_err(to_io)?;
-        self.enclave = Some(enclave);
-
-        Ok(Vec::new())
-    }
-
-    /// Empty init only creates the attested transfer key. Production keys arrive
-    /// later from key-manager through OP_INSTALL_KEYS.
+    /// OP_INIT never installs production keys.
+    ///
+    /// Each startup creates a fresh attested transfer key. The host must fetch
+    /// that key, ask key-manager to export the production keys for this enclave
+    /// instance, and deliver the key-manager envelope through OP_INSTALL_KEYS.
+    /// This avoids accepting a raw key bundle from the host.
     fn init(&mut self, payload: &[u8]) -> (u8, Vec<u8>) {
         if self.enclave.is_some() {
             return (STATUS_BAD_REQUEST, b"enclave already initialized".to_vec());
         }
 
-        let result = if payload.is_empty() {
-            Ok(Vec::new())
-        } else {
-            self.init_direct(payload)
-        };
-
-        match result {
-            Ok(payload) => (STATUS_OK, payload),
-            Err(err) => (STATUS_PANIC, err.to_string().into_bytes()),
+        if !payload.is_empty() {
+            return (
+                STATUS_BAD_REQUEST,
+                b"init does not accept keys; install key-manager envelope with OP_INSTALL_KEYS"
+                    .to_vec(),
+            );
         }
+
+        self.transfer_receiver = TransferReceiver::random(&mut OsRng);
+        (STATUS_OK, Vec::new())
     }
 
     fn transfer_public_key(&self, _: &[u8]) -> (u8, Vec<u8>) {
@@ -522,10 +513,6 @@ fn embedded_allow_debug(specific: Option<&str>, default: bool) -> Result<bool, S
     }
 }
 
-fn to_io<E: std::fmt::Debug>(err: E) -> io::Error {
-    io::Error::new(io::ErrorKind::Other, format!("{err:?}"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -539,6 +526,46 @@ mod tests {
 
         assert_eq!(status, STATUS_BAD_REQUEST);
         assert_eq!(payload, b"attest needs 64 bytes");
+    }
+
+    #[test]
+    fn init_rejects_raw_key_bundle() {
+        let mut app = EnclaveApp::new(1);
+        let bundle = KeyBundle {
+            enc_key: [7u8; 32],
+            hpke_receiver_key: [8u8; 32],
+        };
+        let payload = encode_key_bundle(bundle);
+
+        let (status, payload) = app.handle(OP_INIT, &payload);
+
+        assert_eq!(status, STATUS_BAD_REQUEST);
+        assert_eq!(
+            payload,
+            b"init does not accept keys; install key-manager envelope with OP_INSTALL_KEYS"
+        );
+
+        let (status, payload) = app.handle(OP_PUBLIC_KEY, &[]);
+        assert_eq!(status, STATUS_NOT_INITIALIZED);
+        assert_eq!(payload, b"enclave is not initialized");
+    }
+
+    #[test]
+    fn empty_init_only_prepares_key_manager_transfer() {
+        let mut app = EnclaveApp::new(1);
+
+        let (status, payload) = app.handle(OP_INIT, &[]);
+
+        assert_eq!(status, STATUS_OK);
+        assert!(payload.is_empty());
+
+        let (status, payload) = app.handle(OP_PUBLIC_KEY, &[]);
+        assert_eq!(status, STATUS_NOT_INITIALIZED);
+        assert_eq!(payload, b"enclave is not initialized");
+
+        let (status, payload) = app.handle(OP_TRANSFER_PUBLIC_KEY, &[]);
+        assert_eq!(status, STATUS_OK);
+        assert_eq!(payload.len(), PUBLIC_KEY_LEN);
     }
 
     #[test]
