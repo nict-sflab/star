@@ -64,6 +64,10 @@ harness = false
 name = "storage"
 harness = false
 
+[[bench]]
+name = "client_hello_reject"
+harness = false
+
 [[bin]]
 name = "bench_mock"
 path = "benches/mock/mock_servers.rs"
