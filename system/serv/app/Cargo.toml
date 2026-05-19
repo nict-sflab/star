@@ -51,23 +51,15 @@ name = "filter"
 harness = false
 
 [[bench]]
-name = "e2e"
-harness = false
-
-[[bench]]
-name = "dos"
-harness = false
-
-[[bench]]
 name = "proxy"
 harness = false
 
 [[bench]]
-name = "client"
+name = "storage"
 harness = false
 
 [[bench]]
-name = "storage"
+name = "tls"
 harness = false
 
 [[bin]]
