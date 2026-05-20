@@ -61,7 +61,3 @@ harness = false
 [[bench]]
 name = "tls"
 harness = false
-
-[[bin]]
-name = "bench_mock"
-path = "benches/mock/mock_servers.rs"
