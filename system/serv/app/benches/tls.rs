@@ -1,537 +1,318 @@
-use std::io::{self, Read, Write};
-use std::os::raw::{c_int, c_uchar, c_uint};
-use std::ptr;
-use std::slice;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+mod common;
 
-use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
-use foreign_types::ForeignTypeRef;
-use openssl::error::ErrorStack;
-use openssl::ssl::{
-    ClientHelloResponse, ExtensionContext, HandshakeError, Ssl, SslAcceptor, SslAlert,
-    SslConnector, SslFiletype, SslMethod, SslRef, SslVerifyMode,
-};
+use common::latency_proxy::StarLatencyProxy;
+use common::local_http::{reserve_local_addr, spawn_ok_server};
+use common::retry::{StartupProbe, wait_until_ready};
+use common::tls::StarTlsClient;
+use constant_time_utils::time as ct_time;
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use pingora::listeners::tls::TlsSettings;
+use pingora::server::Server;
+use pingora_proxy::http_proxy_service;
 use rand_core::OsRng;
 use simple_filter_box::dashmap::DashMapFilterBox;
 use star_app::benchmark_key_bundle;
 use star_app::enclave::{EnclaveRuntime, EnclaveRuntimes};
-use star_app::filter::{StarFilter, StarFilterErrorStatus};
+use star_app::filter::StarFilter;
 use star_app::install_benchmark_keys_for_enclave;
 use star_app::install_benchmark_keys_for_pool;
-use star_app::tls::STAR_TLS_EXTENSION_TYPE;
+use star_app::proxy::StarProxy;
+use star_app::tls::configure_tls_token_extension;
 use star_core::{client::User, secure_channel::client::SecureChannelClient};
+use std::net::ToSocketAddrs;
+use std::sync::{Arc, mpsc};
+use std::thread;
+use std::time::Duration;
 
+const STARTUP_RETRIES: u32 = 100;
+const STARTUP_RETRY_DELAY: Duration = Duration::from_millis(50);
+const WARMUP_REQUESTS: usize = 128;
 const TLS_CERT_RELATIVE_PATH: &str = "examples/certs/server.crt";
 const TLS_KEY_RELATIVE_PATH: &str = "examples/certs/server.key";
-const MAX_COUNT_PER_CREDENTIAL: u64 = 1_000_000;
-const FILTER_ENCLAVE_POOL_SIZE: u8 = 10;
+const MAX_COUNT_PER_CREDENTIAL: u64 = 3;
+const PROXY_TLS_READ_TIMEOUT: Duration = Duration::from_secs(2);
+const LATENCY_RECV_TIMEOUT: Duration = Duration::from_secs(2);
+const BENCH_GROUP_NAME: &str = "pingora_proxy_basic_latency_tls";
+const BENCH_FUNCTION_NAME: &str = "single_thread_tls_process_cpu";
+
+const PROXY_ONLY: bool = false;
 
 type BenchFilter = StarFilter<DashMapFilterBox>;
 
-unsafe extern "C" {
-    fn SSL_client_hello_get0_ext(
-        s: *mut openssl_sys::SSL,
-        type_: c_uint,
-        out: *mut *const c_uchar,
-        outlen: *mut usize,
-    ) -> c_int;
-}
+fn build_star_proxy(
+    upstream_addr: String,
+    filter_enclave: EnclaveRuntimes,
+) -> StarProxy<DashMapFilterBox> {
+    let filter = BenchFilter::new(DashMapFilterBox::new(), vec![0], 1, filter_enclave);
 
-#[derive(Debug)]
-struct ClientHelloRecorder {
-    output: Vec<u8>,
-}
-
-impl ClientHelloRecorder {
-    fn new() -> Self {
-        Self { output: Vec::new() }
+    StarProxy {
+        filter: Arc::new(filter),
+        upstream_addr,
     }
 }
 
-impl Read for ClientHelloRecorder {
-    fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
-        Err(io::Error::from(io::ErrorKind::WouldBlock))
-    }
+struct TokenGenerator {
+    issue_enclave: EnclaveRuntime,
+    user: User,
+    counter: u64,
+    period: u64,
+    rng: OsRng,
 }
 
-impl Write for ClientHelloRecorder {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.output.extend_from_slice(buf);
-        Ok(buf.len())
-    }
+impl TokenGenerator {
+    fn register_user(issue_enclave: &mut EnclaveRuntime, rng: &mut OsRng) -> User {
+        let sender = SecureChannelClient::new(issue_enclave.public_key().expect("public key"))
+            .expect("secure channel");
 
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
+        let mut user = User::new(MAX_COUNT_PER_CREDENTIAL, sender);
+        let (cred_request, shared_key) = user.request_credential(rng);
 
-#[derive(Debug)]
-struct ClientHelloInput<'a> {
-    input: &'a [u8],
-    read_offset: usize,
-}
+        let cred_cipher = issue_enclave
+            .issue_cred(&cred_request)
+            .expect("issue credential");
 
-impl<'a> ClientHelloInput<'a> {
-    fn new(input: &'a [u8]) -> Self {
-        Self {
-            input,
-            read_offset: 0,
-        }
-    }
-}
-
-impl Read for ClientHelloInput<'_> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        if self.read_offset >= self.input.len() {
-            return Err(io::Error::from(io::ErrorKind::WouldBlock));
-        }
-
-        let remaining = &self.input[self.read_offset..];
-        let len = remaining.len().min(buf.len());
-        buf[..len].copy_from_slice(&remaining[..len]);
-        self.read_offset += len;
-        Ok(len)
-    }
-}
-
-impl Write for ClientHelloInput<'_> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        Ok(buf.len())
+        user.receive_credential(&cred_cipher, &shared_key);
+        user
     }
 
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ClientHelloOutcome {
-    PendingMoreInput,
-    Rejected,
-}
-
-struct OpenSslRejectHarness {
-    acceptor: SslAcceptor,
-    client_hello: Vec<u8>,
-}
-
-struct StarFilterRejectHarness {
-    acceptor: SslAcceptor,
-    filter: Arc<BenchFilter>,
-    token_request: Vec<u8>,
-    client_hello: Vec<u8>,
-}
-
-impl OpenSslRejectHarness {
-    fn missing_extension() -> Self {
-        let mut builder = base_acceptor_builder();
-
-        builder.set_client_hello_callback(move |ssl, alert| {
-            if star_extension_from_client_hello(ssl).is_none() {
-                return reject_client_hello(alert, SslAlert::DECODE_ERROR);
-            }
-
-            Ok(ClientHelloResponse::SUCCESS)
-        });
-
-        let connector = connector_with_star_extension(None);
+    fn new(mut issue_enclave: EnclaveRuntime) -> Self {
+        let mut rng = OsRng;
+        let user = Self::register_user(&mut issue_enclave, &mut rng);
 
         Self {
-            acceptor: builder.build(),
-            client_hello: record_client_hello(&connector),
+            issue_enclave,
+            user,
+            counter: 0,
+            period: u64::from_be_bytes(ct_time::current_period()),
+            rng,
         }
     }
 
-    fn timed_rejections(&self, iters: u64) -> Duration {
-        let mut total = Duration::ZERO;
+    fn rotate_credential(&mut self) {
+        self.user = Self::register_user(&mut self.issue_enclave, &mut self.rng);
+        self.counter = 0;
+    }
 
-        for _ in 0..iters {
-            let start = Instant::now();
-            let outcome =
-                process_client_hello(&self.acceptor, black_box(self.client_hello.as_slice()));
-            total += start.elapsed();
-            assert_eq!(outcome, ClientHelloOutcome::Rejected);
+    fn refresh_period(&mut self) {
+        let current_period = u64::from_be_bytes(ct_time::current_period());
+
+        if current_period != self.period {
+            self.period = current_period;
+            self.rotate_credential();
+        }
+    }
+
+    fn next_request(&mut self) -> Vec<u8> {
+        self.refresh_period();
+
+        if self.counter >= MAX_COUNT_PER_CREDENTIAL {
+            self.rotate_credential();
         }
 
-        total
+        let token_request = self
+            .user
+            .request_auth(self.counter, self.period, &mut self.rng)
+            .expect("build auth request");
+
+        self.counter += 1;
+        token_request
     }
 }
 
-impl StarFilterRejectHarness {
-    fn replayed_token() -> Self {
-        let (filter, token_request) = build_keyed_filter_and_token_request();
-        let harness = Self::new(filter, token_request);
+fn cert_path() -> String {
+    common::manifest_path(TLS_CERT_RELATIVE_PATH)
+}
 
-        let outcome = process_client_hello(&harness.acceptor, harness.client_hello.as_slice());
-        assert_eq!(outcome, ClientHelloOutcome::PendingMoreInput);
+fn key_path() -> String {
+    common::manifest_path(TLS_KEY_RELATIVE_PATH)
+}
 
-        harness
-    }
+fn spawn_upstream(bind_addr: &str) -> thread::JoinHandle<()> {
+    let (_, handle) = spawn_ok_server(bind_addr, "upstream");
+    handle
+}
 
-    fn invalid_credential() -> Self {
-        let (filter, token_request) = build_keyed_filter_and_invalid_credential_request();
-        let harness = Self::new(filter, token_request);
+fn spawn_proxy(
+    proxy_addr: String,
+    proxy: StarProxy<DashMapFilterBox>,
+    cert_pem_path: String,
+    key_pem_path: String,
+    latency_tx: mpsc::Sender<u64>,
+) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        let mut server = Server::new(None).expect("create pingora server");
+        server.bootstrap();
 
-        assert_eq!(
-            process_client_hello(&harness.acceptor, harness.client_hello.as_slice()),
-            ClientHelloOutcome::Rejected
-        );
-        assert!(matches!(
-            harness
-                .filter
-                .filter_client_hello(harness.token_request.as_slice()),
-            Err(StarFilterErrorStatus::InvalidToken)
-        ));
-
-        harness
-    }
-
-    fn new(filter: Arc<BenchFilter>, token_request: Vec<u8>) -> Self {
-        let connector = connector_with_star_extension(Some(token_request.clone()));
-        let client_hello = record_client_hello(&connector);
-        let mut builder = base_acceptor_builder();
-        let token_index = Ssl::new_ex_index::<Vec<u8>>().expect("TLS token ex_data index");
-        let callback_filter = Arc::clone(&filter);
-
-        builder.set_client_hello_callback(move |ssl, alert| {
-            let Some(ext_data) = star_extension_from_client_hello(ssl) else {
-                return reject_client_hello(alert, SslAlert::DECODE_ERROR);
-            };
-
-            if ext_data.is_empty() {
-                return reject_client_hello(alert, SslAlert::DECODE_ERROR);
-            }
-
-            Ok(ClientHelloResponse::SUCCESS)
-        });
-
-        builder
-            .add_custom_ext(
-                STAR_TLS_EXTENSION_TYPE,
-                ExtensionContext::CLIENT_HELLO,
-                |_ssl, _context, _cert| Ok(None::<Vec<u8>>),
-                move |ssl, _context, ext_data, _cert| {
-                    if ext_data.is_empty() {
-                        return Err(SslAlert::DECODE_ERROR);
-                    }
-
-                    if let Some(existing) = ssl.ex_data(token_index) {
-                        if existing.as_slice() == ext_data {
-                            return Ok(());
-                        }
-
-                        return Err(SslAlert::ILLEGAL_PARAMETER);
-                    }
-
-                    if let Err(filter_err) = callback_filter.filter_client_hello(ext_data) {
-                        return Err(alert_for_filter_error(&filter_err));
-                    }
-
-                    ssl.set_ex_data(token_index, ext_data.to_vec());
-                    Ok(())
+        let mut proxy_svc = http_proxy_service(
+            &server.configuration,
+            StarLatencyProxy {
+                inner: StarProxy {
+                    filter: Arc::clone(&proxy.filter),
+                    upstream_addr: proxy.upstream_addr.clone(),
                 },
-            )
-            .expect("configure STAR TLS extension");
+                latency_tx,
+                bypass_request_filter: PROXY_ONLY,
+            },
+        );
 
-        Self {
-            acceptor: builder.build(),
-            filter,
-            token_request,
-            client_hello,
+        proxy_svc.threads = Some(1);
+
+        let mut tls_settings = TlsSettings::intermediate(&cert_pem_path, &key_pem_path)
+            .expect("build pingora TLS settings");
+
+        tls_settings
+            .set_groups_list("X25519")
+            .expect("set server TLS group");
+
+        if !PROXY_ONLY {
+            configure_tls_token_extension(&mut tls_settings, proxy.filter)
+                .expect("configure STAR TLS extension");
+        }
+
+        proxy_svc.add_tls_with_settings(&proxy_addr, None, tls_settings);
+
+        server.add_service(proxy_svc);
+        server.run_forever();
+    })
+}
+
+struct BenchHarness {
+    proxy_addr: std::net::SocketAddr,
+    star_tls_client: StarTlsClient,
+    latency_rx: mpsc::Receiver<u64>,
+    token_generator: TokenGenerator,
+    _upstream_handle: thread::JoinHandle<()>,
+    _proxy_handle: thread::JoinHandle<()>,
+}
+
+impl BenchHarness {
+    fn start() -> Self {
+        let cert_pem_path = cert_path();
+        let key_pem_path = key_path();
+
+        let upstream_addr = reserve_local_addr();
+        let proxy_addr = reserve_local_addr();
+
+        let upstream_handle = spawn_upstream(&upstream_addr);
+        let key_bundle = benchmark_key_bundle().expect("benchmark key bundle");
+        let filter_enclave = EnclaveRuntimes::from_env(10).expect("filter enclave pool");
+        let issue_enclave = EnclaveRuntime::from_env().expect("issue enclave");
+
+        install_benchmark_keys_for_pool(&filter_enclave, &key_bundle)
+            .expect("install filter enclave benchmark keys");
+        install_benchmark_keys_for_enclave(&issue_enclave, &key_bundle)
+            .expect("install issue enclave benchmark keys");
+
+        let proxy = build_star_proxy(upstream_addr, filter_enclave);
+
+        let (latency_tx, latency_rx) = mpsc::channel();
+
+        let proxy_handle = spawn_proxy(
+            proxy_addr.clone(),
+            proxy,
+            cert_pem_path,
+            key_pem_path,
+            latency_tx,
+        );
+
+        let proxy_addr = proxy_addr
+            .to_socket_addrs()
+            .expect("resolve proxy address")
+            .next()
+            .expect("proxy address should resolve");
+
+        let mut harness = Self {
+            proxy_addr,
+            star_tls_client: StarTlsClient::new().expect("build STAR TLS client"),
+            latency_rx,
+            token_generator: TokenGenerator::new(issue_enclave),
+            _upstream_handle: upstream_handle,
+            _proxy_handle: proxy_handle,
+        };
+
+        harness.wait_until_ready();
+        harness.warmup(WARMUP_REQUESTS);
+        harness.drain_latencies();
+
+        harness
+    }
+
+    fn send_request(&mut self, token_request: &[u8]) {
+        let (status, body) = self
+            .star_tls_client
+            .get(self.proxy_addr, token_request, PROXY_TLS_READ_TIMEOUT)
+            .expect("request through proxy");
+
+        assert_eq!(status, 200);
+        assert_eq!(body.trim(), "OK");
+    }
+
+    fn one_internal_latency_ns(&mut self) -> u64 {
+        let token_request = self.token_generator.next_request();
+
+        self.send_request(&token_request);
+
+        self.latency_rx
+            .recv_timeout(LATENCY_RECV_TIMEOUT)
+            .expect("wait internal proxy latency")
+    }
+
+    fn wait_until_ready(&mut self) {
+        wait_until_ready(
+            "proxy benchmark service",
+            STARTUP_RETRIES,
+            STARTUP_RETRY_DELAY,
+            || {
+                let token_request = self.token_generator.next_request();
+
+                match self.star_tls_client.get(
+                    self.proxy_addr,
+                    &token_request,
+                    PROXY_TLS_READ_TIMEOUT,
+                ) {
+                    Ok((200, body)) if body.trim() == "OK" => {
+                        let _ = self.latency_rx.recv_timeout(LATENCY_RECV_TIMEOUT);
+                        StartupProbe::Ready
+                    }
+                    Ok((status, _)) => {
+                        StartupProbe::Retry(format!("startup status error: {status}"))
+                    }
+                    Err(err) => StartupProbe::Retry(format!("startup transport error: {err}")),
+                }
+            },
+        );
+    }
+
+    fn warmup(&mut self, count: usize) {
+        for _ in 0..count {
+            let _ = self.one_internal_latency_ns();
         }
     }
 
-    fn timed_openssl_and_filter_rejections(&self, iters: u64) -> Duration {
-        let mut total = Duration::ZERO;
-
-        for _ in 0..iters {
-            let start = Instant::now();
-            let outcome =
-                process_client_hello(&self.acceptor, black_box(self.client_hello.as_slice()));
-            total += start.elapsed();
-            assert_eq!(outcome, ClientHelloOutcome::Rejected);
-        }
-
-        total
-    }
-
-    fn timed_filter_only_rejections(&self, iters: u64) -> Duration {
-        let mut total = Duration::ZERO;
-
-        for _ in 0..iters {
-            let start = Instant::now();
-            let result = self
-                .filter
-                .filter_client_hello(black_box(self.token_request.as_slice()));
-            total += start.elapsed();
-            assert!(matches!(
-                result,
-                Err(StarFilterErrorStatus::DuplicatedToken)
-            ));
-        }
-
-        total
-    }
-
-    fn timed_invalid_credential_filter_only_rejections(&self, iters: u64) -> Duration {
-        let mut total = Duration::ZERO;
-
-        for _ in 0..iters {
-            let start = Instant::now();
-            let result = self
-                .filter
-                .filter_client_hello(black_box(self.token_request.as_slice()));
-            total += start.elapsed();
-            assert!(matches!(result, Err(StarFilterErrorStatus::InvalidToken)));
-        }
-
-        total
+    fn drain_latencies(&self) {
+        while self.latency_rx.try_recv().is_ok() {}
     }
 }
 
-fn process_client_hello(acceptor: &SslAcceptor, client_hello: &[u8]) -> ClientHelloOutcome {
-    match acceptor.accept(ClientHelloInput::new(client_hello)) {
-        Ok(_) => ClientHelloOutcome::PendingMoreInput,
-        Err(HandshakeError::WouldBlock(_)) => ClientHelloOutcome::PendingMoreInput,
-        Err(HandshakeError::Failure(_)) => ClientHelloOutcome::Rejected,
-        Err(HandshakeError::SetupFailure(err)) => panic!("TLS server setup failed: {err}"),
-    }
-}
+fn bench_pingora_proxy_basic_latency_tls(c: &mut Criterion) {
+    let mut harness = BenchHarness::start();
 
-fn record_client_hello(connector: &SslConnector) -> Vec<u8> {
-    let recorder = ClientHelloRecorder::new();
-
-    let client_hello = match connector.connect("localhost", recorder) {
-        Ok(_) => panic!("client handshake unexpectedly completed without server input"),
-        Err(HandshakeError::WouldBlock(mid)) | Err(HandshakeError::Failure(mid)) => {
-            mid.get_ref().output.clone()
-        }
-        Err(HandshakeError::SetupFailure(err)) => panic!("TLS client setup failed: {err}"),
-    };
-
-    assert!(!client_hello.is_empty(), "recorded ClientHello is empty");
-    client_hello
-}
-
-fn build_keyed_filter_and_token_request() -> (Arc<BenchFilter>, Vec<u8>) {
-    build_keyed_filter_and_request(build_token_request)
-}
-
-fn build_keyed_filter_and_invalid_credential_request() -> (Arc<BenchFilter>, Vec<u8>) {
-    build_keyed_filter_and_request(build_invalid_credential_token_request)
-}
-
-fn build_keyed_filter_and_request(
-    build_request: impl FnOnce(&EnclaveRuntime) -> Vec<u8>,
-) -> (Arc<BenchFilter>, Vec<u8>) {
-    let key_bundle = benchmark_key_bundle().expect("benchmark key bundle");
-    let filter_enclave =
-        EnclaveRuntimes::from_env(FILTER_ENCLAVE_POOL_SIZE).expect("filter enclave pool");
-    let issue_enclave = EnclaveRuntime::from_env().expect("issue enclave");
-
-    install_benchmark_keys_for_pool(&filter_enclave, &key_bundle)
-        .expect("install filter enclave benchmark keys");
-    install_benchmark_keys_for_enclave(&issue_enclave, &key_bundle)
-        .expect("install issue enclave benchmark keys");
-
-    let filter = Arc::new(BenchFilter::new(
-        DashMapFilterBox::new(),
-        vec![0],
-        1,
-        filter_enclave,
-    ));
-    let token_request = build_request(&issue_enclave);
-
-    (filter, token_request)
-}
-
-fn build_token_request(issue_enclave: &EnclaveRuntime) -> Vec<u8> {
-    let sender =
-        SecureChannelClient::new(issue_enclave.public_key().expect("public key")).expect("sender");
-    let mut user = User::new(MAX_COUNT_PER_CREDENTIAL, sender);
-    let mut rng = OsRng;
-
-    let (cred_request, shared_key) = user.request_credential(&mut rng);
-    let cred_cipher = issue_enclave
-        .issue_cred(&cred_request)
-        .expect("issue credential");
-    user.receive_credential(&cred_cipher, &shared_key);
-
-    let period = u64::from_be_bytes(constant_time_utils::time::current_period());
-    user.request_auth(0, period, &mut rng)
-        .expect("token request")
-}
-
-fn build_invalid_credential_token_request(issue_enclave: &EnclaveRuntime) -> Vec<u8> {
-    let sender =
-        SecureChannelClient::new(issue_enclave.public_key().expect("public key")).expect("sender");
-    let mut user = User::new(MAX_COUNT_PER_CREDENTIAL, sender);
-    let mut rng = OsRng;
-
-    let (cred_request, shared_key) = user.request_credential(&mut rng);
-    let cred_cipher = issue_enclave
-        .issue_cred(&cred_request)
-        .expect("issue credential");
-    user.receive_credential(&cred_cipher, &shared_key);
-
-    let credential = user.credential.as_mut().expect("credential");
-    credential.code[0] ^= 0x01;
-
-    let period = u64::from_be_bytes(constant_time_utils::time::current_period());
-    user.request_auth(0, period, &mut rng)
-        .expect("token request")
-}
-
-fn base_acceptor_builder() -> openssl::ssl::SslAcceptorBuilder {
-    let mut builder =
-        SslAcceptor::mozilla_intermediate_v5(SslMethod::tls()).expect("build TLS acceptor");
-    builder
-        .set_certificate_file(manifest_path(TLS_CERT_RELATIVE_PATH), SslFiletype::PEM)
-        .expect("set TLS certificate");
-    builder
-        .set_private_key_file(manifest_path(TLS_KEY_RELATIVE_PATH), SslFiletype::PEM)
-        .expect("set TLS private key");
-    builder.check_private_key().expect("check TLS private key");
-    builder.set_groups_list("X25519").expect("set TLS groups");
-    builder
-}
-
-fn connector_with_star_extension(ext: Option<Vec<u8>>) -> SslConnector {
-    let mut builder = SslConnector::builder(SslMethod::tls()).expect("build TLS connector");
-    builder.set_verify(SslVerifyMode::NONE);
-    builder.set_groups_list("X25519").expect("set TLS groups");
-
-    if let Some(ext) = ext {
-        builder
-            .add_custom_ext(
-                STAR_TLS_EXTENSION_TYPE,
-                ExtensionContext::CLIENT_HELLO,
-                move |_ssl, _context, _cert| Ok(Some(ext.clone())),
-                |_ssl, _context, _ext_data, _cert| Ok(()),
-            )
-            .expect("configure client STAR extension");
-    }
-
-    builder.build()
-}
-
-fn reject_client_hello(
-    alert: &mut SslAlert,
-    ssl_alert: SslAlert,
-) -> Result<ClientHelloResponse, ErrorStack> {
-    *alert = ssl_alert;
-    Err(ErrorStack::get())
-}
-
-fn star_extension_from_client_hello<'a>(ssl: &'a SslRef) -> Option<&'a [u8]> {
-    let mut out = ptr::null();
-    let mut out_len = 0usize;
-
-    let found = unsafe {
-        SSL_client_hello_get0_ext(
-            ssl.as_ptr(),
-            STAR_TLS_EXTENSION_TYPE as c_uint,
-            &mut out,
-            &mut out_len,
-        )
-    };
-
-    if found != 1 {
-        return None;
-    }
-
-    if out_len == 0 {
-        return Some(&[]);
-    }
-
-    if out.is_null() {
-        return None;
-    }
-
-    Some(unsafe { slice::from_raw_parts(out as *const u8, out_len) })
-}
-
-fn alert_for_filter_error(status: &StarFilterErrorStatus) -> SslAlert {
-    match status {
-        StarFilterErrorStatus::InvalidToken => SslAlert::DECODE_ERROR,
-        StarFilterErrorStatus::InvalidRoute => SslAlert::ILLEGAL_PARAMETER,
-        StarFilterErrorStatus::DuplicatedToken => SslAlert::ILLEGAL_PARAMETER,
-        StarFilterErrorStatus::Internal => SslAlert::DECODE_ERROR,
-    }
-}
-
-fn manifest_path(relative_path: &str) -> String {
-    format!("{}/{}", env!("CARGO_MANIFEST_DIR"), relative_path)
-}
-
-fn configure_group(group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>) {
-    group.sample_size(20);
-    group.warm_up_time(Duration::from_secs(1));
-    group.measurement_time(Duration::from_secs(4));
+    let mut group = c.benchmark_group(BENCH_GROUP_NAME);
+    group.sample_size(40);
+    group.measurement_time(Duration::from_secs(6));
     group.throughput(Throughput::Elements(1));
-}
 
-fn bench_client_hello_reject_no_network(c: &mut Criterion) {
-    let openssl = OpenSslRejectHarness::missing_extension();
-    let star_filter = StarFilterRejectHarness::replayed_token();
-    let invalid_credential = StarFilterRejectHarness::invalid_credential();
-
-    assert_eq!(
-        process_client_hello(&openssl.acceptor, openssl.client_hello.as_slice()),
-        ClientHelloOutcome::Rejected
-    );
-    assert_eq!(
-        process_client_hello(&star_filter.acceptor, star_filter.client_hello.as_slice()),
-        ClientHelloOutcome::Rejected
-    );
-    assert!(matches!(
-        star_filter
-            .filter
-            .filter_client_hello(star_filter.token_request.as_slice()),
-        Err(StarFilterErrorStatus::DuplicatedToken)
-    ));
-    assert_eq!(
-        process_client_hello(
-            &invalid_credential.acceptor,
-            invalid_credential.client_hello.as_slice()
-        ),
-        ClientHelloOutcome::Rejected
-    );
-    assert!(matches!(
-        invalid_credential
-            .filter
-            .filter_client_hello(invalid_credential.token_request.as_slice()),
-        Err(StarFilterErrorStatus::InvalidToken)
-    ));
-
-    let mut group = c.benchmark_group("client_hello_reject_no_network");
-    configure_group(&mut group);
-
-    group.bench_function("openssl_missing_extension", |b| {
-        b.iter_custom(|iters| openssl.timed_rejections(iters));
-    });
-
-    group.bench_function("star_filter_replayed_token_openssl_parse", |b| {
-        b.iter_custom(|iters| star_filter.timed_openssl_and_filter_rejections(iters));
-    });
-
-    group.bench_function("star_filter_replayed_token_filter_only", |b| {
-        b.iter_custom(|iters| star_filter.timed_filter_only_rejections(iters));
-    });
-
-    group.bench_function("star_filter_invalid_credential_openssl_parse", |b| {
-        b.iter_custom(|iters| invalid_credential.timed_openssl_and_filter_rejections(iters));
-    });
-
-    group.bench_function("star_filter_invalid_credential_filter_only", |b| {
+    group.bench_function(BENCH_FUNCTION_NAME, |b| {
         b.iter_custom(|iters| {
-            invalid_credential.timed_invalid_credential_filter_only_rejections(iters)
+            common::measure_process_cpu_time(iters, || {
+                let latency_ns = harness.one_internal_latency_ns();
+                std::hint::black_box(latency_ns);
+            })
         });
     });
 
     group.finish();
 }
 
-criterion_group!(benches, bench_client_hello_reject_no_network);
+criterion_group!(benches, bench_pingora_proxy_basic_latency_tls);
 criterion_main!(benches);

@@ -51,7 +51,7 @@ name = "filter"
 harness = false
 
 [[bench]]
-name = "proxy"
+name = "extension"
 harness = false
 
 [[bench]]
