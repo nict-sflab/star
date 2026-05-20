@@ -28,6 +28,7 @@ const FIXED_PREFIX_MAX: u32 = 4;
 const FIXED_CONCURRENCY: usize = FIXED_PREFIX_MAX as usize;
 const DEFAULT_FILTER_ENCLAVES: u8 = 2;
 const CHECK_DUPLICATION_BATCH_OPS: usize = FIXED_CONCURRENCY * PARALLEL_OPS_PER_WORKER;
+const ISSUE_TOKEN_BATCH_OPS: usize = FIXED_CONCURRENCY * PARALLEL_OPS_PER_WORKER;
 const ISSUE_TOKEN_GROUP_NAME: &str = "star_filter_issue_token_and_route";
 const CHECK_DUPLICATION_PARALLEL_GROUP_NAME: &str = "star_filter_check_duplication_parallel";
 const CHECK_DUPLICATION_SINGLE_THREAD_GROUP_NAME: &str =
@@ -123,18 +124,53 @@ fn token_from_counter(counter: u64) -> Entry {
     token
 }
 
+
+async fn run_issue_token_and_route_batch(
+    filter: SharedStarFilter,
+    request: Arc<Vec<u8>>,
+    batch_ops: usize,
+) {
+    let mut joins = JoinSet::new();
+
+    for worker in 0..FIXED_CONCURRENCY {
+        let filter = Arc::clone(&filter);
+        let request = Arc::clone(&request);
+        let worker_ops = if worker == FIXED_CONCURRENCY - 1 {
+            batch_ops - (PARALLEL_OPS_PER_WORKER * worker)
+        } else {
+            PARALLEL_OPS_PER_WORKER
+        };
+
+        joins.spawn(async move {
+            for _ in 0..worker_ops {
+                let result = filter
+                    .issue_token_and_route(black_box(request.as_slice()))
+                    .await
+                    .expect("issue token and route");
+                black_box(result);
+            }
+        });
+    }
+
+    while let Some(joined) = joins.join_next().await {
+        joined.expect("join worker");
+    }
+}
+
 fn bench_issue_token_and_route(c: &mut Criterion) {
-    let rt = current_thread_runtime();
+    let serial_rt = current_thread_runtime();
+    let parallel_rt = multi_thread_runtime(FIXED_CONCURRENCY);
     let (filter, request) = build_keyed_filter_and_request();
     let filter = Arc::new(filter);
     let request = Arc::new(request);
 
     let mut group = c.benchmark_group(ISSUE_TOKEN_GROUP_NAME);
+
     group.throughput(Throughput::Elements(1));
     group.bench_function(FIXED_PER_OP_BENCH_NAME, |b| {
         let filter = Arc::clone(&filter);
         let request = Arc::clone(&request);
-        b.to_async(&rt).iter(|| {
+        b.to_async(&serial_rt).iter(|| {
             let filter = Arc::clone(&filter);
             let request = Arc::clone(&request);
             async move {
@@ -146,6 +182,21 @@ fn bench_issue_token_and_route(c: &mut Criterion) {
             }
         })
     });
+
+    group.throughput(Throughput::Elements(ISSUE_TOKEN_BATCH_OPS as u64));
+    group.bench_function(FIXED_BATCH_BENCH_NAME, |b| {
+        let filter = Arc::clone(&filter);
+        let request = Arc::clone(&request);
+        b.to_async(&parallel_rt).iter(|| {
+            let filter = Arc::clone(&filter);
+            let request = Arc::clone(&request);
+
+            async move {
+                run_issue_token_and_route_batch(filter, request, ISSUE_TOKEN_BATCH_OPS).await;
+            }
+        })
+    });
+
     group.finish();
 }
 
