@@ -15,7 +15,7 @@ use openssl::ssl::{
     SslConnector, SslFiletype, SslMethod, SslRef, SslVerifyMode,
 };
 use rand_core::OsRng;
-use simple_filter_box::dashmap::DashMapFilterBox;
+use simple_filter_box::{core::Entry, dashmap::DashMapFilterBox};
 use star_app::benchmark_key_bundle;
 use star_app::enclave::{EnclaveRuntime, EnclaveRuntimes};
 use star_app::filter::{StarFilter, StarFilterErrorStatus};
@@ -123,6 +123,8 @@ struct StarFilterRejectHarness {
     filter: Arc<BenchFilter>,
     token_request: Vec<u8>,
     client_hello: Vec<u8>,
+    duplicate_token: Option<Entry>,
+    duplicate_route: u32,
 }
 
 impl OpenSslRejectHarness {
@@ -163,17 +165,28 @@ impl OpenSslRejectHarness {
 impl StarFilterRejectHarness {
     fn replayed_token() -> Self {
         let (filter, token_request) = build_keyed_filter_and_token_request();
-        let harness = Self::new(filter, token_request);
+        let (duplicate_token, duplicate_route) = filter
+            .issue_token_and_route_sync(&token_request)
+            .expect("issue duplicate token");
+        filter
+            .check_duplication(&duplicate_token, duplicate_route)
+            .expect("seed duplicate token");
+        let harness = Self::new(
+            filter,
+            token_request,
+            Some(duplicate_token),
+            duplicate_route,
+        );
 
         let outcome = process_client_hello(&harness.acceptor, harness.client_hello.as_slice());
-        assert_eq!(outcome, ClientHelloOutcome::PendingMoreInput);
+        assert_eq!(outcome, ClientHelloOutcome::Rejected);
 
         harness
     }
 
     fn invalid_credential() -> Self {
         let (filter, token_request) = build_keyed_filter_and_invalid_credential_request();
-        let harness = Self::new(filter, token_request);
+        let harness = Self::new(filter, token_request, None, 0);
 
         assert_eq!(
             process_client_hello(&harness.acceptor, harness.client_hello.as_slice()),
@@ -189,7 +202,12 @@ impl StarFilterRejectHarness {
         harness
     }
 
-    fn new(filter: Arc<BenchFilter>, token_request: Vec<u8>) -> Self {
+    fn new(
+        filter: Arc<BenchFilter>,
+        token_request: Vec<u8>,
+        duplicate_token: Option<Entry>,
+        duplicate_route: u32,
+    ) -> Self {
         let connector = connector_with_star_extension(Some(token_request.clone()));
         let client_hello = record_client_hello(&connector);
         let mut builder = base_acceptor_builder();
@@ -241,6 +259,8 @@ impl StarFilterRejectHarness {
             filter,
             token_request,
             client_hello,
+            duplicate_token,
+            duplicate_route,
         }
     }
 
@@ -260,12 +280,13 @@ impl StarFilterRejectHarness {
 
     fn timed_filter_only_rejections(&self, iters: u64) -> Duration {
         let mut total = Duration::ZERO;
+        let token = self.duplicate_token.as_ref().expect("duplicate token");
 
         for _ in 0..iters {
             let start = Instant::now();
             let result = self
                 .filter
-                .filter_client_hello(black_box(self.token_request.as_slice()));
+                .check_duplication(black_box(token), black_box(self.duplicate_route));
             total += start.elapsed();
             assert!(matches!(
                 result,
@@ -488,10 +509,14 @@ fn bench_client_hello_reject_no_network(c: &mut Criterion) {
         process_client_hello(&star_filter.acceptor, star_filter.client_hello.as_slice()),
         ClientHelloOutcome::Rejected
     );
+    let duplicate_token = star_filter
+        .duplicate_token
+        .as_ref()
+        .expect("duplicate token");
     assert!(matches!(
         star_filter
             .filter
-            .filter_client_hello(star_filter.token_request.as_slice()),
+            .check_duplication(duplicate_token, star_filter.duplicate_route),
         Err(StarFilterErrorStatus::DuplicatedToken)
     ));
     assert_eq!(

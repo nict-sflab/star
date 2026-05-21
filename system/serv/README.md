@@ -16,6 +16,48 @@ it through the same policy path used by `tools verify`.
 This workspace intentionally excludes `rust-sgx-example`; it is only reference
 material.
 
+## Reproduce SGX Benchmarks
+
+On the SGX development machine used for this workspace, run benchmarks from this
+directory with the DCAP environment and the test/benchmark trust policy embedded
+into the enclave builds:
+
+```bash
+. /etc/set-environment
+
+export SGX_DCAP_QVE=/tmp/psw/ae/data/prebuilt/libsgx_qve.signed.so
+export STAR_ALLOW_DEBUG_ENCLAVES=1
+export STAR_ALLOW_ADVISORY_ENCLAVES=1
+export STAR_TRUST_SAME_SIGNER_ENCLAVES=1
+
+cargo bench
+```
+
+`STAR_ALLOW_ADVISORY_ENCLAVES=1` accepts advisory DCAP results such as
+`OUT_OF_DATE` for local development. `STAR_TRUST_SAME_SIGNER_ENCLAVES=1` is only
+for tests and benchmarks where exact peer measurements are not embedded; it
+trusts same-platform SGX local reports from enclaves signed by the same signer.
+
+If the QvE shared object has not already been unpacked on the machine, extract it
+from the prebuilt DCAP archive and rerun the same benchmark command:
+
+```bash
+mkdir -p /tmp/psw
+tar -xf /nix/store/ayvxyj7i04bsy8qy55ww18kmx272hv9f-prebuilt_dcap_1.22.tar.gz \
+  -C /tmp/psw \
+  ./ae/data/prebuilt/libsgx_qve.signed.so
+chmod 755 /tmp/psw/ae/data/prebuilt/libsgx_qve.signed.so
+```
+
+To run one benchmark at a time while debugging:
+
+```bash
+cargo bench -p star_app --bench extension
+cargo bench -p star_app --bench filter
+cargo bench -p star_app --bench storage
+cargo bench -p star_app --bench tls
+```
+
 ## Start With Attestation
 
 The service starts a separate `key-manager` enclave. The key-manager owns the

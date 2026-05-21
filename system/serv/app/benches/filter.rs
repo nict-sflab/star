@@ -132,36 +132,17 @@ async fn run_issue_token_and_route_batch(
     request: Arc<Vec<u8>>,
     batch_ops: usize,
 ) {
-    let mut joins = JoinSet::new();
-
-    for worker in 0..FIXED_CONCURRENCY {
-        let filter = Arc::clone(&filter);
-        let request = Arc::clone(&request);
-        let worker_ops = if worker == FIXED_CONCURRENCY - 1 {
-            batch_ops - (PARALLEL_OPS_PER_WORKER * worker)
-        } else {
-            PARALLEL_OPS_PER_WORKER
-        };
-
-        joins.spawn(async move {
-            for _ in 0..worker_ops {
-                let result = filter
-                    .issue_token_and_route(black_box(request.as_slice()))
-                    .await
-                    .expect("issue token and route");
-                black_box(result);
-            }
-        });
-    }
-
-    while let Some(joined) = joins.join_next().await {
-        joined.expect("join worker");
+    for _ in 0..batch_ops {
+        let result = filter
+            .issue_token_and_route(black_box(request.as_slice()))
+            .await
+            .expect("issue token and route");
+        black_box(result);
     }
 }
 
 fn bench_issue_token_and_route(c: &mut Criterion) {
     let serial_rt = current_thread_runtime();
-    let parallel_rt = multi_thread_runtime(FIXED_CONCURRENCY);
     let (filter, request) = build_keyed_filter_and_request();
     let filter = Arc::new(filter);
     let request = Arc::new(request);
@@ -189,7 +170,7 @@ fn bench_issue_token_and_route(c: &mut Criterion) {
     group.bench_function(FIXED_BATCH_BENCH_NAME, |b| {
         let filter = Arc::clone(&filter);
         let request = Arc::clone(&request);
-        b.to_async(&parallel_rt).iter(|| {
+        b.to_async(&serial_rt).iter(|| {
             let filter = Arc::clone(&filter);
             let request = Arc::clone(&request);
 
