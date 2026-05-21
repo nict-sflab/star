@@ -108,7 +108,7 @@ pub fn configure_tls_token_extension<T>(
     filter: Arc<StarFilter<T>>,
 ) -> Result<(), openssl::error::ErrorStack>
 where
-    T: FilterBox + Send + 'static,
+    T: FilterBox + Send + Sync + 'static,
 {
     tls_settings.set_groups_list("X25519")?;
 

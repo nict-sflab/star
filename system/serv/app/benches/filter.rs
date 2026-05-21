@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BatchSize, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use rand_core::OsRng;
 use simple_filter_box::{core::Entry, dashmap::DashMapFilterBox};
 use star_app::{
@@ -73,7 +73,46 @@ fn build_filter() -> HashMapStarFilter {
     StarFilter::new(filter_box, fixed_prefixes(), FIXED_PREFIX_MAX, enclave)
 }
 
-fn build_keyed_filter_and_request() -> (HashMapStarFilter, Vec<u8>) {
+struct TokenRequestGenerator {
+    issue_enclave: EnclaveRuntime,
+    user: User,
+    counter: u64,
+    period: u64,
+    rng: OsRng,
+}
+
+impl TokenRequestGenerator {
+    fn new(issue_enclave: EnclaveRuntime) -> Self {
+        let mut rng = OsRng;
+        let user = register_user(&issue_enclave, &mut rng);
+
+        Self {
+            issue_enclave,
+            user,
+            counter: 0,
+            period: u64::from_be_bytes(constant_time_utils::time::current_period()),
+            rng,
+        }
+    }
+
+    fn next_request(&mut self) -> Vec<u8> {
+        let current_period = u64::from_be_bytes(constant_time_utils::time::current_period());
+        if current_period != self.period || self.counter >= MAX_COUNT as u64 {
+            self.period = current_period;
+            self.user = register_user(&self.issue_enclave, &mut self.rng);
+            self.counter = 0;
+        }
+
+        let request = self
+            .user
+            .request_auth(self.counter, self.period, &mut self.rng)
+            .expect("token request");
+        self.counter += 1;
+        request
+    }
+}
+
+fn build_keyed_filter_and_request_generator() -> (HashMapStarFilter, TokenRequestGenerator) {
     let _aesm_proxy = common::aesm_proxy::AesmProxyGuard::start();
     let key_bundle = benchmark_key_bundle().expect("benchmark key bundle");
     let filter_enclave =
@@ -91,24 +130,28 @@ fn build_keyed_filter_and_request() -> (HashMapStarFilter, Vec<u8>) {
         FIXED_PREFIX_MAX,
         filter_enclave,
     );
-    let request = build_request(&issue_enclave);
+    let request_generator = TokenRequestGenerator::new(issue_enclave);
 
-    (filter, request)
+    (filter, request_generator)
 }
 
 fn build_request(enclave: &EnclaveRuntime) -> Vec<u8> {
-    let sender =
-        SecureChannelClient::new(enclave.public_key().expect("public key")).expect("sender init");
-    let mut user = User::new(MAX_COUNT as u64, sender);
     let mut rng = OsRng;
-
-    let (cred_request, shared_key) = user.request_credential(&mut rng);
-    let cred_cipher = enclave.issue_cred(&cred_request).expect("issue credential");
-    user.receive_credential(&cred_cipher, &shared_key);
-
+    let mut user = register_user(enclave, &mut rng);
     let period = u64::from_be_bytes(constant_time_utils::time::current_period());
     user.request_auth(0, period, &mut rng)
         .expect("token request")
+}
+
+fn register_user(enclave: &EnclaveRuntime, rng: &mut OsRng) -> User {
+    let sender =
+        SecureChannelClient::new(enclave.public_key().expect("public key")).expect("sender init");
+    let mut user = User::new(MAX_COUNT as u64, sender);
+
+    let (cred_request, shared_key) = user.request_credential(rng);
+    let cred_cipher = enclave.issue_cred(&cred_request).expect("issue credential");
+    user.receive_credential(&cred_cipher, &shared_key);
+    user
 }
 
 fn route_for_token_index(idx: u64) -> u32 {
@@ -127,24 +170,40 @@ fn token_from_counter(counter: u64) -> Entry {
     token
 }
 
-async fn run_issue_token_and_route_batch(
-    filter: SharedStarFilter,
-    request: Arc<Vec<u8>>,
+fn next_request_for_measurement(
+    request_generator: &Arc<StdMutex<TokenRequestGenerator>>,
+) -> Vec<u8> {
+    request_generator
+        .lock()
+        .expect("request generator mutex")
+        .next_request()
+}
+
+fn next_request_batch_for_measurement(
+    request_generator: &Arc<StdMutex<TokenRequestGenerator>>,
     batch_ops: usize,
-) {
+) -> Vec<Vec<u8>> {
+    let mut request_generator = request_generator.lock().expect("request generator mutex");
+    (0..batch_ops)
+        .map(|_| request_generator.next_request())
+        .collect()
+}
+
+async fn run_issue_token_and_route_batch(filter: SharedStarFilter, requests: Vec<Vec<u8>>) {
+    let mut worker_requests = Vec::with_capacity(FIXED_CONCURRENCY);
+    for _ in 0..FIXED_CONCURRENCY {
+        worker_requests.push(Vec::with_capacity(PARALLEL_OPS_PER_WORKER));
+    }
+
+    for (idx, request) in requests.into_iter().enumerate() {
+        worker_requests[idx % FIXED_CONCURRENCY].push(request);
+    }
+
     let mut joins = JoinSet::new();
-
-    for worker in 0..FIXED_CONCURRENCY {
+    for requests in worker_requests {
         let filter = Arc::clone(&filter);
-        let request = Arc::clone(&request);
-        let worker_ops = if worker == FIXED_CONCURRENCY - 1 {
-            batch_ops - (PARALLEL_OPS_PER_WORKER * worker)
-        } else {
-            PARALLEL_OPS_PER_WORKER
-        };
-
         joins.spawn(async move {
-            for _ in 0..worker_ops {
+            for request in requests {
                 let result = filter
                     .issue_token_and_route(black_box(request.as_slice()))
                     .await
@@ -155,48 +214,53 @@ async fn run_issue_token_and_route_batch(
     }
 
     while let Some(joined) = joins.join_next().await {
-        joined.expect("join worker");
+        joined.expect("join issue token worker");
     }
 }
 
 fn bench_issue_token_and_route(c: &mut Criterion) {
-    let serial_rt = current_thread_runtime();
-    let parallel_rt = multi_thread_runtime(FIXED_CONCURRENCY);
-    let (filter, request) = build_keyed_filter_and_request();
+    let per_op_rt = current_thread_runtime();
+    let batch_rt = multi_thread_runtime(FIXED_CONCURRENCY);
+    let (filter, request_generator) = build_keyed_filter_and_request_generator();
     let filter = Arc::new(filter);
-    let request = Arc::new(request);
+    let request_generator = Arc::new(StdMutex::new(request_generator));
 
     let mut group = c.benchmark_group(ISSUE_TOKEN_GROUP_NAME);
 
     group.throughput(Throughput::Elements(1));
     group.bench_function(FIXED_PER_OP_BENCH_NAME, |b| {
         let filter = Arc::clone(&filter);
-        let request = Arc::clone(&request);
-        b.to_async(&serial_rt).iter(|| {
-            let filter = Arc::clone(&filter);
-            let request = Arc::clone(&request);
-            async move {
-                let result = filter
-                    .issue_token_and_route(black_box(request.as_slice()))
-                    .await
-                    .expect("issue token and route");
-                black_box(result);
-            }
-        })
+        let request_generator = Arc::clone(&request_generator);
+        b.to_async(&per_op_rt).iter_batched(
+            || next_request_for_measurement(&request_generator),
+            |request| {
+                let filter = Arc::clone(&filter);
+                async move {
+                    let result = filter
+                        .issue_token_and_route(black_box(request.as_slice()))
+                        .await
+                        .expect("issue token and route");
+                    black_box(result);
+                }
+            },
+            BatchSize::PerIteration,
+        )
     });
 
     group.throughput(Throughput::Elements(ISSUE_TOKEN_BATCH_OPS as u64));
     group.bench_function(FIXED_BATCH_BENCH_NAME, |b| {
         let filter = Arc::clone(&filter);
-        let request = Arc::clone(&request);
-        b.to_async(&parallel_rt).iter(|| {
-            let filter = Arc::clone(&filter);
-            let request = Arc::clone(&request);
-
-            async move {
-                run_issue_token_and_route_batch(filter, request, ISSUE_TOKEN_BATCH_OPS).await;
-            }
-        })
+        let request_generator = Arc::clone(&request_generator);
+        b.to_async(&batch_rt).iter_batched(
+            || next_request_batch_for_measurement(&request_generator, ISSUE_TOKEN_BATCH_OPS),
+            |requests| {
+                let filter = Arc::clone(&filter);
+                async move {
+                    run_issue_token_and_route_batch(filter, requests).await;
+                }
+            },
+            BatchSize::PerIteration,
+        )
     });
 
     group.finish();

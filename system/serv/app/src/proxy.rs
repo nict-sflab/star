@@ -10,7 +10,7 @@ use simple_filter_box::core::FilterBox;
 
 use crate::filter::StarFilter;
 
-pub struct StarProxy<T: FilterBox + Send> {
+pub struct StarProxy<T: FilterBox + Send + Sync> {
     pub filter: Arc<StarFilter<T>>,
     pub upstream_addr: String,
 }
@@ -27,7 +27,7 @@ async fn exit_filter(
 }
 
 #[async_trait]
-impl<T: FilterBox + Send> ProxyHttp for StarProxy<T> {
+impl<T: FilterBox + Send + Sync> ProxyHttp for StarProxy<T> {
     type CTX = ();
 
     fn new_ctx(&self) -> Self::CTX {
