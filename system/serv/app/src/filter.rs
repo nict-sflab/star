@@ -89,7 +89,6 @@ impl<T: FilterBox + Send> StarFilter<T> {
     ) -> Result<(Entry, u32), StarFilterErrorStatus> {
         let current_period = constant_time_utils::time::current_period();
 
-  
         let result = (|| {
             let enclave = self
                 .enclaves
@@ -113,7 +112,6 @@ impl<T: FilterBox + Send> StarFilter<T> {
 
             Ok((token.token, route))
         })();
-
 
         result
     }

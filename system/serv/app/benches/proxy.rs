@@ -187,6 +187,7 @@ struct BenchHarness {
 
 impl BenchHarness {
     fn start() -> Self {
+        let _aesm_proxy = common::aesm_proxy::AesmProxyGuard::start();
         let cert_pem_path = cert_path();
         let key_pem_path = key_path();
 

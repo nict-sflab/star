@@ -1,3 +1,5 @@
+mod common;
+
 use std::io::{self, Read, Write};
 use std::os::raw::{c_int, c_uchar, c_uint};
 use std::ptr;
@@ -325,6 +327,7 @@ fn build_keyed_filter_and_invalid_credential_request() -> (Arc<BenchFilter>, Vec
 fn build_keyed_filter_and_request(
     build_request: impl FnOnce(&EnclaveRuntime) -> Vec<u8>,
 ) -> (Arc<BenchFilter>, Vec<u8>) {
+    let _aesm_proxy = common::aesm_proxy::AesmProxyGuard::start();
     let key_bundle = benchmark_key_bundle().expect("benchmark key bundle");
     let filter_enclave =
         EnclaveRuntimes::from_env(FILTER_ENCLAVE_POOL_SIZE).expect("filter enclave pool");

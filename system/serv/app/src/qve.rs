@@ -1,5 +1,5 @@
-use std::ffi::{CString, c_void};
-use std::os::raw::c_long;
+use std::ffi::{CStr, CString, c_void};
+use std::os::raw::{c_char, c_int, c_long};
 use std::path::{Path, PathBuf};
 use std::ptr;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -35,11 +35,12 @@ pub fn evidence_for_verifier(
 
     let _sgx_runtime = preload_sgx_runtime()?;
     let library = load_qvl()?;
+    configure_qve_trace(&library);
     configure_qve(&library)?;
     configure_qpl(&library)?;
 
-    let supplemental_data_size = supplemental_data_size(&library)?;
-    let mut supplemental_data = vec![0u8; supplemental_data_size as usize];
+    let supplemental_data_size = 0;
+    let supplemental_data = Vec::new();
     let mut report_info = vec![0u8; QVE_REPORT_INFO_LEN];
 
     OsRng
@@ -72,14 +73,15 @@ pub fn evidence_for_verifier(
             &mut quote_verification_result,
             report_info.as_mut_ptr() as *mut c_void,
             supplemental_data_size,
-            supplemental_data.as_mut_ptr(),
+            ptr::null_mut(),
         )
     };
 
     if status != SGX_QL_SUCCESS {
+        let untrusted_status = verify_without_qve_report(&library, &verify, quote, quote_size);
         return Err(EnclaveError::Qve(format!(
-            "sgx_qv_verify_quote with QvE failed: {} / 0x{status:04x}",
-            quote3_error_name(status)
+            "sgx_qv_verify_quote with QvE failed: {} / 0x{status:04x}; untrusted QVL status: {untrusted_status}",
+            quote3_error_name(status),
         )));
     }
 
@@ -94,6 +96,40 @@ pub fn evidence_for_verifier(
     .map_err(EnclaveError::Qve)
 }
 
+fn verify_without_qve_report(
+    library: &Library,
+    verify: &Symbol<SgxQvVerifyQuote>,
+    quote: &[u8],
+    quote_size: u32,
+) -> String {
+    let expiration_check_date = match now_unix_timestamp() {
+        Ok(timestamp) => timestamp,
+        Err(err) => return format!("not run ({err})"),
+    };
+    let mut collateral_expiration_status = 1u32;
+    let mut quote_verification_result = SGX_QL_QV_RESULT_UNSPECIFIED;
+    let status = unsafe {
+        verify(
+            quote.as_ptr(),
+            quote_size,
+            ptr::null(),
+            expiration_check_date as c_long,
+            &mut collateral_expiration_status,
+            &mut quote_verification_result,
+            ptr::null_mut(),
+            0,
+            ptr::null_mut(),
+        )
+    };
+
+    format!(
+        "{} / 0x{status:04x}, {}, {}, collateral_expiration_status={collateral_expiration_status}, quote_verification_result=0x{quote_verification_result:08x}",
+        quote3_error_name(status),
+        describe_quote(quote),
+        describe_collateral(library, quote, quote_size),
+    )
+}
+
 type SgxQvVerifyQuote = unsafe extern "C" fn(
     p_quote: *const u8,
     quote_size: u32,
@@ -105,6 +141,124 @@ type SgxQvVerifyQuote = unsafe extern "C" fn(
     supplemental_data_size: u32,
     p_supplemental_data: *mut u8,
 ) -> u32;
+
+type TeeQvGetCollateral = unsafe extern "C" fn(
+    p_quote: *const u8,
+    quote_size: u32,
+    pp_quote_collateral: *mut *mut c_void,
+    p_collateral_size: *mut u32,
+) -> u32;
+
+type TeeQvFreeCollateral = unsafe extern "C" fn(p_quote_collateral: *mut c_void) -> u32;
+
+type TraceLoggerCallback = Option<unsafe extern "C" fn(c_int, *const c_char)>;
+
+fn configure_qve_trace(library: &Library) {
+    if !truthy_env("STAR_QVE_TRACE") {
+        return;
+    }
+
+    unsafe {
+        if let Ok(loglevel) = library.get::<*mut c_int>(b"sgx_trace_loglevel") {
+            **loglevel = 4;
+        }
+        if let Ok(callback) = library.get::<*mut TraceLoggerCallback>(b"sgx_trace_logger_callback")
+        {
+            **callback = Some(qve_trace_logger);
+        }
+    }
+}
+
+unsafe extern "C" fn qve_trace_logger(level: c_int, message: *const c_char) {
+    if message.is_null() {
+        eprintln!("[qve:{level}] <null>");
+        return;
+    }
+
+    let message = unsafe { CStr::from_ptr(message) }.to_string_lossy();
+    eprint!("[qve:{level}] {message}");
+}
+
+fn truthy_env(name: &str) -> bool {
+    matches!(
+        std::env::var(name).as_deref(),
+        Ok("1" | "true" | "TRUE" | "yes" | "YES")
+    )
+}
+
+fn describe_quote(quote: &[u8]) -> String {
+    let Some(version) = read_u16_le(quote, 0) else {
+        return "quote=truncated".to_string();
+    };
+    let Some(attestation_key_type) = read_u16_le(quote, 2) else {
+        return format!("quote_version={version}, quote=truncated");
+    };
+    let Some(tee_type) = read_u32_le(quote, 4) else {
+        return format!(
+            "quote_version={version}, attestation_key_type={attestation_key_type}, quote=truncated"
+        );
+    };
+
+    format!(
+        "quote_version={version}, attestation_key_type={attestation_key_type}, tee_type={tee_type}"
+    )
+}
+
+fn describe_collateral(library: &Library, quote: &[u8], quote_size: u32) -> String {
+    let get_collateral: Symbol<TeeQvGetCollateral> =
+        match unsafe { library.get(b"tee_qv_get_collateral") } {
+            Ok(symbol) => symbol,
+            Err(err) => return format!("collateral=unavailable({err})"),
+        };
+    let free_collateral: Symbol<TeeQvFreeCollateral> =
+        match unsafe { library.get(b"tee_qv_free_collateral") } {
+            Ok(symbol) => symbol,
+            Err(err) => return format!("collateral=unavailable({err})"),
+        };
+
+    let mut collateral = ptr::null_mut();
+    let mut collateral_size = 0u32;
+    let status = unsafe {
+        get_collateral(
+            quote.as_ptr(),
+            quote_size,
+            &mut collateral,
+            &mut collateral_size,
+        )
+    };
+    if status != SGX_QL_SUCCESS {
+        return format!(
+            "collateral_status={} / 0x{status:04x}",
+            quote3_error_name(status)
+        );
+    }
+    if collateral.is_null() || collateral_size < 8 {
+        return format!("collateral_size={collateral_size}");
+    }
+
+    let version = unsafe { ptr::read_unaligned(collateral.cast::<u32>()) };
+    let tee_type = unsafe { ptr::read_unaligned(collateral.cast::<u32>().add(1)) };
+    let free_status = unsafe { free_collateral(collateral) };
+
+    format!(
+        "collateral_version={version}, collateral_tee_type={tee_type}, collateral_size={collateral_size}, collateral_free_status={} / 0x{free_status:04x}",
+        quote3_error_name(free_status)
+    )
+}
+
+fn read_u16_le(bytes: &[u8], offset: usize) -> Option<u16> {
+    bytes
+        .get(offset..offset + 2)
+        .and_then(|value| value.try_into().ok())
+        .map(u16::from_le_bytes)
+}
+
+fn read_u32_le(bytes: &[u8], offset: usize) -> Option<u32> {
+    bytes
+        .get(offset..offset + 4)
+        .and_then(|value| value.try_into().ok())
+        .map(u32::from_le_bytes)
+}
 
 #[cfg(unix)]
 fn preload_sgx_runtime() -> Result<Vec<UnixLibrary>, EnclaveError> {
@@ -194,29 +348,6 @@ fn nix_sgx_psw_library_paths(name: &str) -> Vec<PathBuf> {
     paths
 }
 
-fn supplemental_data_size(library: &Library) -> Result<u32, EnclaveError> {
-    type SgxQvGetQuoteSupplementalDataSize = unsafe extern "C" fn(p_data_size: *mut u32) -> u32;
-
-    let get_size: Symbol<SgxQvGetQuoteSupplementalDataSize> = unsafe {
-        library
-            .get(b"sgx_qv_get_quote_supplemental_data_size")
-            .map_err(|err| {
-                EnclaveError::Qve(format!("QVL does not export supplemental size: {err}"))
-            })?
-    };
-
-    let mut size = 0u32;
-    let status = unsafe { get_size(&mut size) };
-    if status == SGX_QL_SUCCESS {
-        Ok(size)
-    } else {
-        Err(EnclaveError::Qve(format!(
-            "sgx_qv_get_quote_supplemental_data_size failed: {} / 0x{status:04x}",
-            quote3_error_name(status)
-        )))
-    }
-}
-
 fn load_qvl() -> Result<Library, EnclaveError> {
     let path = std::env::var_os("SGX_DCAP_QVL").map(PathBuf::from);
     match path {
@@ -236,7 +367,9 @@ fn load_qvl() -> Result<Library, EnclaveError> {
 
 fn configure_qve(library: &Library) -> Result<(), EnclaveError> {
     let Some(path) = qve_enclave_path() else {
-        return Ok(());
+        return Err(EnclaveError::Qve(
+            "Intel QvE enclave libsgx_qve.signed.so is not installed; set SGX_DCAP_QVE".to_string(),
+        ));
     };
 
     configure_qv_path(library, SGX_QV_QVE_PATH, &path, "SGX_QV_QVE_PATH")

@@ -1,3 +1,5 @@
+mod common;
+
 use std::{
     env,
     sync::{Arc, Mutex as StdMutex},
@@ -71,6 +73,7 @@ fn build_filter() -> HashMapStarFilter {
 }
 
 fn build_keyed_filter_and_request() -> (HashMapStarFilter, Vec<u8>) {
+    let _aesm_proxy = common::aesm_proxy::AesmProxyGuard::start();
     let key_bundle = benchmark_key_bundle().expect("benchmark key bundle");
     let filter_enclave =
         EnclaveRuntimes::from_env(filter_enclave_count()).expect("filter enclave pool");
@@ -154,6 +157,7 @@ fn bench_diagnostics(c: &mut Criterion) {
         return;
     }
 
+    let _aesm_proxy = common::aesm_proxy::AesmProxyGuard::start();
     let rt = current_thread_runtime();
     let key_bundle = benchmark_key_bundle().expect("benchmark key bundle");
     let request_enclave = EnclaveRuntime::from_env().expect("request enclave");

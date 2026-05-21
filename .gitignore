@@ -95,3 +95,5 @@ vgcore.*
 system/serv/app/certs/server.crt
 system/serv/app/certs/server.key
 system/serv/app/diff.txt
+
+*.sealed

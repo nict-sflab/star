@@ -4,20 +4,19 @@ mod attest;
 mod seal;
 
 use hpke::{
-    Deserializable, HpkeError, OpModeS, Serializable,
     aead::ChaCha20Poly1305 as HpkeChaCha20Poly1305,
     kdf::HkdfSha256,
     kem::{Kem as _, X25519HkdfSha256},
-    setup_sender,
+    setup_sender, Deserializable, HpkeError, OpModeS, Serializable,
 };
-use rand::{RngCore, rngs::OsRng};
-use std::{env, fs, io, path::PathBuf};
+use rand::{rngs::OsRng, RngCore};
 #[cfg(target_env = "sgx")]
 use sgx_isa::{AttributesFlags, Report, Targetinfo};
 #[cfg(target_env = "sgx")]
 use star_attestation::parse_measurement_hex;
 use star_attestation::{
-    PUBLIC_KEY_LEN, QuotePolicy, report_data_for_public_key, verify_qve_evidence_public_key,
+    report_data_for_public_key, verify_qve_evidence_public_key, QuotePolicy, PUBLIC_KEY_LEN,
+    QVE_TARGET_INFO_LEN,
 };
 #[cfg(target_env = "sgx")]
 use std::slice;
@@ -31,6 +30,7 @@ const OP_PUBLIC_KEY: u8 = 1;
 const OP_ATTEST: u8 = 4;
 const OP_EXPORT_KEYS: u8 = 5;
 const OP_QVE_TARGET_INFO: u8 = 6;
+const OP_LOCAL_ATTEST: u8 = 7;
 
 const STATUS_OK: u8 = 0;
 const STATUS_BAD_REQUEST: u8 = 2;
@@ -38,8 +38,6 @@ const STATUS_PANIC: u8 = 4;
 const STATUS_BUFFER_TOO_SMALL: u8 = 5;
 
 const KEY_BUNDLE_SEAL_LABEL: [u8; 16] = *b"key-bundle      ";
-const KEY_BUNDLE_PATH_ENV: &str = "KEY_MANAGER_SEALED_KEYS_PATH";
-const DEFAULT_KEY_BUNDLE_PATH: &str = "key-manager.keys.sealed";
 
 struct KeyManagerApp {
     keys: KeyBundle,
@@ -54,42 +52,38 @@ impl KeyManagerApp {
 
     fn init(&mut self, payload: &[u8]) -> (u8, Vec<u8>) {
         if payload.is_empty() {
-            return self.init_from_storage_or_create();
+            return self.init_new_keys();
         }
 
         self.init_from_sealed_payload(payload)
     }
 
-    fn init_from_storage_or_create(&mut self) -> (u8, Vec<u8>) {
-        match read_persisted_key_bundle() {
-            Ok(Some(sealed)) => self.init_from_sealed_payload(&sealed),
-            Ok(None) => {
-                let keys = KeyBundle::random(&mut OsRng);
-                let sealed = match seal_key_bundle(keys) {
-                    Ok(sealed) => sealed,
-                    Err(err) => return (STATUS_PANIC, err.into_bytes()),
-                };
+    /// Create a fresh key bundle and return its SGX-sealed representation.
+    ///
+    /// The enclave cannot reliably perform host filesystem I/O, so the caller is
+    /// responsible for persisting the returned sealed blob and passing it back to
+    /// OP_INIT on the next key-manager startup.
+    fn init_new_keys(&mut self) -> (u8, Vec<u8>) {
+        let keys = KeyBundle::random(&mut OsRng);
+        let sealed = match seal_key_bundle(keys) {
+            Ok(sealed) => sealed,
+            Err(err) => return (STATUS_PANIC, err.into_bytes()),
+        };
 
-                if let Err(err) = persist_key_bundle(&sealed) {
-                    return (STATUS_PANIC, err.into_bytes());
-                }
-
-                self.keys = keys;
-                (STATUS_OK, sealed)
-            }
-            Err(err) => (STATUS_PANIC, err.into_bytes()),
-        }
+        self.keys = keys;
+        (STATUS_OK, sealed)
     }
 
+    /// Restore the key bundle from a sealed blob supplied by the host.
+    ///
+    /// The same sealed blob is returned so every key-manager initialization path
+    /// communicates sealed key material back to the caller, never a raw key
+    /// bundle.
     fn init_from_sealed_payload(&mut self, sealed: &[u8]) -> (u8, Vec<u8>) {
         let keys = match decode_sealed_key_bundle(sealed) {
             Ok(keys) => keys,
             Err(err) => return (STATUS_BAD_REQUEST, err.into_bytes()),
         };
-
-        if let Err(err) = persist_key_bundle(sealed) {
-            return (STATUS_PANIC, err.into_bytes());
-        }
 
         self.keys = keys;
         (STATUS_OK, sealed.to_vec())
@@ -111,6 +105,22 @@ impl KeyManagerApp {
 
         match attest::attest(report_data) {
             Ok(quote) => (STATUS_OK, quote),
+            Err(err) => (STATUS_PANIC, err.into_bytes()),
+        }
+    }
+
+    fn local_attest(&self, payload: &[u8]) -> (u8, Vec<u8>) {
+        if payload.len() != QVE_TARGET_INFO_LEN {
+            return (
+                STATUS_BAD_REQUEST,
+                format!("local attest needs {QVE_TARGET_INFO_LEN} bytes of verifier targetinfo")
+                    .into_bytes(),
+            );
+        }
+
+        let report_data = report_data_for_public_key(self.keys.public_key());
+        match attest::local_attest(report_data, payload) {
+            Ok(report) => (STATUS_OK, report),
             Err(err) => (STATUS_PANIC, err.into_bytes()),
         }
     }
@@ -151,6 +161,7 @@ impl KeyManagerApp {
             OP_ATTEST => self.attest(payload),
             OP_EXPORT_KEYS => self.export_keys(payload),
             OP_QVE_TARGET_INFO => self.qve_target_info(payload),
+            OP_LOCAL_ATTEST => self.local_attest(payload),
             _ => (STATUS_BAD_REQUEST, b"unknown operation".to_vec()),
         }
     }
@@ -170,11 +181,17 @@ fn qve_target_info() -> Result<Vec<u8>, String> {
 #[cfg(target_env = "sgx")]
 fn trusted_recipient_policy() -> Result<QuotePolicy, String> {
     let self_report = Report::for_self();
+    let (expected_mrenclave, expected_mrsigner) = trusted_peer_identity(
+        option_env!("STAR_TRUSTED_ENCLAVE_MRENCLAVE"),
+        "STAR_TRUSTED_ENCLAVE_MRENCLAVE",
+        option_env!("STAR_TRUSTED_ENCLAVE_MRSIGNER"),
+        "STAR_TRUSTED_ENCLAVE_MRSIGNER",
+        option_env!("STAR_TRUST_SAME_SIGNER_ENCLAVE"),
+        self_report.mrsigner,
+    )?;
     Ok(QuotePolicy {
-        expected_mrenclave: required_embedded_measurement(
-            option_env!("STAR_TRUSTED_ENCLAVE_MRENCLAVE"),
-            "STAR_TRUSTED_ENCLAVE_MRENCLAVE",
-        )?,
+        expected_mrenclave,
+        expected_mrsigner,
         allow_debug: embedded_allow_debug(
             option_env!("STAR_ALLOW_DEBUG_ENCLAVE"),
             self_report
@@ -182,6 +199,7 @@ fn trusted_recipient_policy() -> Result<QuotePolicy, String> {
                 .flags
                 .contains(AttributesFlags::DEBUG),
         )?,
+        allow_advisory: embedded_allow_advisory(option_env!("STAR_ALLOW_ADVISORY_ENCLAVE"))?,
     })
 }
 
@@ -191,9 +209,38 @@ fn trusted_recipient_policy() -> Result<QuotePolicy, String> {
 }
 
 #[cfg(target_env = "sgx")]
-fn required_embedded_measurement(value: Option<&str>, name: &str) -> Result<[u8; 32], String> {
-    let value = value.ok_or_else(|| format!("{name} must be embedded for MRENCLAVE trust"))?;
-    parse_measurement_hex(value, name)
+fn trusted_peer_identity(
+    mrenclave: Option<&str>,
+    mrenclave_name: &str,
+    mrsigner: Option<&str>,
+    mrsigner_name: &str,
+    same_signer: Option<&str>,
+    self_mrsigner: [u8; 32],
+) -> Result<(Option<[u8; 32]>, Option<[u8; 32]>), String> {
+    let expected_mrenclave = optional_embedded_measurement(mrenclave, mrenclave_name)?;
+    let mut expected_mrsigner = optional_embedded_measurement(mrsigner, mrsigner_name)?;
+    if expected_mrenclave.is_none()
+        && expected_mrsigner.is_none()
+        && embedded_allow_same_signer(same_signer)?
+    {
+        expected_mrsigner = Some(self_mrsigner);
+    }
+    if expected_mrenclave.is_none() && expected_mrsigner.is_none() {
+        return Err(format!(
+            "{mrenclave_name}, {mrsigner_name}, or STAR_TRUST_SAME_SIGNER_ENCLAVES must be embedded for peer trust"
+        ));
+    }
+    Ok((expected_mrenclave, expected_mrsigner))
+}
+
+#[cfg(target_env = "sgx")]
+fn optional_embedded_measurement(
+    value: Option<&str>,
+    name: &str,
+) -> Result<Option<[u8; 32]>, String> {
+    value
+        .map(|value| parse_measurement_hex(value, name))
+        .transpose()
 }
 
 #[cfg(target_env = "sgx")]
@@ -204,6 +251,28 @@ fn embedded_allow_debug(specific: Option<&str>, default: bool) -> Result<bool, S
         Some("0") | Some("false") | Some("FALSE") | Some("no") | Some("NO") => Ok(false),
         Some(_) => Err("invalid embedded debug policy".into()),
         None => Ok(default),
+    }
+}
+
+#[cfg(target_env = "sgx")]
+fn embedded_allow_advisory(specific: Option<&str>) -> Result<bool, String> {
+    let value = specific.or(option_env!("STAR_ALLOW_ADVISORY_ENCLAVES"));
+    match value {
+        Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("YES") => Ok(true),
+        Some("0") | Some("false") | Some("FALSE") | Some("no") | Some("NO") => Ok(false),
+        Some(_) => Err("invalid embedded advisory policy".into()),
+        None => Ok(false),
+    }
+}
+
+#[cfg(target_env = "sgx")]
+fn embedded_allow_same_signer(specific: Option<&str>) -> Result<bool, String> {
+    let value = specific.or(option_env!("STAR_TRUST_SAME_SIGNER_ENCLAVES"));
+    match value {
+        Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("YES") => Ok(true),
+        Some("0") | Some("false") | Some("FALSE") | Some("no") | Some("NO") => Ok(false),
+        Some(_) => Err("invalid embedded same-signer policy".into()),
+        None => Ok(false),
     }
 }
 
@@ -321,35 +390,6 @@ fn decode_sealed_key_bundle(sealed: &[u8]) -> Result<KeyBundle, String> {
     let plaintext = seal::unseal(KEY_BUNDLE_SEAL_LABEL, sealed)
         .map_err(|err| format!("unseal key bundle: {err}"))?;
     decode_key_bundle(&plaintext)
-}
-
-fn key_bundle_path() -> PathBuf {
-    env::var_os(KEY_BUNDLE_PATH_ENV)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_KEY_BUNDLE_PATH))
-}
-
-fn read_persisted_key_bundle() -> Result<Option<Vec<u8>>, String> {
-    let path = key_bundle_path();
-    match fs::read(&path) {
-        Ok(sealed) if sealed.is_empty() => {
-            Err(format!("sealed key bundle file is empty: {}", path.display()))
-        }
-        Ok(sealed) => Ok(Some(sealed)),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(err) => Err(format!("read sealed key bundle {}: {err}", path.display())),
-    }
-}
-
-fn persist_key_bundle(sealed: &[u8]) -> Result<(), String> {
-    let path = key_bundle_path();
-    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
-        fs::create_dir_all(parent)
-            .map_err(|err| format!("create sealed key bundle dir {}: {err}", parent.display()))?;
-    }
-
-    fs::write(&path, sealed)
-        .map_err(|err| format!("write sealed key bundle {}: {err}", path.display()))
 }
 
 pub fn run() {}
@@ -507,7 +547,9 @@ mod tests {
         let (status, payload) = app.init(&plaintext);
 
         assert_eq!(status, STATUS_BAD_REQUEST);
-        assert!(String::from_utf8(payload).unwrap().contains("unseal key bundle"));
+        assert!(String::from_utf8(payload)
+            .unwrap()
+            .contains("unseal key bundle"));
     }
 
     #[cfg(not(target_env = "sgx"))]

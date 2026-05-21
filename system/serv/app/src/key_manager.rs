@@ -1,5 +1,7 @@
 use std::error::Error;
 use std::fmt;
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -7,7 +9,7 @@ use aesm_client::AesmClient;
 use enclave_runner::{EnclaveBuilder, Library};
 use enclave_runner_sgx::EnclaveBuilder as SgxEnclaveBuilder;
 use sgxs_loaders::isgx::Device as SgxDevice;
-use star_attestation::QVE_TARGET_INFO_LEN;
+use star_attestation::{LOCAL_REPORT_LEN, QVE_TARGET_INFO_LEN};
 
 use crate::enclave::{ENCLAVE_PUBLIC_KEY_LEN, EnclaveError};
 
@@ -16,6 +18,8 @@ const STAR_KEY_MANAGER_SGXS: &str = "STAR_KEY_MANAGER_SGXS";
 const STAR_KEY_MANAGER_HEAP_SIZE: &str = "STAR_KEY_MANAGER_HEAP_SIZE";
 const STAR_KEY_MANAGER_STACK_SIZE: &str = "STAR_KEY_MANAGER_STACK_SIZE";
 const STAR_KEY_MANAGER_THREADS: &str = "STAR_KEY_MANAGER_THREADS";
+const STAR_KEY_MANAGER_SEALED_KEYS: &str = "STAR_KEY_MANAGER_SEALED_KEYS";
+const DEFAULT_KEY_MANAGER_SEALED_KEYS: &str = "key-manager.keys.sealed";
 
 const DEFAULT_KEY_MANAGER_HEAP_SIZE: &str = "33554432";
 const DEFAULT_KEY_MANAGER_STACK_SIZE: &str = "131072";
@@ -27,6 +31,7 @@ const OP_PUBLIC_KEY: u64 = 1;
 const OP_ATTEST: u64 = 4;
 const OP_EXPORT_KEYS: u64 = 5;
 const OP_QVE_TARGET_INFO: u64 = 6;
+const OP_LOCAL_ATTEST: u64 = 7;
 
 const STATUS_OK: u64 = 0;
 const STATUS_BUFFER_TOO_SMALL: u64 = 5;
@@ -35,6 +40,8 @@ const PUBLIC_KEY_RESPONSE_CAPACITY: usize = 32;
 const ATTEST_RESPONSE_CAPACITY: usize = 32;
 const EXPORT_KEYS_RESPONSE_CAPACITY: usize = 256;
 const QVE_TARGET_INFO_RESPONSE_CAPACITY: usize = QVE_TARGET_INFO_LEN;
+const LOCAL_ATTEST_RESPONSE_CAPACITY: usize = LOCAL_REPORT_LEN;
+const INIT_RESPONSE_CAPACITY: usize = 1024;
 
 #[derive(Debug)]
 pub enum KeyManagerError {
@@ -73,20 +80,40 @@ impl From<EnclaveError> for KeyManagerError {
 
 pub struct KeyManagerRuntime {
     library: KeyManagerLibraryRuntime,
+    sealed_keys: Vec<u8>,
 }
 
 impl KeyManagerRuntime {
     pub fn from_env() -> Result<Self, EnclaveError> {
         let sgxs = default_key_manager_sgxs()?;
         let library = KeyManagerLibraryRuntime::load(&sgxs)?;
-        let runtime = KeyManagerRuntime { library };
-        runtime.initialize()?;
-        Ok(runtime)
+        let sealed_keys_path = sealed_keys_path();
+        let init_payload = read_optional_sealed_keys(&sealed_keys_path)?;
+        let sealed_keys = library.call(OP_INIT, init_payload.as_deref().unwrap_or(&[]))?;
+
+        if init_payload.as_deref() != Some(sealed_keys.as_slice()) {
+            write_sealed_keys(&sealed_keys_path, &sealed_keys)?;
+        }
+
+        Ok(KeyManagerRuntime {
+            library,
+            sealed_keys,
+        })
     }
 
-    fn initialize(&self) -> Result<(), EnclaveError> {
-        self.call(OP_INIT, &[])?;
-        Ok(())
+    pub fn from_env_with_sealed_keys(sealed_keys: &[u8]) -> Result<Self, EnclaveError> {
+        let sgxs = default_key_manager_sgxs()?;
+        let library = KeyManagerLibraryRuntime::load(&sgxs)?;
+        let sealed_keys = library.call(OP_INIT, sealed_keys)?;
+
+        Ok(KeyManagerRuntime {
+            library,
+            sealed_keys,
+        })
+    }
+
+    pub fn sealed_keys(&self) -> &[u8] {
+        &self.sealed_keys
     }
 
     pub fn public_key(&self) -> Result<[u8; ENCLAVE_PUBLIC_KEY_LEN], KeyManagerError> {
@@ -101,6 +128,13 @@ impl KeyManagerRuntime {
 
     pub fn public_key_attestation(&self) -> Result<Vec<u8>, EnclaveError> {
         self.call(OP_ATTEST, &[])
+    }
+
+    pub fn local_public_key_attestation(
+        &self,
+        verifier_target_info: &[u8],
+    ) -> Result<Vec<u8>, EnclaveError> {
+        self.call(OP_LOCAL_ATTEST, verifier_target_info)
     }
 
     pub fn export_keys(&self, recipient_evidence: &[u8]) -> Result<Vec<u8>, EnclaveError> {
@@ -203,13 +237,39 @@ fn call_library(library: &Library, op: u64, payload: &[u8]) -> Result<Vec<u8>, E
 
 fn initial_response_capacity(op: u64) -> usize {
     match op {
-        OP_INIT => 0,
+        OP_INIT => INIT_RESPONSE_CAPACITY,
         OP_PUBLIC_KEY => PUBLIC_KEY_RESPONSE_CAPACITY,
         OP_ATTEST => ATTEST_RESPONSE_CAPACITY,
         OP_EXPORT_KEYS => EXPORT_KEYS_RESPONSE_CAPACITY,
         OP_QVE_TARGET_INFO => QVE_TARGET_INFO_RESPONSE_CAPACITY,
+        OP_LOCAL_ATTEST => LOCAL_ATTEST_RESPONSE_CAPACITY,
         _ => 1024,
     }
+}
+
+fn sealed_keys_path() -> PathBuf {
+    std::env::var_os(STAR_KEY_MANAGER_SEALED_KEYS)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_KEY_MANAGER_SEALED_KEYS))
+}
+
+fn read_optional_sealed_keys(path: &Path) -> Result<Option<Vec<u8>>, EnclaveError> {
+    match fs::read(path) {
+        Ok(sealed_keys) => Ok(Some(sealed_keys)),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(EnclaveError::Storage(err)),
+    }
+}
+
+fn write_sealed_keys(path: &Path, sealed_keys: &[u8]) -> Result<(), EnclaveError> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent).map_err(EnclaveError::Storage)?;
+    }
+
+    fs::write(path, sealed_keys).map_err(EnclaveError::Storage)
 }
 
 fn default_key_manager_sgxs() -> Result<PathBuf, EnclaveError> {

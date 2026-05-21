@@ -20,6 +20,7 @@ use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::sync::Mutex as StdMutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -27,6 +28,7 @@ use tiny_http::{Response, Server as TinyServer};
 use tokio::sync::{Mutex as AsyncMutex, oneshot};
 
 static SGX_TEST_LOCK: StdMutex<()> = StdMutex::new(());
+static KEY_MANAGER_SEALED_KEY_COUNTER: AtomicUsize = AtomicUsize::new(0);
 const DEFAULT_AESM_SOCKET: &str = "/run/aesmd/aesm.socket";
 
 struct TestShutdown {
@@ -190,6 +192,31 @@ impl Drop for EnvVarGuard {
     }
 }
 
+struct KeyManagerSealedKeysGuard {
+    _env: EnvVarGuard,
+    path: PathBuf,
+}
+
+impl KeyManagerSealedKeysGuard {
+    fn fresh() -> Self {
+        let count = KEY_MANAGER_SEALED_KEY_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "star-key-manager-test-{}-{count}.sealed",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let env = EnvVarGuard::set("STAR_KEY_MANAGER_SEALED_KEYS", path.as_os_str());
+
+        Self { _env: env, path }
+    }
+}
+
+impl Drop for KeyManagerSealedKeysGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
 struct AesmProxy {
     addr: String,
     shutdown: Option<mpsc::Sender<()>>,
@@ -328,6 +355,7 @@ fn test_all() {
         return;
     }
     let (_aesm_proxy, _aesm_proxy_env) = start_aesm_proxy_for_sgx_tests();
+    let _sealed_keys = KeyManagerSealedKeysGuard::fresh();
     let api_addr = unused_loopback_addr();
     let proxy_addr = unused_loopback_addr();
     let (upstream_addr, upstream_handle) = spawn_upstream();
@@ -342,6 +370,8 @@ fn test_all() {
         std::env::set_var("TLS_CERT_PATH", tls_cert_path.as_str());
         std::env::set_var("TLS_KEY_PATH", tls_key_path.as_str());
         std::env::set_var("STAR_ALLOW_DEBUG_ENCLAVES", "1");
+        std::env::set_var("STAR_ALLOW_ADVISORY_ENCLAVES", "1");
+        std::env::set_var("STAR_TRUST_SAME_SIGNER_ENCLAVES", "1");
     }
 
     let server_handle = thread::spawn(move || {
@@ -428,6 +458,7 @@ fn public_key_attestation_quote_verifies_with_tools_policy() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let (_aesm_proxy, _aesm_proxy_env) = start_aesm_proxy_for_sgx_tests();
+    let _sealed_keys = KeyManagerSealedKeysGuard::fresh();
 
     let key_manager = KeyManagerRuntime::from_env().expect("initialize key-manager");
     let public_key = key_manager
