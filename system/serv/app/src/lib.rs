@@ -8,7 +8,7 @@ use std::error::Error;
 use std::sync::Arc;
 
 use crate::filter::StarFilter;
-use crate::key_manager::KeyManagerRuntime;
+use crate::key_manager::{KeyManagerRuntime, RemoteKeyManagerRuntime};
 use crate::tls::configure_tls_token_extension;
 use crate::{
     api::{DEFAULT_PUBLIC_KEY_API, DEFAULT_REGISTER_API},
@@ -20,6 +20,7 @@ pub mod api;
 pub mod enclave;
 pub mod filter;
 pub mod key_manager;
+pub mod key_manager_service;
 pub mod proxy;
 pub mod qve;
 pub mod tls;
@@ -156,14 +157,26 @@ fn build_server_with_startup_attestation(
     max_prefix: u32,
     emit_startup_attestation: bool,
 ) -> Result<Server, Box<dyn Error>> {
+    let installed = match RemoteKeyManagerRuntime::from_env() {
+        Some(key_manager) => install_keys_from_remote_key_manager(key_manager)?,
+        None => install_keys_from_local_key_manager()?,
+    };
+
+    build_server_from_installed_enclaves(
+        api_addr,
+        proxy_addr,
+        upstream_addr,
+        prefixes,
+        max_prefix,
+        emit_startup_attestation,
+        installed,
+    )
+}
+
+fn install_keys_from_local_key_manager() -> Result<InstalledEnclaves, Box<dyn Error>> {
     let key_manager = KeyManagerRuntime::from_env()?;
     let filter_enclave = EnclaveRuntimes::from_env(10)?;
     let issue_enclave = enclave::EnclaveRuntime::from_env()?;
-
-    let mut server = Server::new(None)?;
-    server.bootstrap();
-
-    let mut api_app = WebApp::default();
 
     let public_key = key_manager.public_key()?;
     let key_manager_quote = key_manager.public_key_attestation()?;
@@ -194,35 +207,100 @@ fn build_server_with_startup_attestation(
             Err(_) => key_manager.local_public_key_attestation(&issue_target_info)?,
         };
 
-    if emit_startup_attestation {
-        print_startup_attestation(StartupAttestation {
-            public_key,
-            key_manager_quote: &key_manager_quote,
-            filter_quote: &filter_quote,
-            issue_quote: &issue_quote,
-            filter_evidence_for_key_manager: &filter_evidence_for_key_manager,
-            issue_evidence_for_key_manager: &issue_evidence_for_key_manager,
-            key_manager_evidence_for_filter: &key_manager_evidence_for_filter,
-            key_manager_evidence_for_issue: &key_manager_evidence_for_issue,
-        })?;
-    }
-
     let filter_keys = key_manager.export_keys(&filter_evidence_for_key_manager)?;
     filter_enclave.install_keys(&key_manager_evidence_for_filter, &filter_keys)?;
 
     let issue_keys = key_manager.export_keys(&issue_evidence_for_key_manager)?;
     issue_enclave.install_keys(&key_manager_evidence_for_issue, &issue_keys)?;
 
+    Ok(InstalledEnclaves {
+        public_key,
+        key_manager_quote,
+        filter_quote,
+        issue_quote,
+        filter_evidence_for_key_manager,
+        issue_evidence_for_key_manager,
+        key_manager_evidence_for_filter,
+        key_manager_evidence_for_issue,
+        filter_enclave,
+        issue_enclave,
+    })
+}
+
+fn install_keys_from_remote_key_manager(
+    key_manager: RemoteKeyManagerRuntime,
+) -> Result<InstalledEnclaves, Box<dyn Error>> {
+    let filter_enclave = EnclaveRuntimes::from_env(10)?;
+    let issue_enclave = enclave::EnclaveRuntime::from_env()?;
+
+    let public_key = key_manager.public_key()?;
+    let key_manager_quote = key_manager.public_key_attestation()?;
+    let filter_quote = filter_enclave.transfer_key_attestation()?;
+    let issue_quote = issue_enclave.transfer_key_attestation()?;
+    let filter_target_info = filter_enclave.qve_target_info()?;
+    let issue_target_info = issue_enclave.qve_target_info()?;
+
+    let filter_export = key_manager.export_keys_for_recipient_quote(&filter_quote)?;
+    let issue_export = key_manager.export_keys_for_recipient_quote(&issue_quote)?;
+    let key_manager_evidence_for_filter =
+        qve::evidence_for_verifier(&key_manager_quote, &filter_target_info)?;
+    let key_manager_evidence_for_issue =
+        qve::evidence_for_verifier(&key_manager_quote, &issue_target_info)?;
+
+    filter_enclave.install_keys(&key_manager_evidence_for_filter, &filter_export.envelope)?;
+    issue_enclave.install_keys(&key_manager_evidence_for_issue, &issue_export.envelope)?;
+
+    Ok(InstalledEnclaves {
+        public_key,
+        key_manager_quote,
+        filter_quote,
+        issue_quote,
+        filter_evidence_for_key_manager: filter_export.recipient_evidence,
+        issue_evidence_for_key_manager: issue_export.recipient_evidence,
+        key_manager_evidence_for_filter,
+        key_manager_evidence_for_issue,
+        filter_enclave,
+        issue_enclave,
+    })
+}
+
+fn build_server_from_installed_enclaves(
+    api_addr: &str,
+    proxy_addr: &str,
+    upstream_addr: &str,
+    prefixes: Vec<u32>,
+    max_prefix: u32,
+    emit_startup_attestation: bool,
+    installed: InstalledEnclaves,
+) -> Result<Server, Box<dyn Error>> {
+    let mut server = Server::new(None)?;
+    server.bootstrap();
+
+    let mut api_app = WebApp::default();
+
+    if emit_startup_attestation {
+        print_startup_attestation(StartupAttestation {
+            public_key: installed.public_key,
+            key_manager_quote: &installed.key_manager_quote,
+            filter_quote: &installed.filter_quote,
+            issue_quote: &installed.issue_quote,
+            filter_evidence_for_key_manager: &installed.filter_evidence_for_key_manager,
+            issue_evidence_for_key_manager: &installed.issue_evidence_for_key_manager,
+            key_manager_evidence_for_filter: &installed.key_manager_evidence_for_filter,
+            key_manager_evidence_for_issue: &installed.key_manager_evidence_for_issue,
+        })?;
+    }
+
     let filter_box = DashMapFilterBox::new();
     let filter = Arc::new(StarFilter::new(
         filter_box,
         prefixes,
         max_prefix,
-        filter_enclave,
+        installed.filter_enclave,
     ));
 
-    let public_key_api = api::PublicKeyApi::from_public_key(public_key);
-    let issue_enclave = Arc::new(issue_enclave);
+    let public_key_api = api::PublicKeyApi::from_public_key(installed.public_key);
+    let issue_enclave = Arc::new(installed.issue_enclave);
     let issue_api = api::IssueApi::init_shared(Arc::clone(&issue_enclave));
 
     api_app.get(DEFAULT_PUBLIC_KEY_API, Arc::new(public_key_api));
@@ -263,6 +341,19 @@ fn build_server_with_startup_attestation(
     server.add_service(proxy_svc);
 
     Ok(server)
+}
+
+struct InstalledEnclaves {
+    public_key: [u8; 32],
+    key_manager_quote: Vec<u8>,
+    filter_quote: Vec<u8>,
+    issue_quote: Vec<u8>,
+    filter_evidence_for_key_manager: Vec<u8>,
+    issue_evidence_for_key_manager: Vec<u8>,
+    key_manager_evidence_for_filter: Vec<u8>,
+    key_manager_evidence_for_issue: Vec<u8>,
+    filter_enclave: EnclaveRuntimes,
+    issue_enclave: enclave::EnclaveRuntime,
 }
 
 struct StartupAttestation<'a> {

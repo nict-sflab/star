@@ -133,6 +133,51 @@ cargo run --manifest-path app/Cargo.toml --release --bin star_app \
 `AESM_PROXY` must point to an AESM TCP proxy reachable from inside the enclave.
 The local AESM service itself uses `/run/aesmd/aesm.socket`.
 
+### Run Key-Manager Separately
+
+The default `star_app` path still starts the key-manager enclave in the same
+process. To put `manage-key` on another process or another SGX machine, start
+the key-manager HTTP service on the key-manager host:
+
+```bash
+. /etc/set-environment
+
+AESM_PROXY=127.0.0.1:5555 \
+STAR_KEY_MANAGER_ADDR=0.0.0.0:8090 \
+cargo run --manifest-path app/Cargo.toml --release --bin star_key_manager
+```
+
+Then point the serving host at that service:
+
+```bash
+. /etc/set-environment
+
+AESM_PROXY=127.0.0.1:5555 \
+STAR_KEY_MANAGER_URL=http://<key-manager-host>:8090 \
+STAR_ENCLAVE_SGXS=/path/to/enclave.sgxs \
+cargo run --manifest-path app/Cargo.toml --release --bin star_app
+```
+
+The service exposes:
+
+```text
+GET  /star/key-manager/public_key
+GET  /star/key-manager/attestation
+POST /star/key-manager/export
+```
+
+`POST /star/key-manager/export` accepts a base64 serving-enclave transfer quote
+and returns a base64 payload containing the key-manager quote, the QvE evidence
+targeted to key-manager, and the encrypted key envelope. The serving host then
+generates QvE evidence for the key-manager quote targeted to its own enclave and
+installs the envelope locally.
+
+For a remote key-manager, same-platform SGX local-report fallback is not used.
+Both hosts must have their own AESM/QVL/QvE setup, and production builds should
+pin the trusted peer `MRENCLAVE` or `MRSIGNER` before building the `.sgxs` files.
+Keep `key-manager.keys.sealed` on the key-manager host; it is sealed with SGX
+`MRENCLAVE` policy and is not a portable backup format.
+
 ## Inspect A Quote
 
 The verifier reads a raw quote, a base64 quote, or a startup log from stdin:

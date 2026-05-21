@@ -90,6 +90,7 @@ pub enum EnclaveError {
     InvalidPublicKeyLength { len: usize },
     InvalidSealedKeys(String),
     Library(String),
+    KeyManagerService(String),
     Qve(String),
     Remote { status: u64, payload: Vec<u8> },
     ResponseTooLarge { len: usize },
@@ -106,6 +107,7 @@ impl fmt::Display for EnclaveError {
             }
             Self::InvalidSealedKeys(err) => write!(f, "invalid sealed keys: {err}"),
             Self::Library(err) => write!(f, "enclave library call failed: {err}"),
+            Self::KeyManagerService(err) => write!(f, "key-manager service failed: {err}"),
             Self::Qve(err) => write!(f, "QvE verification failed: {err}"),
             Self::Remote { status, payload } => write!(
                 f,
@@ -128,6 +130,7 @@ impl Error for EnclaveError {
             Self::InvalidPublicKeyLength { .. } => None,
             Self::InvalidSealedKeys(_) => None,
             Self::Library(_) => None,
+            Self::KeyManagerService(_) => None,
             Self::Qve(_) => None,
             Self::Remote { .. } => None,
             Self::ResponseTooLarge { .. } => None,

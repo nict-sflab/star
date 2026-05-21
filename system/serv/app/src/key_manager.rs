@@ -6,10 +6,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use aesm_client::AesmClient;
+use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use enclave_runner::{EnclaveBuilder, Library};
 use enclave_runner_sgx::EnclaveBuilder as SgxEnclaveBuilder;
 use sgxs_loaders::isgx::Device as SgxDevice;
-use star_attestation::{LOCAL_REPORT_LEN, QVE_TARGET_INFO_LEN};
+use star_attestation::{LOCAL_REPORT_LEN, QVE_TARGET_INFO_LEN, append_blob, take_blob};
 
 use crate::enclave::{ENCLAVE_PUBLIC_KEY_LEN, EnclaveError};
 
@@ -20,6 +21,10 @@ const STAR_KEY_MANAGER_STACK_SIZE: &str = "STAR_KEY_MANAGER_STACK_SIZE";
 const STAR_KEY_MANAGER_THREADS: &str = "STAR_KEY_MANAGER_THREADS";
 const STAR_KEY_MANAGER_SEALED_KEYS: &str = "STAR_KEY_MANAGER_SEALED_KEYS";
 const DEFAULT_KEY_MANAGER_SEALED_KEYS: &str = "key-manager.keys.sealed";
+pub const STAR_KEY_MANAGER_URL: &str = "STAR_KEY_MANAGER_URL";
+pub const DEFAULT_KEY_MANAGER_PUBLIC_KEY_API: &str = "/star/key-manager/public_key";
+pub const DEFAULT_KEY_MANAGER_ATTESTATION_API: &str = "/star/key-manager/attestation";
+pub const DEFAULT_KEY_MANAGER_EXPORT_API: &str = "/star/key-manager/export";
 
 const DEFAULT_KEY_MANAGER_HEAP_SIZE: &str = "33554432";
 const DEFAULT_KEY_MANAGER_STACK_SIZE: &str = "131072";
@@ -81,6 +86,18 @@ impl From<EnclaveError> for KeyManagerError {
 pub struct KeyManagerRuntime {
     library: KeyManagerLibraryRuntime,
     sealed_keys: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyManagerExport {
+    pub key_manager_quote: Vec<u8>,
+    pub recipient_evidence: Vec<u8>,
+    pub envelope: Vec<u8>,
+}
+
+pub struct RemoteKeyManagerRuntime {
+    base_url: String,
+    agent: ureq::Agent,
 }
 
 impl KeyManagerRuntime {
@@ -154,6 +171,117 @@ impl KeyManagerRuntime {
 
     fn call(&self, op: u64, payload: &[u8]) -> Result<Vec<u8>, EnclaveError> {
         self.library.call(op, payload)
+    }
+}
+
+impl RemoteKeyManagerRuntime {
+    pub fn new(base_url: impl Into<String>) -> Self {
+        Self {
+            base_url: base_url.into().trim_end_matches('/').to_string(),
+            agent: ureq::AgentBuilder::new().build(),
+        }
+    }
+
+    pub fn from_env() -> Option<Self> {
+        std::env::var(STAR_KEY_MANAGER_URL)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .map(Self::new)
+    }
+
+    pub fn public_key(&self) -> Result<[u8; ENCLAVE_PUBLIC_KEY_LEN], KeyManagerError> {
+        let response = self.get_bytes(DEFAULT_KEY_MANAGER_PUBLIC_KEY_API)?;
+        let len = response.len();
+
+        response
+            .as_slice()
+            .try_into()
+            .map_err(|_| KeyManagerError::InvalidPublicKeyLength { len })
+    }
+
+    pub fn public_key_attestation(&self) -> Result<Vec<u8>, EnclaveError> {
+        self.get_bytes(DEFAULT_KEY_MANAGER_ATTESTATION_API)
+    }
+
+    pub fn export_keys_for_recipient_quote(
+        &self,
+        recipient_quote: &[u8],
+    ) -> Result<KeyManagerExport, EnclaveError> {
+        let response = self.post_bytes(DEFAULT_KEY_MANAGER_EXPORT_API, recipient_quote)?;
+        decode_key_manager_export_response(&response).map_err(|err| {
+            EnclaveError::KeyManagerService(format!("decode export response: {err}"))
+        })
+    }
+
+    fn endpoint(&self, path: &str) -> String {
+        format!("{}{}", self.base_url, path)
+    }
+
+    fn get_bytes(&self, path: &str) -> Result<Vec<u8>, EnclaveError> {
+        let response = self
+            .agent
+            .get(&self.endpoint(path))
+            .call()
+            .map_err(http_error)?;
+        decode_base64_response(response)
+    }
+
+    fn post_bytes(&self, path: &str, body: &[u8]) -> Result<Vec<u8>, EnclaveError> {
+        let encoded = URL_SAFE.encode(body);
+        let response = self
+            .agent
+            .post(&self.endpoint(path))
+            .set("content-type", "text/plain")
+            .send_string(&encoded)
+            .map_err(http_error)?;
+        decode_base64_response(response)
+    }
+}
+
+pub fn encode_key_manager_export_response(export: &KeyManagerExport) -> Vec<u8> {
+    let mut out = Vec::new();
+    append_blob(&mut out, &export.key_manager_quote);
+    append_blob(&mut out, &export.recipient_evidence);
+    append_blob(&mut out, &export.envelope);
+    out
+}
+
+pub fn decode_key_manager_export_response(payload: &[u8]) -> Result<KeyManagerExport, String> {
+    let mut remaining = payload;
+    let key_manager_quote = take_blob(&mut remaining)?.to_vec();
+    let recipient_evidence = take_blob(&mut remaining)?.to_vec();
+    let envelope = take_blob(&mut remaining)?.to_vec();
+
+    if !remaining.is_empty() {
+        return Err("trailing bytes after key-manager export response".to_string());
+    }
+
+    Ok(KeyManagerExport {
+        key_manager_quote,
+        recipient_evidence,
+        envelope,
+    })
+}
+
+fn decode_base64_response(response: ureq::Response) -> Result<Vec<u8>, EnclaveError> {
+    let body = response
+        .into_string()
+        .map_err(|err| EnclaveError::KeyManagerService(format!("read response body: {err}")))?;
+    URL_SAFE
+        .decode(body.trim())
+        .map_err(|err| EnclaveError::KeyManagerService(format!("decode base64 response: {err}")))
+}
+
+fn http_error(err: ureq::Error) -> EnclaveError {
+    match err {
+        ureq::Error::Status(code, response) => {
+            let body = response
+                .into_string()
+                .unwrap_or_else(|err| format!("failed to read error body: {err}"));
+            EnclaveError::KeyManagerService(format!("HTTP {code}: {body}"))
+        }
+        ureq::Error::Transport(err) => EnclaveError::KeyManagerService(err.to_string()),
     }
 }
 
@@ -383,4 +511,41 @@ fn run_command(command: &mut Command) -> Result<(), EnclaveError> {
         "{}\nstdout:\n{}\nstderr:\n{}",
         output.status, stdout, stderr
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        KeyManagerExport, decode_key_manager_export_response, encode_key_manager_export_response,
+    };
+
+    #[test]
+    fn key_manager_export_response_round_trips() {
+        let export = KeyManagerExport {
+            key_manager_quote: b"manager quote".to_vec(),
+            recipient_evidence: b"recipient evidence".to_vec(),
+            envelope: b"encrypted envelope".to_vec(),
+        };
+
+        let encoded = encode_key_manager_export_response(&export);
+        let decoded = decode_key_manager_export_response(&encoded).expect("decode export response");
+
+        assert_eq!(decoded.key_manager_quote, export.key_manager_quote);
+        assert_eq!(decoded.recipient_evidence, export.recipient_evidence);
+        assert_eq!(decoded.envelope, export.envelope);
+    }
+
+    #[test]
+    fn key_manager_export_response_rejects_trailing_bytes() {
+        let export = KeyManagerExport {
+            key_manager_quote: b"manager quote".to_vec(),
+            recipient_evidence: b"recipient evidence".to_vec(),
+            envelope: b"encrypted envelope".to_vec(),
+        };
+        let mut encoded = encode_key_manager_export_response(&export);
+        encoded.push(0);
+
+        let err = decode_key_manager_export_response(&encoded).expect_err("reject trailing byte");
+        assert!(err.contains("trailing bytes"));
+    }
 }
