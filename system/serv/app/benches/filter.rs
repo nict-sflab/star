@@ -190,17 +190,37 @@ fn next_request_batch_for_measurement(
 }
 
 async fn run_issue_token_and_route_batch(filter: SharedStarFilter, requests: Vec<Vec<u8>>) {
-    for request in requests {
-        let result = filter
-            .issue_token_and_route(black_box(request.as_slice()))
-            .await
-            .expect("issue token and route");
-        black_box(result);
+    let mut worker_requests = Vec::with_capacity(FIXED_CONCURRENCY);
+    for _ in 0..FIXED_CONCURRENCY {
+        worker_requests.push(Vec::with_capacity(PARALLEL_OPS_PER_WORKER));
+    }
+
+    for (idx, request) in requests.into_iter().enumerate() {
+        worker_requests[idx % FIXED_CONCURRENCY].push(request);
+    }
+
+    let mut joins = JoinSet::new();
+    for requests in worker_requests {
+        let filter = Arc::clone(&filter);
+        joins.spawn(async move {
+            for request in requests {
+                let result = filter
+                    .issue_token_and_route(black_box(request.as_slice()))
+                    .await
+                    .expect("issue token and route");
+                black_box(result);
+            }
+        });
+    }
+
+    while let Some(joined) = joins.join_next().await {
+        joined.expect("join issue token worker");
     }
 }
 
 fn bench_issue_token_and_route(c: &mut Criterion) {
-    let serial_rt = current_thread_runtime();
+    let per_op_rt = current_thread_runtime();
+    let batch_rt = multi_thread_runtime(FIXED_CONCURRENCY);
     let (filter, request_generator) = build_keyed_filter_and_request_generator();
     let filter = Arc::new(filter);
     let request_generator = Arc::new(StdMutex::new(request_generator));
@@ -211,7 +231,7 @@ fn bench_issue_token_and_route(c: &mut Criterion) {
     group.bench_function(FIXED_PER_OP_BENCH_NAME, |b| {
         let filter = Arc::clone(&filter);
         let request_generator = Arc::clone(&request_generator);
-        b.to_async(&serial_rt).iter_batched(
+        b.to_async(&per_op_rt).iter_batched(
             || next_request_for_measurement(&request_generator),
             |request| {
                 let filter = Arc::clone(&filter);
@@ -231,7 +251,7 @@ fn bench_issue_token_and_route(c: &mut Criterion) {
     group.bench_function(FIXED_BATCH_BENCH_NAME, |b| {
         let filter = Arc::clone(&filter);
         let request_generator = Arc::clone(&request_generator);
-        b.to_async(&serial_rt).iter_batched(
+        b.to_async(&batch_rt).iter_batched(
             || next_request_batch_for_measurement(&request_generator, ISSUE_TOKEN_BATCH_OPS),
             |requests| {
                 let filter = Arc::clone(&filter);
