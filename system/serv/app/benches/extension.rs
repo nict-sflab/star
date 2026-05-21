@@ -4,7 +4,8 @@ use std::io::{self, Read, Write};
 use std::os::raw::{c_int, c_uchar, c_uint};
 use std::ptr;
 use std::slice;
-use std::sync::Arc;
+use std::sync::{Arc, Barrier};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
@@ -28,6 +29,9 @@ const TLS_CERT_RELATIVE_PATH: &str = "examples/certs/server.crt";
 const TLS_KEY_RELATIVE_PATH: &str = "examples/certs/server.key";
 const MAX_COUNT_PER_CREDENTIAL: u64 = 1_000_000;
 const FILTER_ENCLAVE_POOL_SIZE: u8 = 10;
+const PARALLEL_WORKERS: usize = 4;
+const PARALLEL_OPS_PER_WORKER: u64 = 64;
+const PARALLEL_BATCH_OPS: u64 = PARALLEL_WORKERS as u64 * PARALLEL_OPS_PER_WORKER;
 
 type BenchFilter = StarFilter<DashMapFilterBox>;
 
@@ -160,6 +164,14 @@ impl OpenSslRejectHarness {
 
         total
     }
+
+    fn timed_parallel_rejections(&self, iters: u64) -> Duration {
+        timed_parallel_batch(iters, || {
+            let outcome =
+                process_client_hello(&self.acceptor, black_box(self.client_hello.as_slice()));
+            assert_eq!(outcome, ClientHelloOutcome::Rejected);
+        })
+    }
 }
 
 impl StarFilterRejectHarness {
@@ -278,6 +290,14 @@ impl StarFilterRejectHarness {
         total
     }
 
+    fn timed_parallel_openssl_and_filter_rejections(&self, iters: u64) -> Duration {
+        timed_parallel_batch(iters, || {
+            let outcome =
+                process_client_hello(&self.acceptor, black_box(self.client_hello.as_slice()));
+            assert_eq!(outcome, ClientHelloOutcome::Rejected);
+        })
+    }
+
     fn timed_filter_only_rejections(&self, iters: u64) -> Duration {
         let mut total = Duration::ZERO;
         let token = self.duplicate_token.as_ref().expect("duplicate token");
@@ -297,6 +317,20 @@ impl StarFilterRejectHarness {
         total
     }
 
+    fn timed_parallel_filter_only_rejections(&self, iters: u64) -> Duration {
+        let token = self.duplicate_token.as_ref().expect("duplicate token");
+
+        timed_parallel_batch(iters, || {
+            let result = self
+                .filter
+                .check_duplication(black_box(token), black_box(self.duplicate_route));
+            assert!(matches!(
+                result,
+                Err(StarFilterErrorStatus::DuplicatedToken)
+            ));
+        })
+    }
+
     fn timed_invalid_credential_filter_only_rejections(&self, iters: u64) -> Duration {
         let mut total = Duration::ZERO;
 
@@ -311,6 +345,60 @@ impl StarFilterRejectHarness {
 
         total
     }
+
+    fn timed_parallel_invalid_credential_filter_only_rejections(&self, iters: u64) -> Duration {
+        timed_parallel_batch(iters, || {
+            let result = self
+                .filter
+                .filter_client_hello(black_box(self.token_request.as_slice()));
+            assert!(matches!(result, Err(StarFilterErrorStatus::InvalidToken)));
+        })
+    }
+}
+
+fn timed_parallel_batch(operation_batches: u64, operation: impl Fn() + Sync) -> Duration {
+    let total_ops = operation_batches
+        .checked_mul(PARALLEL_BATCH_OPS)
+        .expect("parallel benchmark operation count overflow");
+    let ready_barrier = Barrier::new(PARALLEL_WORKERS + 1);
+    let start_barrier = Barrier::new(PARALLEL_WORKERS + 1);
+
+    thread::scope(|scope| {
+        let operation = &operation;
+        let ready_barrier = &ready_barrier;
+        let start_barrier = &start_barrier;
+        let mut handles = Vec::with_capacity(PARALLEL_WORKERS);
+
+        for worker_index in 0..PARALLEL_WORKERS {
+            let worker_ops = worker_operation_count(total_ops, worker_index);
+            handles.push(scope.spawn(move || {
+                ready_barrier.wait();
+                start_barrier.wait();
+
+                for _ in 0..worker_ops {
+                    operation();
+                }
+            }));
+        }
+
+        ready_barrier.wait();
+        let start = Instant::now();
+        start_barrier.wait();
+
+        for handle in handles {
+            handle.join().expect("parallel benchmark worker");
+        }
+
+        start.elapsed()
+    })
+}
+
+fn worker_operation_count(total_ops: u64, worker_index: usize) -> u64 {
+    let workers = PARALLEL_WORKERS as u64;
+    let base = total_ops / workers;
+    let remainder = total_ops % workers;
+
+    base + u64::from((worker_index as u64) < remainder)
 }
 
 fn process_client_hello(acceptor: &SslAcceptor, client_hello: &[u8]) -> ClientHelloOutcome {
@@ -496,6 +584,15 @@ fn configure_group(group: &mut criterion::BenchmarkGroup<'_, criterion::measurem
     group.throughput(Throughput::Elements(1));
 }
 
+fn configure_parallel_group(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+) {
+    group.sample_size(20);
+    group.warm_up_time(Duration::from_secs(1));
+    group.measurement_time(Duration::from_secs(4));
+    group.throughput(Throughput::Elements(PARALLEL_BATCH_OPS));
+}
+
 fn bench_client_hello_reject_no_network(c: &mut Criterion) {
     let openssl = OpenSslRejectHarness::missing_extension();
     let star_filter = StarFilterRejectHarness::replayed_token();
@@ -555,6 +652,35 @@ fn bench_client_hello_reject_no_network(c: &mut Criterion) {
     group.bench_function("star_filter_invalid_credential_filter_only", |b| {
         b.iter_custom(|iters| {
             invalid_credential.timed_invalid_credential_filter_only_rejections(iters)
+        });
+    });
+
+    group.finish();
+
+    let mut group = c.benchmark_group("client_hello_reject_no_network_parallel_throughput");
+    configure_parallel_group(&mut group);
+
+    group.bench_function("openssl_missing_extension", |b| {
+        b.iter_custom(|iters| openssl.timed_parallel_rejections(iters));
+    });
+
+    group.bench_function("star_filter_replayed_token_openssl_parse", |b| {
+        b.iter_custom(|iters| star_filter.timed_parallel_openssl_and_filter_rejections(iters));
+    });
+
+    group.bench_function("star_filter_replayed_token_filter_only", |b| {
+        b.iter_custom(|iters| star_filter.timed_parallel_filter_only_rejections(iters));
+    });
+
+    group.bench_function("star_filter_invalid_credential_openssl_parse", |b| {
+        b.iter_custom(|iters| {
+            invalid_credential.timed_parallel_openssl_and_filter_rejections(iters)
+        });
+    });
+
+    group.bench_function("star_filter_invalid_credential_filter_only", |b| {
+        b.iter_custom(|iters| {
+            invalid_credential.timed_parallel_invalid_credential_filter_only_rejections(iters)
         });
     });
 
