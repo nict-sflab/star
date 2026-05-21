@@ -154,10 +154,7 @@ impl StarTlsClient {
                 STAR_TLS_EXTENSION_TYPE,
                 ExtensionContext::CLIENT_HELLO,
                 move |_, _, _| {
-                    let ext = ext_ref
-                        .lock()
-                        .map_err(|_| SslAlert::DECODE_ERROR)?
-                        .clone();
+                    let ext = ext_ref.lock().map_err(|_| SslAlert::DECODE_ERROR)?.clone();
 
                     if ext.is_empty() {
                         return Err(SslAlert::DECODE_ERROR);

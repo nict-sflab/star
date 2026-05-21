@@ -2,7 +2,6 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use pingora::{listeners::tls::TlsSettings, server::Server};
 use pingora_proxy::http_proxy_service;
 use pingora_web::App as WebApp;
-use rand::{TryRngCore, rngs::OsRng};
 use simple_filter_box::dashmap::DashMapFilterBox;
 use std::env;
 use std::error::Error;
@@ -68,9 +67,15 @@ pub fn install_key_manager_keys_for_pool(
     let recipient_target_info = recipient.qve_target_info()?;
 
     let recipient_evidence_for_key_manager =
-        qve::evidence_for_verifier(&recipient_quote, &key_manager_target_info)?;
+        match qve::evidence_for_verifier(&recipient_quote, &key_manager_target_info) {
+            Ok(evidence) => evidence,
+            Err(_) => recipient.local_transfer_key_attestation(&key_manager_target_info)?,
+        };
     let key_manager_evidence_for_recipient =
-        qve::evidence_for_verifier(&key_manager_quote, &recipient_target_info)?;
+        match qve::evidence_for_verifier(&key_manager_quote, &recipient_target_info) {
+            Ok(evidence) => evidence,
+            Err(_) => key_manager.local_public_key_attestation(&recipient_target_info)?,
+        };
 
     let keys = key_manager.export_keys(&recipient_evidence_for_key_manager)?;
     recipient.install_keys(&key_manager_evidence_for_recipient, &keys)?;
@@ -88,9 +93,15 @@ pub fn install_key_manager_keys_for_enclave(
     let recipient_target_info = recipient.qve_target_info()?;
 
     let recipient_evidence_for_key_manager =
-        qve::evidence_for_verifier(&recipient_quote, &key_manager_target_info)?;
+        match qve::evidence_for_verifier(&recipient_quote, &key_manager_target_info) {
+            Ok(evidence) => evidence,
+            Err(_) => recipient.local_transfer_key_attestation(&key_manager_target_info)?,
+        };
     let key_manager_evidence_for_recipient =
-        qve::evidence_for_verifier(&key_manager_quote, &recipient_target_info)?;
+        match qve::evidence_for_verifier(&key_manager_quote, &recipient_target_info) {
+            Ok(evidence) => evidence,
+            Err(_) => key_manager.local_public_key_attestation(&recipient_target_info)?,
+        };
 
     let keys = key_manager.export_keys(&recipient_evidence_for_key_manager)?;
     recipient.install_keys(&key_manager_evidence_for_recipient, &keys)?;
@@ -99,24 +110,23 @@ pub fn install_key_manager_keys_for_enclave(
 }
 
 pub fn benchmark_key_bundle() -> Result<Vec<u8>, Box<dyn Error>> {
-    let mut bundle = vec![0u8; 64];
-    OsRng.try_fill_bytes(&mut bundle)?;
-    Ok(bundle)
+    let key_manager = KeyManagerRuntime::from_env_with_sealed_keys(&[])?;
+    Ok(key_manager.sealed_keys().to_vec())
 }
 
 pub fn install_benchmark_keys_for_pool(
     recipient: &EnclaveRuntimes,
-    key_bundle: &[u8],
+    sealed_key_manager_keys: &[u8],
 ) -> Result<(), Box<dyn Error>> {
-    recipient.install_benchmark_keys(key_bundle)?;
+    recipient.install_benchmark_keys(sealed_key_manager_keys)?;
     Ok(())
 }
 
 pub fn install_benchmark_keys_for_enclave(
     recipient: &enclave::EnclaveRuntime,
-    key_bundle: &[u8],
+    sealed_key_manager_keys: &[u8],
 ) -> Result<(), Box<dyn Error>> {
-    recipient.install_benchmark_keys(key_bundle)?;
+    recipient.install_benchmark_keys(sealed_key_manager_keys)?;
     Ok(())
 }
 
@@ -164,13 +174,25 @@ fn build_server_with_startup_attestation(
     let issue_target_info = issue_enclave.qve_target_info()?;
 
     let filter_evidence_for_key_manager =
-        qve::evidence_for_verifier(&filter_quote, &key_manager_target_info)?;
+        match qve::evidence_for_verifier(&filter_quote, &key_manager_target_info) {
+            Ok(evidence) => evidence,
+            Err(_) => filter_enclave.local_transfer_key_attestation(&key_manager_target_info)?,
+        };
     let issue_evidence_for_key_manager =
-        qve::evidence_for_verifier(&issue_quote, &key_manager_target_info)?;
+        match qve::evidence_for_verifier(&issue_quote, &key_manager_target_info) {
+            Ok(evidence) => evidence,
+            Err(_) => issue_enclave.local_transfer_key_attestation(&key_manager_target_info)?,
+        };
     let key_manager_evidence_for_filter =
-        qve::evidence_for_verifier(&key_manager_quote, &filter_target_info)?;
+        match qve::evidence_for_verifier(&key_manager_quote, &filter_target_info) {
+            Ok(evidence) => evidence,
+            Err(_) => key_manager.local_public_key_attestation(&filter_target_info)?,
+        };
     let key_manager_evidence_for_issue =
-        qve::evidence_for_verifier(&key_manager_quote, &issue_target_info)?;
+        match qve::evidence_for_verifier(&key_manager_quote, &issue_target_info) {
+            Ok(evidence) => evidence,
+            Err(_) => key_manager.local_public_key_attestation(&issue_target_info)?,
+        };
 
     if emit_startup_attestation {
         print_startup_attestation(StartupAttestation {

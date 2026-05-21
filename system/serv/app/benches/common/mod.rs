@@ -1,3 +1,4 @@
+pub mod aesm_proxy;
 pub mod http;
 pub mod latency_proxy;
 #[allow(dead_code)]

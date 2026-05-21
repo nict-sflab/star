@@ -5,10 +5,10 @@ use chacha20poly1305::{
 use hkdf::Hkdf;
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
-use sha2::Sha256;
 use sgx_isa::{Attributes, Miscselect};
 #[cfg(target_env = "sgx")]
 use sgx_isa::{ErrorCode, Keyname, Keypolicy, Keyrequest, Report};
+use sha2::Sha256;
 use thiserror::Error;
 
 #[derive(Debug, Error)]

@@ -13,6 +13,7 @@ pub const MEASUREMENT_LEN: usize = 32;
 pub const PUBLIC_KEY_LEN: usize = 32;
 pub const QVE_TARGET_INFO_LEN: usize = 512;
 pub const QVE_REPORT_INFO_LEN: usize = 16 + QVE_TARGET_INFO_LEN + 432;
+pub const LOCAL_REPORT_LEN: usize = 432;
 
 const QUOTE_HEADER_LEN: usize = 48;
 const SGX_REPORT_BODY_LEN: usize = 384;
@@ -26,6 +27,11 @@ const TEE_TYPE_SGX: u32 = 0;
 const QUOTE_BODY_TYPE_SGX: u16 = 1;
 const QVE_EVIDENCE_MAGIC: &[u8; 8] = b"STARQVE1";
 const SGX_QL_QV_RESULT_OK: u32 = 0x0000;
+const SGX_QL_QV_RESULT_CONFIG_NEEDED: u32 = tee_qv_error(0x0001);
+const SGX_QL_QV_RESULT_OUT_OF_DATE: u32 = tee_qv_error(0x0002);
+const SGX_QL_QV_RESULT_OUT_OF_DATE_CONFIG_NEEDED: u32 = tee_qv_error(0x0003);
+const SGX_QL_QV_RESULT_SW_HARDENING_NEEDED: u32 = tee_qv_error(0x0007);
+const SGX_QL_QV_RESULT_CONFIG_AND_SW_HARDENING_NEEDED: u32 = tee_qv_error(0x0008);
 #[cfg(target_env = "sgx")]
 const QVE_REPORT_OFFSET: usize = 16 + QVE_TARGET_INFO_LEN;
 #[cfg(target_env = "sgx")]
@@ -70,8 +76,10 @@ pub struct ParsedQuote {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QuotePolicy {
-    pub expected_mrenclave: [u8; MEASUREMENT_LEN],
+    pub expected_mrenclave: Option<[u8; MEASUREMENT_LEN]>,
+    pub expected_mrsigner: Option<[u8; MEASUREMENT_LEN]>,
     pub allow_debug: bool,
+    pub allow_advisory: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,19 +121,26 @@ pub fn verify_qve_evidence_public_key(
     evidence: &[u8],
     policy: &QuotePolicy,
 ) -> Result<[u8; PUBLIC_KEY_LEN]> {
+    if evidence.len() == local_report_len() && !evidence.starts_with(QVE_EVIDENCE_MAGIC) {
+        return verify_local_report_public_key(evidence, policy);
+    }
+
     let evidence = decode_qve_evidence(evidence)?;
-    verify_qve_evidence(&evidence)?;
+    verify_qve_evidence(&evidence, policy.allow_advisory)?;
     verify_quote_public_key(evidence.quote, policy)
 }
 
-pub fn verify_qve_evidence(evidence: &QveEvidence<'_>) -> Result<()> {
+pub fn verify_qve_evidence(evidence: &QveEvidence<'_>, allow_advisory: bool) -> Result<()> {
     if evidence.collateral_expiration_status != 0 {
         return Err("QvE collateral is expired".into());
     }
-    if evidence.quote_verification_result != SGX_QL_QV_RESULT_OK {
+    if !qv_result_is_ok(evidence.quote_verification_result)
+        && !(allow_advisory && qv_result_is_advisory(evidence.quote_verification_result))
+    {
         return Err(format!(
-            "QvE quote verification result is not OK: 0x{:08x}",
-            evidence.quote_verification_result
+            "QvE quote verification result is {} / 0x{:08x}",
+            qv_result_name(evidence.quote_verification_result),
+            evidence.quote_verification_result,
         ));
     }
     if evidence.report_info.len() != QVE_REPORT_INFO_LEN {
@@ -137,8 +152,24 @@ pub fn verify_qve_evidence(evidence: &QveEvidence<'_>) -> Result<()> {
 }
 
 pub fn verify_policy(parsed: &ParsedQuote, policy: &QuotePolicy) -> Result<()> {
-    if parsed.mrenclave != policy.expected_mrenclave {
-        return Err("MRENCLAVE does not match the trusted enclave measurement".into());
+    let mut has_identity_policy = false;
+
+    if let Some(expected_mrenclave) = policy.expected_mrenclave {
+        has_identity_policy = true;
+        if parsed.mrenclave != expected_mrenclave {
+            return Err("MRENCLAVE does not match the trusted enclave measurement".into());
+        }
+    }
+
+    if let Some(expected_mrsigner) = policy.expected_mrsigner {
+        has_identity_policy = true;
+        if parsed.mrsigner != expected_mrsigner {
+            return Err("MRSIGNER does not match the trusted enclave signer".into());
+        }
+    }
+
+    if !has_identity_policy {
+        return Err("no trusted enclave identity policy is configured".into());
     }
 
     if parsed.debug && !policy.allow_debug {
@@ -146,6 +177,71 @@ pub fn verify_policy(parsed: &ParsedQuote, policy: &QuotePolicy) -> Result<()> {
     }
 
     Ok(())
+}
+
+const fn tee_qv_error(value: u32) -> u32 {
+    0x0000a000 | value
+}
+
+fn qv_result_is_ok(value: u32) -> bool {
+    value == SGX_QL_QV_RESULT_OK
+}
+
+fn qv_result_is_advisory(value: u32) -> bool {
+    matches!(
+        value,
+        SGX_QL_QV_RESULT_CONFIG_NEEDED
+            | SGX_QL_QV_RESULT_OUT_OF_DATE
+            | SGX_QL_QV_RESULT_OUT_OF_DATE_CONFIG_NEEDED
+            | SGX_QL_QV_RESULT_SW_HARDENING_NEEDED
+            | SGX_QL_QV_RESULT_CONFIG_AND_SW_HARDENING_NEEDED
+    )
+}
+
+fn qv_result_name(value: u32) -> &'static str {
+    match value {
+        SGX_QL_QV_RESULT_OK => "OK",
+        SGX_QL_QV_RESULT_CONFIG_NEEDED => "CONFIG_NEEDED",
+        SGX_QL_QV_RESULT_OUT_OF_DATE => "OUT_OF_DATE",
+        SGX_QL_QV_RESULT_OUT_OF_DATE_CONFIG_NEEDED => "OUT_OF_DATE_CONFIG_NEEDED",
+        SGX_QL_QV_RESULT_SW_HARDENING_NEEDED => "SW_HARDENING_NEEDED",
+        SGX_QL_QV_RESULT_CONFIG_AND_SW_HARDENING_NEEDED => "CONFIG_AND_SW_HARDENING_NEEDED",
+        _ => "UNKNOWN",
+    }
+}
+
+fn local_report_len() -> usize {
+    LOCAL_REPORT_LEN
+}
+
+#[cfg(target_env = "sgx")]
+fn verify_local_report_public_key(
+    report_bytes: &[u8],
+    policy: &QuotePolicy,
+) -> Result<[u8; PUBLIC_KEY_LEN]> {
+    use sgx_isa::{AttributesFlags, Report};
+
+    let report = Report::try_copy_from(report_bytes)
+        .ok_or_else(|| "local report has bad length".to_string())?;
+    let report_mac_valid = report
+        .verify(|key, data, mac| constant_time_eq(&aes_cmac_128::<aes::Aes128>(key, data), mac));
+    if !report_mac_valid {
+        return Err("local report MAC is invalid".into());
+    }
+
+    let parsed = ParsedQuote {
+        mrenclave: report.mrenclave,
+        mrsigner: report.mrsigner,
+        report_data: report.reportdata,
+        debug: report.attributes.flags.contains(AttributesFlags::DEBUG),
+    };
+    verify_policy(&parsed, policy)?;
+    public_key_from_report_data(&parsed)
+}
+
+#[cfg(not(target_env = "sgx"))]
+fn verify_local_report_public_key(_: &[u8], _: &QuotePolicy) -> Result<[u8; PUBLIC_KEY_LEN]> {
+    Err("local report evidence is only verifiable inside SGX".into())
 }
 
 pub fn parse_measurement_hex(input: &str, name: &str) -> Result<[u8; MEASUREMENT_LEN]> {
@@ -184,10 +280,31 @@ fn hex_nibble(byte: u8) -> Option<u8> {
     }
 }
 
+const POLICY_HAS_MRENCLAVE: u8 = 1;
+const POLICY_HAS_MRSIGNER: u8 = 2;
+
 pub fn encode_policy(policy: &QuotePolicy) -> Vec<u8> {
-    let mut out = Vec::with_capacity(MEASUREMENT_LEN + 1);
-    out.extend_from_slice(&policy.expected_mrenclave);
+    let mut identity_flags = 0u8;
+    let mut capacity = 3;
+    if policy.expected_mrenclave.is_some() {
+        identity_flags |= POLICY_HAS_MRENCLAVE;
+        capacity += MEASUREMENT_LEN;
+    }
+    if policy.expected_mrsigner.is_some() {
+        identity_flags |= POLICY_HAS_MRSIGNER;
+        capacity += MEASUREMENT_LEN;
+    }
+
+    let mut out = Vec::with_capacity(capacity);
+    out.push(identity_flags);
     out.push(u8::from(policy.allow_debug));
+    out.push(u8::from(policy.allow_advisory));
+    if let Some(expected_mrenclave) = policy.expected_mrenclave {
+        out.extend_from_slice(&expected_mrenclave);
+    }
+    if let Some(expected_mrsigner) = policy.expected_mrsigner {
+        out.extend_from_slice(&expected_mrsigner);
+    }
     out
 }
 
@@ -230,27 +347,57 @@ pub fn take_policy_and_qve_evidence<'a>(payload: &mut &'a [u8]) -> Result<(Quote
 }
 
 pub fn take_policy(payload: &mut &[u8]) -> Result<QuotePolicy> {
-    let min_len = MEASUREMENT_LEN + 1;
+    let min_len = 3;
     if payload.len() < min_len {
         return Err("policy payload is too short".into());
     }
 
-    let expected_mrenclave = payload[..MEASUREMENT_LEN]
-        .try_into()
-        .map_err(|_| "bad MRENCLAVE length".to_string())?;
-
-    let allow_debug = match payload[MEASUREMENT_LEN] {
+    let identity_flags = payload[0];
+    if identity_flags & !(POLICY_HAS_MRENCLAVE | POLICY_HAS_MRSIGNER) != 0 {
+        return Err("invalid policy identity flags".into());
+    }
+    let allow_debug = match payload[1] {
         0 => false,
         1 => true,
         _ => return Err("invalid debug policy flag".into()),
     };
+    let allow_advisory = match payload[2] {
+        0 => false,
+        1 => true,
+        _ => return Err("invalid advisory policy flag".into()),
+    };
 
-    *payload = &payload[min_len..];
+    let mut remaining = &payload[min_len..];
+    let expected_mrenclave = if identity_flags & POLICY_HAS_MRENCLAVE != 0 {
+        Some(take_measurement(&mut remaining, "MRENCLAVE")?)
+    } else {
+        None
+    };
+    let expected_mrsigner = if identity_flags & POLICY_HAS_MRSIGNER != 0 {
+        Some(take_measurement(&mut remaining, "MRSIGNER")?)
+    } else {
+        None
+    };
+
+    *payload = remaining;
 
     Ok(QuotePolicy {
         expected_mrenclave,
+        expected_mrsigner,
         allow_debug,
+        allow_advisory,
     })
+}
+
+fn take_measurement(payload: &mut &[u8], name: &str) -> Result<[u8; MEASUREMENT_LEN]> {
+    if payload.len() < MEASUREMENT_LEN {
+        return Err(format!("policy payload is too short for {name}"));
+    }
+    let measurement = payload[..MEASUREMENT_LEN]
+        .try_into()
+        .map_err(|_| format!("bad {name} length"))?;
+    *payload = &payload[MEASUREMENT_LEN..];
+    Ok(measurement)
 }
 
 pub fn encode_qve_evidence(evidence: &QveEvidence<'_>) -> Result<Vec<u8>> {
@@ -640,8 +787,10 @@ mod tests {
         let quote = fake_quote(mrenclave, mrsigner, public_key, true);
 
         let policy = QuotePolicy {
-            expected_mrenclave: mrenclave,
+            expected_mrenclave: Some(mrenclave),
+            expected_mrsigner: None,
             allow_debug: true,
+            allow_advisory: false,
         };
 
         assert_eq!(
@@ -659,8 +808,10 @@ mod tests {
             false,
         );
         let policy = QuotePolicy {
-            expected_mrenclave: [9u8; MEASUREMENT_LEN],
+            expected_mrenclave: Some([9u8; MEASUREMENT_LEN]),
+            expected_mrsigner: None,
             allow_debug: false,
+            allow_advisory: false,
         };
 
         assert!(verify_quote_public_key(&quote, &policy).is_err());
@@ -669,8 +820,10 @@ mod tests {
     #[test]
     fn policy_and_quote_round_trip() {
         let policy = QuotePolicy {
-            expected_mrenclave: [8u8; MEASUREMENT_LEN],
+            expected_mrenclave: Some([8u8; MEASUREMENT_LEN]),
+            expected_mrsigner: Some([7u8; MEASUREMENT_LEN]),
             allow_debug: true,
+            allow_advisory: true,
         };
         let quote = [9u8; 12];
 

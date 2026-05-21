@@ -25,18 +25,28 @@ attestation evidence inside the key-manager enclave. Each serving enclave checks
 the key-manager evidence inside the serving enclave before accepting the
 encrypted key bundle.
 
-Trusted peer policy is evaluated inside the enclaves, not by the host. Key
-sharing pins exact peer `MRENCLAVE` values; `MRSIGNER` is not accepted as the
-peer trust boundary. Set these variables before building the `.sgxs` files so
-the values are embedded in the enclave binaries:
+Trusted peer policy is evaluated inside the enclaves, not by the host. Production
+key sharing should pin exact peer `MRENCLAVE` values. For SGX development and
+benchmark runs, same-signer local-report trust can be enabled explicitly. Set
+these variables before building the `.sgxs` files so the values are embedded in
+the enclave binaries:
 
 ```bash
 export STAR_TRUSTED_KEY_MANAGER_MRENCLAVE=<32-byte hex MRENCLAVE>
 export STAR_TRUSTED_ENCLAVE_MRENCLAVE=<32-byte hex MRENCLAVE>
+# Or set signer-level trust explicitly when that is the intended boundary.
+export STAR_TRUSTED_KEY_MANAGER_MRSIGNER=<32-byte hex MRSIGNER>
+export STAR_TRUSTED_ENCLAVE_MRSIGNER=<32-byte hex MRSIGNER>
 
 # Development enclaves only.
 export STAR_ALLOW_DEBUG_KEY_MANAGER=1
 export STAR_ALLOW_DEBUG_ENCLAVE=1
+export STAR_ALLOW_ADVISORY_KEY_MANAGER=1
+export STAR_ALLOW_ADVISORY_ENCLAVE=1
+
+# Test/benchmark-only local SGX policy when exact peer measurements are not
+# embedded. This trusts local reports from enclaves signed by the same signer.
+export STAR_TRUST_SAME_SIGNER_ENCLAVES=1
 ```
 
 The host prints the key-manager and serving-enclave remote attestation quotes to
@@ -60,9 +70,12 @@ to `public_key || 32 zero bytes`. Serving enclave transfer quotes bind their
 ephemeral transfer public keys the same way. The host carries quotes and
 ciphertexts, but the policy decision is made in enclave code. For key sharing,
 the host asks Intel DCAP QVL/QvE to produce QvE evidence targeted to the verifier
-enclave. The verifier enclave checks the QvE report MAC, QvE report-data hash,
-QvE identity, DCAP result, collateral freshness, exact peer `MRENCLAVE`, debug
-policy, and `report_data` public-key binding before using the attested HPKE key.
+enclave. If QvE cannot produce in-enclave evidence for an advisory result that
+the local policy accepts, the host falls back to a same-platform SGX local
+report. The verifier enclave checks the QvE report MAC or local report MAC,
+QvE report-data hash when QvE evidence is used, QvE identity, DCAP result,
+collateral freshness, peer identity policy, debug policy, and `report_data`
+public-key binding before using the attested HPKE key.
 
 Example:
 

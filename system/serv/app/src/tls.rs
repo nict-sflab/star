@@ -9,7 +9,7 @@ use std::os::raw::{c_int, c_uchar, c_uint};
 use std::sync::{Arc, OnceLock};
 use std::{ptr, slice};
 
-use crate::filter::{StarFilter};
+use crate::filter::StarFilter;
 static STAR_TLS_TOKEN_EX_INDEX: OnceLock<Index<Ssl, Vec<u8>>> = OnceLock::new();
 static STAR_TLS_DEBUG_ENABLED: OnceLock<bool> = OnceLock::new();
 

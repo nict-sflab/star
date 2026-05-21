@@ -3,18 +3,20 @@
 mod attest;
 
 use hpke::{
-    Deserializable, HpkeError, OpModeR, Serializable,
     aead::ChaCha20Poly1305 as HpkeChaCha20Poly1305,
     kdf::HkdfSha256,
     kem::{Kem as _, X25519HkdfSha256},
-    setup_receiver,
+    setup_receiver, Deserializable, HpkeError, OpModeR, Serializable,
 };
 use rand::rngs::OsRng;
 #[cfg(target_env = "sgx")]
 use sgx_isa::{AttributesFlags, Report, Targetinfo};
 #[cfg(target_env = "sgx")]
 use star_attestation::parse_measurement_hex;
-use star_attestation::{PUBLIC_KEY_LEN, QuotePolicy, take_blob, verify_qve_evidence_public_key};
+use star_attestation::{
+    report_data_for_public_key, take_blob, verify_qve_evidence_public_key, QuotePolicy,
+    PUBLIC_KEY_LEN, QVE_TARGET_INFO_LEN,
+};
 use star_core::serv::enclave::Enclave;
 #[cfg(target_env = "sgx")]
 use std::slice;
@@ -33,6 +35,7 @@ const OP_ATTEST: u8 = 4;
 const OP_TRANSFER_PUBLIC_KEY: u8 = 5;
 const OP_INSTALL_KEYS: u8 = 6;
 const OP_QVE_TARGET_INFO: u8 = 7;
+const OP_LOCAL_TRANSFER_ATTEST: u8 = 8;
 
 const STATUS_OK: u8 = 0;
 const STATUS_NOT_INITIALIZED: u8 = 1;
@@ -202,6 +205,22 @@ impl EnclaveApp {
         }
     }
 
+    fn local_transfer_attest(&self, payload: &[u8]) -> (u8, Vec<u8>) {
+        if payload.len() != QVE_TARGET_INFO_LEN {
+            return (
+                STATUS_BAD_REQUEST,
+                format!("local attest needs {QVE_TARGET_INFO_LEN} bytes of verifier targetinfo")
+                    .into_bytes(),
+            );
+        }
+
+        let report_data = report_data_for_public_key(self.transfer_receiver.public_key());
+        match attest::local_attest(report_data, payload) {
+            Ok(report) => (STATUS_OK, report),
+            Err(err) => (STATUS_PANIC, err.into_bytes()),
+        }
+    }
+
     fn qve_target_info(&self, _: &[u8]) -> (u8, Vec<u8>) {
         match qve_target_info() {
             Ok(target_info) => (STATUS_OK, target_info),
@@ -217,6 +236,7 @@ impl EnclaveApp {
             OP_ATTEST => self.attest(payload),
             OP_TRANSFER_PUBLIC_KEY => self.transfer_public_key(payload),
             OP_QVE_TARGET_INFO => self.qve_target_info(payload),
+            OP_LOCAL_TRANSFER_ATTEST => self.local_transfer_attest(payload),
             _ => (STATUS_BAD_REQUEST, b"unknown operation".to_vec()),
         }
     }
@@ -476,11 +496,17 @@ fn qve_target_info() -> Result<Vec<u8>, String> {
 #[cfg(target_env = "sgx")]
 fn trusted_key_manager_policy() -> Result<QuotePolicy, String> {
     let self_report = Report::for_self();
+    let (expected_mrenclave, expected_mrsigner) = trusted_peer_identity(
+        option_env!("STAR_TRUSTED_KEY_MANAGER_MRENCLAVE"),
+        "STAR_TRUSTED_KEY_MANAGER_MRENCLAVE",
+        option_env!("STAR_TRUSTED_KEY_MANAGER_MRSIGNER"),
+        "STAR_TRUSTED_KEY_MANAGER_MRSIGNER",
+        option_env!("STAR_TRUST_SAME_SIGNER_KEY_MANAGER"),
+        self_report.mrsigner,
+    )?;
     Ok(QuotePolicy {
-        expected_mrenclave: required_embedded_measurement(
-            option_env!("STAR_TRUSTED_KEY_MANAGER_MRENCLAVE"),
-            "STAR_TRUSTED_KEY_MANAGER_MRENCLAVE",
-        )?,
+        expected_mrenclave,
+        expected_mrsigner,
         allow_debug: embedded_allow_debug(
             option_env!("STAR_ALLOW_DEBUG_KEY_MANAGER"),
             self_report
@@ -488,6 +514,7 @@ fn trusted_key_manager_policy() -> Result<QuotePolicy, String> {
                 .flags
                 .contains(AttributesFlags::DEBUG),
         )?,
+        allow_advisory: embedded_allow_advisory(option_env!("STAR_ALLOW_ADVISORY_KEY_MANAGER"))?,
     })
 }
 
@@ -497,9 +524,38 @@ fn trusted_key_manager_policy() -> Result<QuotePolicy, String> {
 }
 
 #[cfg(target_env = "sgx")]
-fn required_embedded_measurement(value: Option<&str>, name: &str) -> Result<[u8; 32], String> {
-    let value = value.ok_or_else(|| format!("{name} must be embedded for MRENCLAVE trust"))?;
-    parse_measurement_hex(value, name)
+fn trusted_peer_identity(
+    mrenclave: Option<&str>,
+    mrenclave_name: &str,
+    mrsigner: Option<&str>,
+    mrsigner_name: &str,
+    same_signer: Option<&str>,
+    self_mrsigner: [u8; 32],
+) -> Result<(Option<[u8; 32]>, Option<[u8; 32]>), String> {
+    let expected_mrenclave = optional_embedded_measurement(mrenclave, mrenclave_name)?;
+    let mut expected_mrsigner = optional_embedded_measurement(mrsigner, mrsigner_name)?;
+    if expected_mrenclave.is_none()
+        && expected_mrsigner.is_none()
+        && embedded_allow_same_signer(same_signer)?
+    {
+        expected_mrsigner = Some(self_mrsigner);
+    }
+    if expected_mrenclave.is_none() && expected_mrsigner.is_none() {
+        return Err(format!(
+            "{mrenclave_name}, {mrsigner_name}, or STAR_TRUST_SAME_SIGNER_ENCLAVES must be embedded for peer trust"
+        ));
+    }
+    Ok((expected_mrenclave, expected_mrsigner))
+}
+
+#[cfg(target_env = "sgx")]
+fn optional_embedded_measurement(
+    value: Option<&str>,
+    name: &str,
+) -> Result<Option<[u8; 32]>, String> {
+    value
+        .map(|value| parse_measurement_hex(value, name))
+        .transpose()
 }
 
 #[cfg(target_env = "sgx")]
@@ -510,6 +566,28 @@ fn embedded_allow_debug(specific: Option<&str>, default: bool) -> Result<bool, S
         Some("0") | Some("false") | Some("FALSE") | Some("no") | Some("NO") => Ok(false),
         Some(_) => Err("invalid embedded debug policy".into()),
         None => Ok(default),
+    }
+}
+
+#[cfg(target_env = "sgx")]
+fn embedded_allow_advisory(specific: Option<&str>) -> Result<bool, String> {
+    let value = specific.or(option_env!("STAR_ALLOW_ADVISORY_ENCLAVES"));
+    match value {
+        Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("YES") => Ok(true),
+        Some("0") | Some("false") | Some("FALSE") | Some("no") | Some("NO") => Ok(false),
+        Some(_) => Err("invalid embedded advisory policy".into()),
+        None => Ok(false),
+    }
+}
+
+#[cfg(target_env = "sgx")]
+fn embedded_allow_same_signer(specific: Option<&str>) -> Result<bool, String> {
+    let value = specific.or(option_env!("STAR_TRUST_SAME_SIGNER_ENCLAVES"));
+    match value {
+        Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("YES") => Ok(true),
+        Some("0") | Some("false") | Some("FALSE") | Some("no") | Some("NO") => Ok(false),
+        Some(_) => Err("invalid embedded same-signer policy".into()),
+        None => Ok(false),
     }
 }
 

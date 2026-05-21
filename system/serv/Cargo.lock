@@ -920,13 +920,9 @@ version = "0.1.0"
 dependencies = [
  "aesm-client",
  "bincode",
- "chacha20poly1305",
- "hkdf",
  "hpke",
  "rand 0.8.6",
- "serde",
  "sgx-isa",
- "sha2",
  "star-core",
  "star_attestation",
  "thiserror 1.0.69",
@@ -1804,11 +1800,17 @@ name = "key-manager"
 version = "0.1.0"
 dependencies = [
  "aesm-client",
+ "bincode",
+ "chacha20poly1305",
+ "hkdf",
  "hpke",
  "rand 0.8.6",
+ "serde",
  "sgx-isa",
+ "sha2",
  "star-core",
  "star_attestation",
+ "thiserror 1.0.69",
 ]
 
 [[package]]

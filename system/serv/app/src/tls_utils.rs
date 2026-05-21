@@ -4,7 +4,6 @@ use openssl::ssl::SslAlert;
 
 use crate::filter::StarFilterErrorStatus;
 
-
 pub fn alert_for_filter_error(status: &StarFilterErrorStatus) -> SslAlert {
     match status {
         StarFilterErrorStatus::InvalidToken => SslAlert::DECODE_ERROR,
