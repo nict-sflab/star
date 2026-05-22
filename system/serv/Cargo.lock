@@ -3428,6 +3428,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "libloading 0.8.9",
+ "star_attestation",
 ]
 
 [[package]]

@@ -9,21 +9,11 @@ use base64::{
     engine::general_purpose::{URL_SAFE, URL_SAFE_NO_PAD},
 };
 use libloading::{Library, Symbol};
-
-pub const CHALLENGE_LEN: usize = 64;
-pub const MEASUREMENT_LEN: usize = 32;
-pub const PUBLIC_KEY_LEN: usize = 32;
-
-const QUOTE_HEADER_LEN: usize = 48;
-const SGX_REPORT_BODY_LEN: usize = 384;
-const QUOTE_V3: u16 = 3;
-const QUOTE_V5: u16 = 5;
-const QUOTE_V5_BODY_TYPE_OFFSET: usize = 48;
-const QUOTE_V5_BODY_SIZE_OFFSET: usize = 50;
-const QUOTE_V5_BODY_OFFSET: usize = 54;
-const SGX_QL_ALG_ECDSA_P256: u16 = 2;
-const TEE_TYPE_SGX: u32 = 0;
-const QUOTE_BODY_TYPE_SGX: u16 = 1;
+use star_attestation::QuotePolicy;
+pub use star_attestation::{
+    CHALLENGE_LEN, MEASUREMENT_LEN, PUBLIC_KEY_LEN, ParsedQuote, parse_quote,
+    public_key_from_report_data,
+};
 
 const SGX_QL_SUCCESS: u32 = 0x0000;
 const SGX_QL_QV_RESULT_OK: u32 = 0x0000;
@@ -44,14 +34,6 @@ const fn tee_qv_error(value: u32) -> u32 {
 }
 
 pub type Result<T> = std::result::Result<T, String>;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParsedQuote {
-    pub mrenclave: [u8; MEASUREMENT_LEN],
-    pub mrsigner: [u8; MEASUREMENT_LEN],
-    pub report_data: [u8; CHALLENGE_LEN],
-    pub debug: bool,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DcapVerification {
@@ -88,18 +70,23 @@ pub fn verify_quote(quote: &[u8], policy: &QuoteVerificationPolicy<'_>) -> Resul
             return Err("attested public key does not match expected public key".to_string());
         }
     }
-    verify_policy(
-        &parsed,
-        policy.expected_mrsigner,
-        policy.expected_mrenclave,
-        policy.allow_debug,
-    )?;
+    let local_policy = quote_policy_from_verification_policy(policy);
+    star_attestation::verify_policy(&parsed, &local_policy)?;
 
     Ok(VerifiedQuote {
         parsed,
         public_key,
         dcap,
     })
+}
+
+fn quote_policy_from_verification_policy(policy: &QuoteVerificationPolicy<'_>) -> QuotePolicy {
+    QuotePolicy {
+        expected_mrenclave: policy.expected_mrenclave.copied(),
+        expected_mrsigner: Some(*policy.expected_mrsigner),
+        allow_debug: policy.allow_debug,
+        allow_advisory: policy.allow_advisory,
+    }
 }
 
 pub fn verify_quote_with_dcap_qvl(
@@ -169,57 +156,21 @@ pub fn verify_quote_with_dcap_qvl(
     })
 }
 
-pub fn parse_quote(quote: &[u8]) -> Result<ParsedQuote> {
-    let report_body_offset = sgx_report_body_offset(quote)?;
-
-    let attributes_offset = report_body_offset + 48;
-    let mrenclave_offset = report_body_offset + 64;
-    let mrsigner_offset = report_body_offset + 128;
-    let report_data_offset = report_body_offset + 320;
-
-    let flags = read_u64_le(quote, attributes_offset)?;
-
-    Ok(ParsedQuote {
-        mrenclave: read_array(quote, mrenclave_offset, "MRENCLAVE")?,
-        mrsigner: read_array(quote, mrsigner_offset, "MRSIGNER")?,
-        report_data: read_array(quote, report_data_offset, "report_data")?,
-        debug: flags & 0x2 != 0,
-    })
-}
-
-pub fn public_key_from_report_data(parsed: &ParsedQuote) -> Result<[u8; PUBLIC_KEY_LEN]> {
-    if parsed.report_data[PUBLIC_KEY_LEN..]
-        .iter()
-        .any(|byte| *byte != 0)
-    {
-        return Err("report_data is not public_key || zero padding".to_string());
-    }
-
-    parsed.report_data[..PUBLIC_KEY_LEN]
-        .try_into()
-        .map_err(|_| "report_data is too short for public key".to_string())
-}
-
 pub fn verify_policy(
     parsed: &ParsedQuote,
     expected_mrsigner: &[u8; MEASUREMENT_LEN],
     expected_mrenclave: Option<&[u8; MEASUREMENT_LEN]>,
     allow_debug: bool,
 ) -> Result<()> {
-    if &parsed.mrsigner != expected_mrsigner {
-        return Err("MRSIGNER does not match the trusted signer".to_string());
-    }
-    if let Some(expected_mrenclave) = expected_mrenclave {
-        if &parsed.mrenclave != expected_mrenclave {
-            return Err("MRENCLAVE does not match the trusted enclave measurement".to_string());
-        }
-    }
-    if parsed.debug && !allow_debug {
-        return Err(
-            "debug enclave is not trusted; pass --allow-debug only for development".to_string(),
-        );
-    }
-    Ok(())
+    star_attestation::verify_policy(
+        parsed,
+        &QuotePolicy {
+            expected_mrenclave: expected_mrenclave.copied(),
+            expected_mrsigner: Some(*expected_mrsigner),
+            allow_debug,
+            allow_advisory: false,
+        },
+    )
 }
 
 pub fn parse_hex_array<const N: usize>(input: &str, name: &str) -> Result<[u8; N]> {
@@ -361,77 +312,6 @@ fn configure_qpl(library: &Library, qpl_library: Option<&Path>) -> Result<()> {
     }
 }
 
-fn sgx_report_body_offset(quote: &[u8]) -> Result<usize> {
-    if quote.len() < QUOTE_HEADER_LEN {
-        return Err("quote is too short".to_string());
-    }
-
-    let version = read_u16_le(quote, 0)?;
-    let attestation_key_type = read_u16_le(quote, 2)?;
-    if attestation_key_type != SGX_QL_ALG_ECDSA_P256 {
-        return Err("quote attestation key is not ECDSA/P-256".to_string());
-    }
-
-    let report_body_offset = match version {
-        QUOTE_V3 => {
-            let attestation_key_data = read_u32_le(quote, 4)?;
-            if attestation_key_data != 0 {
-                return Err("SGX quote v3 attestation key data must be zero".to_string());
-            }
-            QUOTE_HEADER_LEN
-        }
-        QUOTE_V5 => {
-            let tee_type = read_u32_le(quote, 4)?;
-            if tee_type != TEE_TYPE_SGX {
-                return Err("quote is not for SGX".to_string());
-            }
-
-            let body_type = read_u16_le(quote, QUOTE_V5_BODY_TYPE_OFFSET)?;
-            if body_type != QUOTE_BODY_TYPE_SGX {
-                return Err("quote v5 body is not an SGX report".to_string());
-            }
-
-            let body_size = read_u32_le(quote, QUOTE_V5_BODY_SIZE_OFFSET)? as usize;
-            if body_size < SGX_REPORT_BODY_LEN + 4 {
-                return Err("quote v5 SGX body is too short".to_string());
-            }
-            if quote.len() < QUOTE_V5_BODY_OFFSET + body_size {
-                return Err("quote v5 body size exceeds quote length".to_string());
-            }
-
-            QUOTE_V5_BODY_OFFSET
-        }
-        4 => return Err("TDX quote v4 is not an SGX enclave quote".to_string()),
-        _ => return Err(format!("unsupported quote version: {version}")),
-    };
-
-    if quote.len() < report_body_offset + SGX_REPORT_BODY_LEN {
-        return Err("quote is too short".to_string());
-    }
-
-    Ok(report_body_offset)
-}
-
-fn read_array<const N: usize>(bytes: &[u8], offset: usize, name: &str) -> Result<[u8; N]> {
-    bytes
-        .get(offset..offset + N)
-        .ok_or_else(|| format!("quote is too short for {name}"))?
-        .try_into()
-        .map_err(|_| format!("quote is too short for {name}"))
-}
-
-fn read_u16_le(bytes: &[u8], offset: usize) -> Result<u16> {
-    Ok(u16::from_le_bytes(read_array(bytes, offset, "u16")?))
-}
-
-fn read_u32_le(bytes: &[u8], offset: usize) -> Result<u32> {
-    Ok(u32::from_le_bytes(read_array(bytes, offset, "u32")?))
-}
-
-fn read_u64_le(bytes: &[u8], offset: usize) -> Result<u64> {
-    Ok(u64::from_le_bytes(read_array(bytes, offset, "u64")?))
-}
-
 pub fn qv_result_name(value: u32) -> &'static str {
     match value {
         SGX_QL_QV_RESULT_OK => "OK",
@@ -506,6 +386,11 @@ pub fn quote3_error_name(value: u32) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const QUOTE_HEADER_LEN: usize = 48;
+    const SGX_REPORT_BODY_LEN: usize = 384;
+    const QUOTE_V3: u16 = 3;
+    const SGX_QL_ALG_ECDSA_P256: u16 = 2;
 
     fn fake_quote(
         mrenclave: [u8; MEASUREMENT_LEN],
