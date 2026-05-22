@@ -29,7 +29,7 @@ const TLS_CERT_RELATIVE_PATH: &str = "examples/certs/server.crt";
 const TLS_KEY_RELATIVE_PATH: &str = "examples/certs/server.key";
 const MAX_COUNT_PER_CREDENTIAL: u64 = 1_000_000;
 const FILTER_ENCLAVE_POOL_SIZE: u8 = 10;
-const PARALLEL_WORKERS: usize = 4;
+const PARALLEL_WORKERS: usize = 2;
 const PARALLEL_OPS_PER_WORKER: u64 = 64;
 const PARALLEL_BATCH_OPS: u64 = PARALLEL_WORKERS as u64 * PARALLEL_OPS_PER_WORKER;
 

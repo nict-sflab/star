@@ -26,7 +26,7 @@ type SharedStarFilter = Arc<HashMapStarFilter>;
 
 const MAX_COUNT: u32 = 1_000_000;
 const PARALLEL_OPS_PER_WORKER: usize = 64;
-const FIXED_PREFIX_MAX: u32 = 4;
+const FIXED_PREFIX_MAX: u32 = 2;
 const FIXED_CONCURRENCY: usize = FIXED_PREFIX_MAX as usize;
 const DEFAULT_FILTER_ENCLAVES: u8 = 2;
 const CHECK_DUPLICATION_BATCH_OPS: usize = FIXED_CONCURRENCY * PARALLEL_OPS_PER_WORKER;
