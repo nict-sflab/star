@@ -343,16 +343,16 @@ fn install_key_manager_keys_for_runtime(
         .map_err(|err| EnclaveError::InvalidSealedKeys(err.to_string()))?;
     let recipient_target_info = recipient.qve_target_info()?;
 
-    let recipient_evidence_for_key_manager =
-        match crate::qve::evidence_for_verifier(&recipient_quote, &key_manager_target_info) {
-            Ok(evidence) => evidence,
-            Err(_) => recipient.local_transfer_key_attestation(&key_manager_target_info)?,
-        };
-    let key_manager_evidence_for_recipient =
-        match crate::qve::evidence_for_verifier(&key_manager_quote, &recipient_target_info) {
-            Ok(evidence) => evidence,
-            Err(_) => key_manager.local_public_key_attestation(&recipient_target_info)?,
-        };
+    let recipient_evidence_for_key_manager = crate::evidence_for_verifier_or_local(
+        &recipient_quote,
+        &key_manager_target_info,
+        |target_info| recipient.local_transfer_key_attestation(target_info),
+    )?;
+    let key_manager_evidence_for_recipient = crate::evidence_for_verifier_or_local(
+        &key_manager_quote,
+        &recipient_target_info,
+        |target_info| key_manager.local_public_key_attestation(target_info),
+    )?;
 
     let keys = key_manager
         .export_keys(&recipient_evidence_for_key_manager)

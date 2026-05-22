@@ -64,24 +64,14 @@ pub fn install_key_manager_keys_for_pool(
     recipient: &EnclaveRuntimes,
 ) -> Result<(), Box<dyn Error>> {
     let key_manager_quote = key_manager.public_key_attestation()?;
-    let recipient_quote = recipient.transfer_key_attestation()?;
     let key_manager_target_info = key_manager.qve_target_info()?;
-    let recipient_target_info = recipient.qve_target_info()?;
 
-    let recipient_evidence_for_key_manager = evidence_for_verifier_or_local(
-        &recipient_quote,
-        &key_manager_target_info,
-        |target_info| recipient.local_transfer_key_attestation(target_info),
-    )?;
-    let key_manager_evidence_for_recipient = evidence_for_verifier_or_local(
+    install_keys_for_local_recipient(
+        key_manager,
         &key_manager_quote,
-        &recipient_target_info,
-        |target_info| key_manager.local_public_key_attestation(target_info),
+        &key_manager_target_info,
+        recipient,
     )?;
-
-    let keys = key_manager.export_keys(&recipient_evidence_for_key_manager)?;
-    recipient.install_keys(&key_manager_evidence_for_recipient, &keys)?;
-
     Ok(())
 }
 
@@ -90,25 +80,113 @@ pub fn install_key_manager_keys_for_enclave(
     recipient: &enclave::EnclaveRuntime,
 ) -> Result<(), Box<dyn Error>> {
     let key_manager_quote = key_manager.public_key_attestation()?;
-    let recipient_quote = recipient.transfer_key_attestation()?;
     let key_manager_target_info = key_manager.qve_target_info()?;
+
+    install_keys_for_local_recipient(
+        key_manager,
+        &key_manager_quote,
+        &key_manager_target_info,
+        recipient,
+    )?;
+    Ok(())
+}
+
+trait KeyRecipient {
+    fn transfer_key_attestation(&self) -> Result<Vec<u8>, enclave::EnclaveError>;
+    fn local_transfer_key_attestation(
+        &self,
+        verifier_target_info: &[u8],
+    ) -> Result<Vec<u8>, enclave::EnclaveError>;
+    fn qve_target_info(&self) -> Result<Vec<u8>, enclave::EnclaveError>;
+    fn install_keys(
+        &self,
+        manager_evidence: &[u8],
+        envelope: &[u8],
+    ) -> Result<(), enclave::EnclaveError>;
+}
+
+impl KeyRecipient for EnclaveRuntimes {
+    fn transfer_key_attestation(&self) -> Result<Vec<u8>, enclave::EnclaveError> {
+        EnclaveRuntimes::transfer_key_attestation(self)
+    }
+
+    fn local_transfer_key_attestation(
+        &self,
+        verifier_target_info: &[u8],
+    ) -> Result<Vec<u8>, enclave::EnclaveError> {
+        EnclaveRuntimes::local_transfer_key_attestation(self, verifier_target_info)
+    }
+
+    fn qve_target_info(&self) -> Result<Vec<u8>, enclave::EnclaveError> {
+        EnclaveRuntimes::qve_target_info(self)
+    }
+
+    fn install_keys(
+        &self,
+        manager_evidence: &[u8],
+        envelope: &[u8],
+    ) -> Result<(), enclave::EnclaveError> {
+        EnclaveRuntimes::install_keys(self, manager_evidence, envelope)
+    }
+}
+
+impl KeyRecipient for enclave::EnclaveRuntime {
+    fn transfer_key_attestation(&self) -> Result<Vec<u8>, enclave::EnclaveError> {
+        enclave::EnclaveRuntime::transfer_key_attestation(self)
+    }
+
+    fn local_transfer_key_attestation(
+        &self,
+        verifier_target_info: &[u8],
+    ) -> Result<Vec<u8>, enclave::EnclaveError> {
+        enclave::EnclaveRuntime::local_transfer_key_attestation(self, verifier_target_info)
+    }
+
+    fn qve_target_info(&self) -> Result<Vec<u8>, enclave::EnclaveError> {
+        enclave::EnclaveRuntime::qve_target_info(self)
+    }
+
+    fn install_keys(
+        &self,
+        manager_evidence: &[u8],
+        envelope: &[u8],
+    ) -> Result<(), enclave::EnclaveError> {
+        enclave::EnclaveRuntime::install_keys(self, manager_evidence, envelope)
+    }
+}
+
+struct LocalKeyInstall {
+    recipient_quote: Vec<u8>,
+    recipient_evidence_for_key_manager: Vec<u8>,
+    key_manager_evidence_for_recipient: Vec<u8>,
+}
+
+fn install_keys_for_local_recipient(
+    key_manager: &KeyManagerRuntime,
+    key_manager_quote: &[u8],
+    key_manager_target_info: &[u8],
+    recipient: &impl KeyRecipient,
+) -> Result<LocalKeyInstall, Box<dyn Error>> {
+    let recipient_quote = recipient.transfer_key_attestation()?;
     let recipient_target_info = recipient.qve_target_info()?;
 
-    let recipient_evidence_for_key_manager = evidence_for_verifier_or_local(
-        &recipient_quote,
-        &key_manager_target_info,
-        |target_info| recipient.local_transfer_key_attestation(target_info),
-    )?;
-    let key_manager_evidence_for_recipient = evidence_for_verifier_or_local(
-        &key_manager_quote,
-        &recipient_target_info,
-        |target_info| key_manager.local_public_key_attestation(target_info),
-    )?;
+    let recipient_evidence_for_key_manager =
+        evidence_for_verifier_or_local(&recipient_quote, key_manager_target_info, |target_info| {
+            recipient.local_transfer_key_attestation(target_info)
+        })?;
+    let key_manager_evidence_for_recipient =
+        evidence_for_verifier_or_local(key_manager_quote, &recipient_target_info, |target_info| {
+            key_manager.local_public_key_attestation(target_info)
+        })?;
 
     let keys = key_manager.export_keys(&recipient_evidence_for_key_manager)?;
     recipient.install_keys(&key_manager_evidence_for_recipient, &keys)?;
 
-    Ok(())
+    Ok(LocalKeyInstall {
+        recipient_quote,
+        recipient_evidence_for_key_manager,
+        key_manager_evidence_for_recipient,
+    })
 }
 
 pub fn benchmark_key_bundle() -> Result<Vec<u8>, Box<dyn Error>> {
@@ -181,44 +259,29 @@ fn install_keys_from_local_key_manager() -> Result<InstalledEnclaves, Box<dyn Er
 
     let public_key = key_manager.public_key()?;
     let key_manager_quote = key_manager.public_key_attestation()?;
-    let filter_quote = filter_enclave.transfer_key_attestation()?;
-    let issue_quote = issue_enclave.transfer_key_attestation()?;
     let key_manager_target_info = key_manager.qve_target_info()?;
-    let filter_target_info = filter_enclave.qve_target_info()?;
-    let issue_target_info = issue_enclave.qve_target_info()?;
-
-    let filter_evidence_for_key_manager =
-        evidence_for_verifier_or_local(&filter_quote, &key_manager_target_info, |target_info| {
-            filter_enclave.local_transfer_key_attestation(target_info)
-        })?;
-    let issue_evidence_for_key_manager =
-        evidence_for_verifier_or_local(&issue_quote, &key_manager_target_info, |target_info| {
-            issue_enclave.local_transfer_key_attestation(target_info)
-        })?;
-    let key_manager_evidence_for_filter =
-        evidence_for_verifier_or_local(&key_manager_quote, &filter_target_info, |target_info| {
-            key_manager.local_public_key_attestation(target_info)
-        })?;
-    let key_manager_evidence_for_issue =
-        evidence_for_verifier_or_local(&key_manager_quote, &issue_target_info, |target_info| {
-            key_manager.local_public_key_attestation(target_info)
-        })?;
-
-    let filter_keys = key_manager.export_keys(&filter_evidence_for_key_manager)?;
-    filter_enclave.install_keys(&key_manager_evidence_for_filter, &filter_keys)?;
-
-    let issue_keys = key_manager.export_keys(&issue_evidence_for_key_manager)?;
-    issue_enclave.install_keys(&key_manager_evidence_for_issue, &issue_keys)?;
+    let filter_install = install_keys_for_local_recipient(
+        &key_manager,
+        &key_manager_quote,
+        &key_manager_target_info,
+        &filter_enclave,
+    )?;
+    let issue_install = install_keys_for_local_recipient(
+        &key_manager,
+        &key_manager_quote,
+        &key_manager_target_info,
+        &issue_enclave,
+    )?;
 
     Ok(InstalledEnclaves {
         public_key,
         key_manager_quote,
-        filter_quote,
-        issue_quote,
-        filter_evidence_for_key_manager,
-        issue_evidence_for_key_manager,
-        key_manager_evidence_for_filter,
-        key_manager_evidence_for_issue,
+        filter_quote: filter_install.recipient_quote,
+        issue_quote: issue_install.recipient_quote,
+        filter_evidence_for_key_manager: filter_install.recipient_evidence_for_key_manager,
+        issue_evidence_for_key_manager: issue_install.recipient_evidence_for_key_manager,
+        key_manager_evidence_for_filter: filter_install.key_manager_evidence_for_recipient,
+        key_manager_evidence_for_issue: issue_install.key_manager_evidence_for_recipient,
         filter_enclave,
         issue_enclave,
     })
@@ -261,7 +324,7 @@ fn install_keys_from_remote_key_manager(
     })
 }
 
-fn evidence_for_verifier_or_local<E>(
+pub(crate) fn evidence_for_verifier_or_local<E>(
     quote: &[u8],
     verifier_target_info: &[u8],
     local_attestation: impl FnOnce(&[u8]) -> Result<Vec<u8>, E>,

@@ -63,7 +63,7 @@ fn seal_with_key(
     plaintext: &[u8],
     nonce_bytes: [u8; 12],
 ) -> Result<Vec<u8>, SealError> {
-    let cipher = ChaCha20Poly1305::new_from_slice(&key_bytes).map_err(|_| SealError::Crypto)?;
+    let cipher = aead_cipher(key_bytes)?;
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     let ciphertext = cipher
@@ -80,12 +80,16 @@ fn seal_with_key(
 }
 
 fn unseal_with_key(key_bytes: [u8; 32], blob: &SealedBlob) -> Result<Vec<u8>, SealError> {
-    let cipher = ChaCha20Poly1305::new_from_slice(&key_bytes).map_err(|_| SealError::Crypto)?;
+    let cipher = aead_cipher(key_bytes)?;
     let nonce = Nonce::from_slice(&blob.nonce);
 
     cipher
         .decrypt(nonce, blob.ciphertext.as_ref())
         .map_err(|_| SealError::Crypto)
+}
+
+fn aead_cipher(key_bytes: [u8; 32]) -> Result<ChaCha20Poly1305, SealError> {
+    ChaCha20Poly1305::new_from_slice(&key_bytes).map_err(|_| SealError::Crypto)
 }
 
 fn derive_aead_key(sgx_key: [u8; 16], seal_data: &SealData) -> Result<[u8; 32], SealError> {
