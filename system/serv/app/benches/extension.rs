@@ -117,11 +117,13 @@ enum ClientHelloOutcome {
     Rejected,
 }
 
+// This is for benchmarking the case with without STAR extension in ClientHello
 struct OpenSslRejectHarness {
     acceptor: SslAcceptor,
     client_hello: Vec<u8>,
 }
 
+// This is for benchmarking the case with STAR extension in ClientHello but rejected by filter (e.g. replayed token, invalid credential)
 struct StarFilterRejectHarness {
     acceptor: SslAcceptor,
     filter: Arc<BenchFilter>,
@@ -175,6 +177,7 @@ impl OpenSslRejectHarness {
 }
 
 impl StarFilterRejectHarness {
+    // Initilize the benchmark with a replayed token.
     fn replayed_token() -> Self {
         let (filter, token_request) = build_keyed_filter_and_token_request();
         let (duplicate_token, duplicate_route) = filter
@@ -196,6 +199,8 @@ impl StarFilterRejectHarness {
         harness
     }
 
+
+    // Initialize the benchmark with an invalid credential (e.g. corrupted token).
     fn invalid_credential() -> Self {
         let (filter, token_request) = build_keyed_filter_and_invalid_credential_request();
         let harness = Self::new(filter, token_request, None, 0);
@@ -238,6 +243,9 @@ impl StarFilterRejectHarness {
             Ok(ClientHelloResponse::SUCCESS)
         });
 
+
+        // This callback is for measuring the combined cost of OpenSSL parsing the ClientHello and the filter rejecting it. 
+        // It simulates the real flow where the filter checks the token during the ClientHello callback and rejects it if invalid (e.g. replayed or invalid credential).
         builder
             .add_custom_ext(
                 STAR_TLS_EXTENSION_TYPE,
@@ -297,63 +305,6 @@ impl StarFilterRejectHarness {
             assert_eq!(outcome, ClientHelloOutcome::Rejected);
         })
     }
-
-    fn timed_filter_only_rejections(&self, iters: u64) -> Duration {
-        let mut total = Duration::ZERO;
-        let token = self.duplicate_token.as_ref().expect("duplicate token");
-
-        for _ in 0..iters {
-            let start = Instant::now();
-            let result = self
-                .filter
-                .check_duplication(black_box(token), black_box(self.duplicate_route));
-            total += start.elapsed();
-            assert!(matches!(
-                result,
-                Err(StarFilterErrorStatus::DuplicatedToken)
-            ));
-        }
-
-        total
-    }
-
-    fn timed_parallel_filter_only_rejections(&self, iters: u64) -> Duration {
-        let token = self.duplicate_token.as_ref().expect("duplicate token");
-
-        timed_parallel_batch(iters, || {
-            let result = self
-                .filter
-                .check_duplication(black_box(token), black_box(self.duplicate_route));
-            assert!(matches!(
-                result,
-                Err(StarFilterErrorStatus::DuplicatedToken)
-            ));
-        })
-    }
-
-    fn timed_invalid_credential_filter_only_rejections(&self, iters: u64) -> Duration {
-        let mut total = Duration::ZERO;
-
-        for _ in 0..iters {
-            let start = Instant::now();
-            let result = self
-                .filter
-                .filter_client_hello(black_box(self.token_request.as_slice()));
-            total += start.elapsed();
-            assert!(matches!(result, Err(StarFilterErrorStatus::InvalidToken)));
-        }
-
-        total
-    }
-
-    fn timed_parallel_invalid_credential_filter_only_rejections(&self, iters: u64) -> Duration {
-        timed_parallel_batch(iters, || {
-            let result = self
-                .filter
-                .filter_client_hello(black_box(self.token_request.as_slice()));
-            assert!(matches!(result, Err(StarFilterErrorStatus::InvalidToken)));
-        })
-    }
 }
 
 fn timed_parallel_batch(operation_batches: u64, operation: impl Fn() + Sync) -> Duration {
@@ -401,6 +352,7 @@ fn worker_operation_count(total_ops: u64, worker_index: usize) -> u64 {
     base + u64::from((worker_index as u64) < remainder)
 }
 
+// This runs OpenSSL, processing the ClientHello.
 fn process_client_hello(acceptor: &SslAcceptor, client_hello: &[u8]) -> ClientHelloOutcome {
     match acceptor.accept(ClientHelloInput::new(client_hello)) {
         Ok(_) => ClientHelloOutcome::PendingMoreInput,
@@ -593,7 +545,7 @@ fn configure_parallel_group(
     group.throughput(Throughput::Elements(PARALLEL_BATCH_OPS));
 }
 
-fn bench_client_hello_reject_no_network(c: &mut Criterion) {
+fn bench_client_hello_reject(c: &mut Criterion) {
     let openssl = OpenSslRejectHarness::missing_extension();
     let star_filter = StarFilterRejectHarness::replayed_token();
     let invalid_credential = StarFilterRejectHarness::invalid_credential();
@@ -630,34 +582,24 @@ fn bench_client_hello_reject_no_network(c: &mut Criterion) {
         Err(StarFilterErrorStatus::InvalidToken)
     ));
 
-    let mut group = c.benchmark_group("client_hello_reject_no_network");
+    let mut group = c.benchmark_group("client_hello_reject");
     configure_group(&mut group);
 
     group.bench_function("openssl_missing_extension", |b| {
         b.iter_custom(|iters| openssl.timed_rejections(iters));
     });
 
-    group.bench_function("star_filter_replayed_token_openssl_parse", |b| {
-        b.iter_custom(|iters| star_filter.timed_openssl_and_filter_rejections(iters));
-    });
-
-    group.bench_function("star_filter_replayed_token_filter_only", |b| {
-        b.iter_custom(|iters| star_filter.timed_filter_only_rejections(iters));
-    });
-
     group.bench_function("star_filter_invalid_credential_openssl_parse", |b| {
         b.iter_custom(|iters| invalid_credential.timed_openssl_and_filter_rejections(iters));
     });
 
-    group.bench_function("star_filter_invalid_credential_filter_only", |b| {
-        b.iter_custom(|iters| {
-            invalid_credential.timed_invalid_credential_filter_only_rejections(iters)
-        });
+    group.bench_function("star_filter_replayed_token_openssl_parse", |b| {
+        b.iter_custom(|iters| star_filter.timed_openssl_and_filter_rejections(iters));
     });
 
     group.finish();
 
-    let mut group = c.benchmark_group("client_hello_reject_no_network_parallel_throughput");
+    let mut group = c.benchmark_group("client_hello_reject_parallel_throughput");
     configure_parallel_group(&mut group);
 
     group.bench_function("openssl_missing_extension", |b| {
@@ -668,24 +610,14 @@ fn bench_client_hello_reject_no_network(c: &mut Criterion) {
         b.iter_custom(|iters| star_filter.timed_parallel_openssl_and_filter_rejections(iters));
     });
 
-    group.bench_function("star_filter_replayed_token_filter_only", |b| {
-        b.iter_custom(|iters| star_filter.timed_parallel_filter_only_rejections(iters));
-    });
-
     group.bench_function("star_filter_invalid_credential_openssl_parse", |b| {
         b.iter_custom(|iters| {
             invalid_credential.timed_parallel_openssl_and_filter_rejections(iters)
         });
     });
 
-    group.bench_function("star_filter_invalid_credential_filter_only", |b| {
-        b.iter_custom(|iters| {
-            invalid_credential.timed_parallel_invalid_credential_filter_only_rejections(iters)
-        });
-    });
-
     group.finish();
 }
 
-criterion_group!(benches, bench_client_hello_reject_no_network);
+criterion_group!(benches, bench_client_hello_reject);
 criterion_main!(benches);
