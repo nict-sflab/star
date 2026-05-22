@@ -57,9 +57,8 @@ impl<T: FilterBox + Send + Sync> StarFilter<T> {
         request: &[u8],
     ) -> Result<(Entry, u32), StarFilterErrorStatus> {
         let current_period = constant_time_utils::time::current_period();
-        let prefix_max = self.prefix_max;
 
-        let mut enclave = self
+        let enclave = self
             .enclaves
             .pick()
             .await
@@ -69,19 +68,9 @@ impl<T: FilterBox + Send + Sync> StarFilter<T> {
             .issue_token(request, current_period)
             .map_err(|_| StarFilterErrorStatus::Internal)?;
 
-        if token_bytes.len() < 32 {
-            return Err(StarFilterErrorStatus::InvalidToken);
-        }
-
-        let token_entry: Entry = token_bytes[..32]
-            .try_into()
-            .map_err(|_| StarFilterErrorStatus::InvalidToken)?;
-
-        let token = Token::new(token_entry);
-        let route = token.route(prefix_max);
-
-        Ok((token.token, route))
+        self.token_and_route(&token_bytes)
     }
+
     pub fn issue_token_and_route_sync(
         &self,
         request: &[u8],
@@ -98,21 +87,23 @@ impl<T: FilterBox + Send + Sync> StarFilter<T> {
                 .issue_token(request, current_period)
                 .map_err(|_| StarFilterErrorStatus::Internal)?;
 
-            if token_bytes.len() < 32 {
-                return Err(StarFilterErrorStatus::InvalidToken);
-            }
-
-            let token_entry: Entry = token_bytes[..32]
-                .try_into()
-                .map_err(|_| StarFilterErrorStatus::InvalidToken)?;
-
-            let token = Token::new(token_entry);
-            let route = token.route(self.prefix_max);
-
-            Ok((token.token, route))
+            self.token_and_route(&token_bytes)
         })();
 
         result
+    }
+
+    fn token_and_route(&self, token_bytes: &[u8]) -> Result<(Entry, u32), StarFilterErrorStatus> {
+        if token_bytes.len() < 32 {
+            return Err(StarFilterErrorStatus::InvalidToken);
+        }
+
+        let token_entry: Entry = token_bytes[..32]
+            .try_into()
+            .map_err(|_| StarFilterErrorStatus::InvalidToken)?;
+        let token = Token::new(token_entry);
+
+        Ok((token.token, token.route(self.prefix_max)))
     }
 
     pub fn check_duplication(

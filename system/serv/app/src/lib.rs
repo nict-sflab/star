@@ -67,16 +67,16 @@ pub fn install_key_manager_keys_for_pool(
     let key_manager_target_info = key_manager.qve_target_info()?;
     let recipient_target_info = recipient.qve_target_info()?;
 
-    let recipient_evidence_for_key_manager =
-        match qve::evidence_for_verifier(&recipient_quote, &key_manager_target_info) {
-            Ok(evidence) => evidence,
-            Err(_) => recipient.local_transfer_key_attestation(&key_manager_target_info)?,
-        };
-    let key_manager_evidence_for_recipient =
-        match qve::evidence_for_verifier(&key_manager_quote, &recipient_target_info) {
-            Ok(evidence) => evidence,
-            Err(_) => key_manager.local_public_key_attestation(&recipient_target_info)?,
-        };
+    let recipient_evidence_for_key_manager = evidence_for_verifier_or_local(
+        &recipient_quote,
+        &key_manager_target_info,
+        |target_info| recipient.local_transfer_key_attestation(target_info),
+    )?;
+    let key_manager_evidence_for_recipient = evidence_for_verifier_or_local(
+        &key_manager_quote,
+        &recipient_target_info,
+        |target_info| key_manager.local_public_key_attestation(target_info),
+    )?;
 
     let keys = key_manager.export_keys(&recipient_evidence_for_key_manager)?;
     recipient.install_keys(&key_manager_evidence_for_recipient, &keys)?;
@@ -93,16 +93,16 @@ pub fn install_key_manager_keys_for_enclave(
     let key_manager_target_info = key_manager.qve_target_info()?;
     let recipient_target_info = recipient.qve_target_info()?;
 
-    let recipient_evidence_for_key_manager =
-        match qve::evidence_for_verifier(&recipient_quote, &key_manager_target_info) {
-            Ok(evidence) => evidence,
-            Err(_) => recipient.local_transfer_key_attestation(&key_manager_target_info)?,
-        };
-    let key_manager_evidence_for_recipient =
-        match qve::evidence_for_verifier(&key_manager_quote, &recipient_target_info) {
-            Ok(evidence) => evidence,
-            Err(_) => key_manager.local_public_key_attestation(&recipient_target_info)?,
-        };
+    let recipient_evidence_for_key_manager = evidence_for_verifier_or_local(
+        &recipient_quote,
+        &key_manager_target_info,
+        |target_info| recipient.local_transfer_key_attestation(target_info),
+    )?;
+    let key_manager_evidence_for_recipient = evidence_for_verifier_or_local(
+        &key_manager_quote,
+        &recipient_target_info,
+        |target_info| key_manager.local_public_key_attestation(target_info),
+    )?;
 
     let keys = key_manager.export_keys(&recipient_evidence_for_key_manager)?;
     recipient.install_keys(&key_manager_evidence_for_recipient, &keys)?;
@@ -187,25 +187,21 @@ fn install_keys_from_local_key_manager() -> Result<InstalledEnclaves, Box<dyn Er
     let issue_target_info = issue_enclave.qve_target_info()?;
 
     let filter_evidence_for_key_manager =
-        match qve::evidence_for_verifier(&filter_quote, &key_manager_target_info) {
-            Ok(evidence) => evidence,
-            Err(_) => filter_enclave.local_transfer_key_attestation(&key_manager_target_info)?,
-        };
+        evidence_for_verifier_or_local(&filter_quote, &key_manager_target_info, |target_info| {
+            filter_enclave.local_transfer_key_attestation(target_info)
+        })?;
     let issue_evidence_for_key_manager =
-        match qve::evidence_for_verifier(&issue_quote, &key_manager_target_info) {
-            Ok(evidence) => evidence,
-            Err(_) => issue_enclave.local_transfer_key_attestation(&key_manager_target_info)?,
-        };
+        evidence_for_verifier_or_local(&issue_quote, &key_manager_target_info, |target_info| {
+            issue_enclave.local_transfer_key_attestation(target_info)
+        })?;
     let key_manager_evidence_for_filter =
-        match qve::evidence_for_verifier(&key_manager_quote, &filter_target_info) {
-            Ok(evidence) => evidence,
-            Err(_) => key_manager.local_public_key_attestation(&filter_target_info)?,
-        };
+        evidence_for_verifier_or_local(&key_manager_quote, &filter_target_info, |target_info| {
+            key_manager.local_public_key_attestation(target_info)
+        })?;
     let key_manager_evidence_for_issue =
-        match qve::evidence_for_verifier(&key_manager_quote, &issue_target_info) {
-            Ok(evidence) => evidence,
-            Err(_) => key_manager.local_public_key_attestation(&issue_target_info)?,
-        };
+        evidence_for_verifier_or_local(&key_manager_quote, &issue_target_info, |target_info| {
+            key_manager.local_public_key_attestation(target_info)
+        })?;
 
     let filter_keys = key_manager.export_keys(&filter_evidence_for_key_manager)?;
     filter_enclave.install_keys(&key_manager_evidence_for_filter, &filter_keys)?;
@@ -262,6 +258,17 @@ fn install_keys_from_remote_key_manager(
         filter_enclave,
         issue_enclave,
     })
+}
+
+fn evidence_for_verifier_or_local<E>(
+    quote: &[u8],
+    verifier_target_info: &[u8],
+    local_attestation: impl FnOnce(&[u8]) -> Result<Vec<u8>, E>,
+) -> Result<Vec<u8>, E> {
+    match qve::evidence_for_verifier(quote, verifier_target_info) {
+        Ok(evidence) => Ok(evidence),
+        Err(_) => local_attestation(verifier_target_info),
+    }
 }
 
 fn build_server_from_installed_enclaves(
