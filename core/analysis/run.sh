@@ -8,7 +8,8 @@ cd "${repo_root}"
 
 jobs="${CARGO_BUILD_JOBS:-$(nproc)}"
 echo "cargo build -j ${jobs} --bin analysis --features timecop --release"
-cargo build -j "${jobs}" --bin analysis --features timecop --release
+RUSTFLAGS="-C debuginfo=2 -C force-frame-pointers=yes" \
+ cargo build -j "${jobs}" --bin analysis --features timecop --release
 
 echo "valgrind ./target/release/analysis"
-valgrind ./target/release/analysis --leak-check=full
+valgrind  --leak-check=full --show-leak-kinds=all ./target/release/analysis
