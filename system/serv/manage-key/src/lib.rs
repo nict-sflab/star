@@ -404,6 +404,9 @@ pub extern "C" fn entry(p1: u64, p2: u64, p3: u64, _ignore: u64, p4: u64, p5: u6
     library_entry(p1, p2, p3, p4, p5)
 }
 
+// library_entry is the SGX entry point for the key-manager library. 
+// It dispatches to the KeyManagerApp and handles the translation between raw pointers and Rust types, 
+// as well as error handling and status codes.
 #[cfg(target_env = "sgx")]
 fn library_entry(
     op: u64,
@@ -499,6 +502,8 @@ fn is_user_range(ptr: *const u8, len: usize) -> bool {
     end < base || start > enclave_end
 }
 
+// image_base returns the base address of the enclave in memory, 
+// which is needed to validate that user pointers do not point into the enclave's own memory.
 #[cfg(target_env = "sgx")]
 fn image_base() -> usize {
     let base: usize;

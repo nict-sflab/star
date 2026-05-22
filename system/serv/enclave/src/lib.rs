@@ -43,6 +43,7 @@ const STATUS_BAD_REQUEST: u8 = 2;
 const STATUS_PANIC: u8 = 4;
 const STATUS_BUFFER_TOO_SMALL: u8 = 5;
 
+// EnclaveApp manages the enclave state and dispatches operations. 
 struct EnclaveApp {
     enclave: Option<Enclave>,
     transfer_receiver: TransferReceiver,
@@ -94,6 +95,9 @@ impl EnclaveApp {
         (STATUS_OK, self.transfer_receiver.public_key().to_vec())
     }
 
+    // install_keys verifies the manager's evidence, decrypts the key-manager's envelope, 
+    // and initializes the enclave with the contained keys. 
+    // It returns a panic status if the keys are
     fn install_keys(&mut self, payload: &[u8]) -> (u8, Vec<u8>) {
         if self.enclave.is_some() {
             return (STATUS_BAD_REQUEST, b"enclave already initialized".to_vec());
@@ -145,6 +149,7 @@ impl EnclaveApp {
         }
     }
 
+    // enclave returns a reference to the initialized Enclave or an error status if not initialized.
     fn enclave(&self) -> Result<&Enclave, (u8, Vec<u8>)> {
         self.enclave.as_ref().ok_or_else(|| {
             (
@@ -205,6 +210,8 @@ impl EnclaveApp {
         }
     }
 
+    // local_transfer_attest produces a quote for the transfer key, 
+    // targeted at the provided QvE targetinfo.
     fn local_transfer_attest(&self, payload: &[u8]) -> (u8, Vec<u8>) {
         if payload.len() != QVE_TARGET_INFO_LEN {
             return (
@@ -221,6 +228,8 @@ impl EnclaveApp {
         }
     }
 
+    // qve_target_info returns the Targetinfo structure 
+    // needed to target local transfer attestation quotes at a QvE.
     fn qve_target_info(&self, _: &[u8]) -> (u8, Vec<u8>) {
         match qve_target_info() {
             Ok(target_info) => (STATUS_OK, target_info),
