@@ -3,18 +3,14 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
-use aesm_client::AesmClient;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
-use enclave_runner::{EnclaveBuilder, Library};
-use enclave_runner_sgx::EnclaveBuilder as SgxEnclaveBuilder;
-use sgxs_loaders::isgx::Device as SgxDevice;
 use star_attestation::{LOCAL_REPORT_LEN, QVE_TARGET_INFO_LEN, append_blob, take_blob};
 
 use crate::enclave::{ENCLAVE_PUBLIC_KEY_LEN, EnclaveError};
+use crate::env_or_default;
+use crate::sgx::{LibraryRuntime, build_sgxs};
 
-const SGX_TARGET: &str = "x86_64-fortanix-unknown-sgx";
 const STAR_KEY_MANAGER_SGXS: &str = "STAR_KEY_MANAGER_SGXS";
 const STAR_KEY_MANAGER_HEAP_SIZE: &str = "STAR_KEY_MANAGER_HEAP_SIZE";
 const STAR_KEY_MANAGER_STACK_SIZE: &str = "STAR_KEY_MANAGER_STACK_SIZE";
@@ -29,17 +25,12 @@ pub const DEFAULT_KEY_MANAGER_EXPORT_API: &str = "/star/key-manager/export";
 const DEFAULT_KEY_MANAGER_HEAP_SIZE: &str = "33554432";
 const DEFAULT_KEY_MANAGER_STACK_SIZE: &str = "131072";
 
-const MAX_PAYLOAD_LEN: usize = 16 * 1024 * 1024;
-
 const OP_INIT: u64 = 0;
 const OP_PUBLIC_KEY: u64 = 1;
 const OP_ATTEST: u64 = 4;
 const OP_EXPORT_KEYS: u64 = 5;
 const OP_QVE_TARGET_INFO: u64 = 6;
 const OP_LOCAL_ATTEST: u64 = 7;
-
-const STATUS_OK: u64 = 0;
-const STATUS_BUFFER_TOO_SMALL: u64 = 5;
 
 const PUBLIC_KEY_RESPONSE_CAPACITY: usize = 32;
 const ATTEST_RESPONSE_CAPACITY: usize = 32;
@@ -84,7 +75,7 @@ impl From<EnclaveError> for KeyManagerError {
 }
 
 pub struct KeyManagerRuntime {
-    library: KeyManagerLibraryRuntime,
+    library: LibraryRuntime,
     sealed_keys: Vec<u8>,
 }
 
@@ -103,10 +94,14 @@ pub struct RemoteKeyManagerRuntime {
 impl KeyManagerRuntime {
     pub fn from_env() -> Result<Self, EnclaveError> {
         let sgxs = default_key_manager_sgxs()?;
-        let library = KeyManagerLibraryRuntime::load(&sgxs)?;
+        let library = LibraryRuntime::load(&sgxs)?;
         let sealed_keys_path = sealed_keys_path();
         let init_payload = read_optional_sealed_keys(&sealed_keys_path)?;
-        let sealed_keys = library.call(OP_INIT, init_payload.as_deref().unwrap_or(&[]))?;
+        let sealed_keys = library.call(
+            OP_INIT,
+            init_payload.as_deref().unwrap_or(&[]),
+            initial_response_capacity(OP_INIT),
+        )?;
 
         if init_payload.as_deref() != Some(sealed_keys.as_slice()) {
             write_sealed_keys(&sealed_keys_path, &sealed_keys)?;
@@ -120,8 +115,8 @@ impl KeyManagerRuntime {
 
     pub fn from_env_with_sealed_keys(sealed_keys: &[u8]) -> Result<Self, EnclaveError> {
         let sgxs = default_key_manager_sgxs()?;
-        let library = KeyManagerLibraryRuntime::load(&sgxs)?;
-        let sealed_keys = library.call(OP_INIT, sealed_keys)?;
+        let library = LibraryRuntime::load(&sgxs)?;
+        let sealed_keys = library.call(OP_INIT, sealed_keys, initial_response_capacity(OP_INIT))?;
 
         Ok(KeyManagerRuntime {
             library,
@@ -170,7 +165,8 @@ impl KeyManagerRuntime {
     }
 
     fn call(&self, op: u64, payload: &[u8]) -> Result<Vec<u8>, EnclaveError> {
-        self.library.call(op, payload)
+        self.library
+            .call(op, payload, initial_response_capacity(op))
     }
 }
 
@@ -285,84 +281,6 @@ fn http_error(err: ureq::Error) -> EnclaveError {
     }
 }
 
-struct KeyManagerLibraryRuntime {
-    library: Library,
-}
-
-unsafe impl Send for KeyManagerLibraryRuntime {}
-unsafe impl Sync for KeyManagerLibraryRuntime {}
-
-impl KeyManagerLibraryRuntime {
-    fn load(sgxs: &PathBuf) -> Result<Self, EnclaveError> {
-        let mut device = SgxDevice::new()
-            .map_err(EnclaveError::Build)?
-            .einittoken_provider(AesmClient::new())
-            .build();
-
-        let sgx_builder = SgxEnclaveBuilder::new(sgxs);
-
-        let library = EnclaveBuilder::new(sgx_builder)
-            .build(&mut device)
-            .map_err(|err| EnclaveError::Library(err.to_string()))?;
-
-        Ok(Self { library })
-    }
-
-    fn call(&self, op: u64, payload: &[u8]) -> Result<Vec<u8>, EnclaveError> {
-        std::thread::scope(|scope| {
-            let handle = scope.spawn(|| call_library(&self.library, op, payload));
-            match handle.join() {
-                Ok(result) => result,
-                Err(panic) => std::panic::resume_unwind(panic),
-            }
-        })
-    }
-}
-
-fn call_library(library: &Library, op: u64, payload: &[u8]) -> Result<Vec<u8>, EnclaveError> {
-    let mut output = vec![0u8; initial_response_capacity(op)];
-
-    loop {
-        let (status, len) = unsafe {
-            library.call(
-                op,
-                payload.as_ptr() as u64,
-                payload.len() as u64,
-                output.as_mut_ptr() as u64,
-                output.len() as u64,
-            )
-        }
-        .map_err(|err| EnclaveError::Library(err.to_string()))?;
-
-        let len =
-            usize::try_from(len).map_err(|_| EnclaveError::ResponseTooLarge { len: usize::MAX })?;
-
-        if status == STATUS_BUFFER_TOO_SMALL {
-            if len > MAX_PAYLOAD_LEN {
-                return Err(EnclaveError::ResponseTooLarge { len });
-            }
-
-            output.resize(len, 0);
-            continue;
-        }
-
-        if len > output.len() {
-            return Err(EnclaveError::ResponseTooLarge { len });
-        }
-
-        output.truncate(len);
-
-        if status == STATUS_OK {
-            return Ok(output);
-        }
-
-        return Err(EnclaveError::Remote {
-            status,
-            payload: output,
-        });
-    }
-}
-
 fn initial_response_capacity(op: u64) -> usize {
     match op {
         OP_INIT => INIT_RESPONSE_CAPACITY,
@@ -417,100 +335,17 @@ fn default_key_manager_sgxs() -> Result<PathBuf, EnclaveError> {
 }
 
 fn build_key_manager_sgxs(manifest_path: &Path) -> Result<PathBuf, EnclaveError> {
-    let manifest_dir = manifest_path.parent().ok_or_else(|| {
-        EnclaveError::BuildFailed(format!(
-            "missing parent directory for {}",
-            manifest_path.display()
-        ))
-    })?;
-
-    run_command(
-        Command::new("cargo")
-            .current_dir(manifest_dir)
-            .arg("build")
-            .arg("--quiet")
-            .arg("--release")
-            .arg("--target")
-            .arg(SGX_TARGET)
-            .arg("--manifest-path")
-            .arg(manifest_path),
-    )?;
-
-    let target_dir = sgx_release_target_dir(manifest_dir, "key-manager")?;
-    let elf_path = target_dir.join("key-manager");
-    let sgxs_path = target_dir.join("key-manager.sgxs");
-
-    run_command(
-        Command::new("ftxsgx-elf2sgxs")
-            .arg(&elf_path)
-            .arg("--library")
-            .arg("--debug")
-            .arg("--heap-size")
-            .arg(env_or_default(
-                STAR_KEY_MANAGER_HEAP_SIZE,
-                DEFAULT_KEY_MANAGER_HEAP_SIZE,
-            ))
-            .arg("--stack-size")
-            .arg(env_or_default(
-                STAR_KEY_MANAGER_STACK_SIZE,
-                DEFAULT_KEY_MANAGER_STACK_SIZE,
-            ))
-            .arg("--threads")
-            .arg(default_key_manager_threads())
-            .arg("--output")
-            .arg(&sgxs_path),
-    )?;
-
-    Ok(sgxs_path)
-}
-
-fn sgx_release_target_dir(manifest_dir: &Path, binary_name: &str) -> Result<PathBuf, EnclaveError> {
-    let mut candidates = Vec::new();
-
-    if let Some(target_dir) = std::env::var_os("CARGO_TARGET_DIR") {
-        candidates.push(PathBuf::from(target_dir));
-    }
-
-    if let Some(parent) = manifest_dir.parent() {
-        candidates.push(parent.join("target"));
-    }
-
-    candidates.push(manifest_dir.join("target"));
-
-    for candidate in candidates {
-        let target_dir = candidate.join(SGX_TARGET).join("release");
-        if target_dir.join(binary_name).is_file() {
-            return Ok(target_dir);
-        }
-    }
-
-    Err(EnclaveError::BuildFailed(format!(
-        "cargo built {binary_name}, but the SGX ELF was not found"
-    )))
-}
-
-fn env_or_default(name: &str, default: &str) -> String {
-    std::env::var(name).unwrap_or_else(|_| default.to_string())
+    build_sgxs(
+        manifest_path,
+        "key-manager",
+        env_or_default(STAR_KEY_MANAGER_HEAP_SIZE, DEFAULT_KEY_MANAGER_HEAP_SIZE),
+        env_or_default(STAR_KEY_MANAGER_STACK_SIZE, DEFAULT_KEY_MANAGER_STACK_SIZE),
+        default_key_manager_threads(),
+    )
 }
 
 fn default_key_manager_threads() -> String {
     std::env::var(STAR_KEY_MANAGER_THREADS).unwrap_or_else(|_| "1".to_string())
-}
-
-fn run_command(command: &mut Command) -> Result<(), EnclaveError> {
-    let output = command.output().map_err(EnclaveError::Build)?;
-
-    if output.status.success() {
-        return Ok(());
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    Err(EnclaveError::BuildFailed(format!(
-        "{}\nstdout:\n{}\nstderr:\n{}",
-        output.status, stdout, stderr
-    )))
 }
 
 #[cfg(test)]

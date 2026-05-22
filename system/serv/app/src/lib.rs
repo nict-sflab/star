@@ -23,6 +23,7 @@ pub mod key_manager;
 pub mod key_manager_service;
 pub mod proxy;
 pub mod qve;
+mod sgx;
 pub mod tls;
 pub(crate) mod tls_utils;
 
@@ -30,7 +31,7 @@ pub fn all_prefix(max: u32) -> Vec<u32> {
     (0u32..max).collect()
 }
 
-fn env_or_default(name: &str, default: &str) -> String {
+pub(crate) fn env_or_default(name: &str, default: &str) -> String {
     match env::var(name) {
         Ok(value) => value,
         Err(_) => default.to_string(),
