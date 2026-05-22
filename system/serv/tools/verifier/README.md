@@ -15,27 +15,27 @@ the enclave measurement to the enclave public key.
 Inspect measurements and the attested public key:
 
 ```bash
-cargo run --manifest-path tools/Cargo.toml -- inspect < quote.txt
+cargo run --manifest-path tools/verifier/Cargo.toml -- inspect < quote.txt
 ```
 
 Verify a quote:
 
 ```bash
-cargo run --manifest-path tools/Cargo.toml -- verify \
+cargo run --manifest-path tools/verifier/Cargo.toml -- verify \
   --mrsigner <32-byte hex MRSIGNER> \
   --mrenclave <32-byte hex MRENCLAVE> \
   --public-key <32-byte hex public key> \
   --allow-debug \
   --allow-advisory \
+  --pccs-url <PCCS URL> \
   < quote.txt
 ```
 
 `--mrenclave` and `--public-key` are optional if signer-only policy and
 displaying the attested key are acceptable. `--allow-debug` must only be used for
 development enclaves. `--allow-advisory` accepts Intel DCAP QVL results such as
-`CONFIG_NEEDED`, `OUT_OF_DATE`, and `SW_HARDENING_NEEDED`; omit it when the
-policy requires an up-to-date `OK` result.
+`ConfigurationNeeded`, `OutOfDate`, and `SWHardeningNeeded`; omit it when the
+policy requires an up-to-date `UpToDate` result.
 
-The verifier loads Intel DCAP QVL from `--qvl`, `SGX_DCAP_QVL`, or
-`libsgx_dcap_quoteverify.so`. The quote provider path can be set with `--qpl` or
-`SGX_DCAP_QPL`.
+The verifier uses the pure Rust `dcap-qvl` crate and fetches collateral from
+`--pccs-url`, `PCCS_URL`, or the crate's default PCCS URL.

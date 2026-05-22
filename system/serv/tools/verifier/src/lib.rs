@@ -1,44 +1,37 @@
-use std::ffi::{CString, c_void};
-use std::os::raw::c_long;
-use std::path::{Path, PathBuf};
-use std::ptr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::{
     Engine as _,
     engine::general_purpose::{URL_SAFE, URL_SAFE_NO_PAD},
 };
-use libloading::{Library, Symbol};
-use star_attestation::QuotePolicy;
-pub use star_attestation::{
-    CHALLENGE_LEN, MEASUREMENT_LEN, PUBLIC_KEY_LEN, ParsedQuote, parse_quote,
-    public_key_from_report_data,
-};
+use dcap_qvl::collateral::CollateralClient;
+use dcap_qvl::quote::Quote;
+use dcap_qvl::tcb_info::TcbStatus;
+use dcap_qvl::verify::{QuoteVerifier, VerifiedReport};
+use parity_scale_codec::Decode;
 
-const SGX_QL_SUCCESS: u32 = 0x0000;
-const SGX_QL_QV_RESULT_OK: u32 = 0x0000;
-const SGX_QL_QV_RESULT_CONFIG_NEEDED: u32 = tee_qv_error(0x0001);
-const SGX_QL_QV_RESULT_OUT_OF_DATE: u32 = tee_qv_error(0x0002);
-const SGX_QL_QV_RESULT_OUT_OF_DATE_CONFIG_NEEDED: u32 = tee_qv_error(0x0003);
-const SGX_QL_QV_RESULT_INVALID_SIGNATURE: u32 = tee_qv_error(0x0004);
-const SGX_QL_QV_RESULT_REVOKED: u32 = tee_qv_error(0x0005);
-const SGX_QL_QV_RESULT_UNSPECIFIED: u32 = tee_qv_error(0x0006);
-const SGX_QL_QV_RESULT_SW_HARDENING_NEEDED: u32 = tee_qv_error(0x0007);
-const SGX_QL_QV_RESULT_CONFIG_AND_SW_HARDENING_NEEDED: u32 = tee_qv_error(0x0008);
-const SGX_QL_QV_RESULT_TD_RELAUNCH_ADVISED: u32 = tee_qv_error(0x0009);
-const SGX_QL_QV_RESULT_TD_RELAUNCH_ADVISED_CONFIG_NEEDED: u32 = tee_qv_error(0x000a);
-const SGX_QV_QPL_PATH: i32 = 1;
+pub const CHALLENGE_LEN: usize = 64;
+pub const MEASUREMENT_LEN: usize = 32;
+pub const PUBLIC_KEY_LEN: usize = 32;
 
-const fn tee_qv_error(value: u32) -> u32 {
-    0x0000a000 | value
-}
+const SGX_QL_ALG_ECDSA_P256: u16 = 2;
 
 pub type Result<T> = std::result::Result<T, String>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedQuote {
+    pub mrenclave: [u8; MEASUREMENT_LEN],
+    pub mrsigner: [u8; MEASUREMENT_LEN],
+    pub report_data: [u8; CHALLENGE_LEN],
+    pub debug: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DcapVerification {
-    pub collateral_expiration_status: u32,
-    pub quote_verification_result: u32,
+    pub status: TcbStatus,
+    pub advisory_ids: Vec<String>,
+    pub qe_status: TcbStatus,
+    pub platform_status: TcbStatus,
 }
 
 #[derive(Debug, Clone)]
@@ -48,8 +41,7 @@ pub struct QuoteVerificationPolicy<'a> {
     pub expected_public_key: Option<&'a [u8; PUBLIC_KEY_LEN]>,
     pub allow_debug: bool,
     pub allow_advisory: bool,
-    pub qvl_library: Option<&'a Path>,
-    pub qpl_library: Option<&'a Path>,
+    pub pccs_url: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,9 +52,6 @@ pub struct VerifiedQuote {
 }
 
 pub fn verify_quote(quote: &[u8], policy: &QuoteVerificationPolicy<'_>) -> Result<VerifiedQuote> {
-    let dcap = verify_quote_with_dcap_qvl(quote, policy.qvl_library, policy.qpl_library)?;
-    validate_qv_result(dcap.quote_verification_result, policy.allow_advisory)?;
-
     let parsed = parse_quote(quote)?;
     let public_key = public_key_from_report_data(&parsed)?;
     if let Some(expected_public_key) = policy.expected_public_key {
@@ -70,8 +59,15 @@ pub fn verify_quote(quote: &[u8], policy: &QuoteVerificationPolicy<'_>) -> Resul
             return Err("attested public key does not match expected public key".to_string());
         }
     }
-    let local_policy = quote_policy_from_verification_policy(policy);
-    star_attestation::verify_policy(&parsed, &local_policy)?;
+    verify_policy(
+        &parsed,
+        policy.expected_mrsigner,
+        policy.expected_mrenclave,
+        policy.allow_debug,
+    )?;
+
+    let dcap = verify_quote_with_dcap_qvl(quote, policy.pccs_url, policy.allow_debug)?;
+    validate_dcap_status(dcap.status, policy.allow_advisory)?;
 
     Ok(VerifiedQuote {
         parsed,
@@ -80,80 +76,87 @@ pub fn verify_quote(quote: &[u8], policy: &QuoteVerificationPolicy<'_>) -> Resul
     })
 }
 
-fn quote_policy_from_verification_policy(policy: &QuoteVerificationPolicy<'_>) -> QuotePolicy {
-    QuotePolicy {
-        expected_mrenclave: policy.expected_mrenclave.copied(),
-        expected_mrsigner: Some(*policy.expected_mrsigner),
-        allow_debug: policy.allow_debug,
-        allow_advisory: policy.allow_advisory,
-    }
-}
-
 pub fn verify_quote_with_dcap_qvl(
     quote: &[u8],
-    qvl_library: Option<&Path>,
-    qpl_library: Option<&Path>,
+    pccs_url: Option<&str>,
+    allow_debug: bool,
 ) -> Result<DcapVerification> {
-    type SgxQvVerifyQuote = unsafe extern "C" fn(
-        p_quote: *const u8,
-        quote_size: u32,
-        p_quote_collateral: *const c_void,
-        expiration_check_date: c_long,
-        p_collateral_expiration_status: *mut u32,
-        p_quote_verification_result: *mut u32,
-        p_qve_report_info: *mut c_void,
-        supplemental_data_size: u32,
-        p_supplemental_data: *mut u8,
-    ) -> u32;
+    let verified = fetch_collateral_and_verify_quote(quote, pccs_url, allow_debug)?;
+    let final_status = verified.platform_status.clone().merge(&verified.qe_status);
 
-    let library = load_qvl(qvl_library)?;
-    configure_qpl(&library, qpl_library)?;
-
-    let verify: Symbol<SgxQvVerifyQuote> = unsafe {
-        library
-            .get(b"sgx_qv_verify_quote")
-            .map_err(|err| format!("QVL does not export sgx_qv_verify_quote: {err}"))?
-    };
-
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|err| format!("system clock is before UNIX_EPOCH: {err}"))?
-        .as_secs() as c_long;
-
-    let quote_size: u32 = quote
-        .len()
-        .try_into()
-        .map_err(|_| "quote is too large for sgx_qv_verify_quote".to_string())?;
-    let mut collateral_expiration_status = 1u32;
-    let mut quote_verification_result = SGX_QL_QV_RESULT_UNSPECIFIED;
-
-    let status = unsafe {
-        verify(
-            quote.as_ptr(),
-            quote_size,
-            ptr::null(),
-            now,
-            &mut collateral_expiration_status,
-            &mut quote_verification_result,
-            ptr::null_mut(),
-            0,
-            ptr::null_mut(),
-        )
-    };
-
-    if status != SGX_QL_SUCCESS {
-        return Err(format!(
-            "sgx_qv_verify_quote failed: {} / 0x{status:04x}",
-            quote3_error_name(status)
-        ));
-    }
-    if collateral_expiration_status != 0 {
-        return Err("DCAP collateral is expired".to_string());
-    }
     Ok(DcapVerification {
-        collateral_expiration_status,
-        quote_verification_result,
+        status: final_status.status,
+        advisory_ids: final_status.advisory_ids,
+        qe_status: verified.qe_status.status,
+        platform_status: verified.platform_status.status,
     })
+}
+
+fn fetch_collateral_and_verify_quote(
+    quote: &[u8],
+    pccs_url: Option<&str>,
+    allow_debug: bool,
+) -> Result<VerifiedReport> {
+    let runtime = tokio::runtime::Runtime::new()
+        .map_err(|err| format!("create Tokio runtime for DCAP collateral fetch: {err}"))?;
+
+    runtime.block_on(async {
+        let client = match pccs_url {
+            Some(url) => CollateralClient::with_default_http(url)
+                .map_err(|err| format!("create PCCS client: {err}"))?,
+            None => {
+                CollateralClient::from_env().map_err(|err| format!("create PCCS client: {err}"))?
+            }
+        };
+        let collateral = client
+            .fetch(quote)
+            .await
+            .map_err(|err| format!("fetch DCAP collateral: {err}"))?;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|err| format!("system clock is before UNIX_EPOCH: {err}"))?
+            .as_secs();
+
+        QuoteVerifier::new_prod()
+            .allow_debug(allow_debug)
+            .verify(quote, &collateral, now)
+            .map_err(|err| format!("verify DCAP quote with dcap-qvl: {err}"))
+    })
+}
+
+pub fn parse_quote(quote: &[u8]) -> Result<ParsedQuote> {
+    let quote = decode_dcap_quote(quote)?;
+    if quote.header.attestation_key_type != SGX_QL_ALG_ECDSA_P256 {
+        return Err("quote attestation key is not ECDSA/P-256".to_string());
+    }
+
+    let report = quote
+        .report
+        .as_sgx()
+        .ok_or_else(|| "quote is not for an SGX enclave".to_string())?;
+    Ok(ParsedQuote {
+        mrenclave: report.mr_enclave,
+        mrsigner: report.mr_signer,
+        report_data: report.report_data,
+        debug: report.attributes[0] & 0x02 != 0,
+    })
+}
+
+fn decode_dcap_quote(quote: &[u8]) -> Result<Quote> {
+    Quote::decode(&mut &quote[..]).map_err(|err| format!("parse DCAP quote: {err}"))
+}
+
+pub fn public_key_from_report_data(parsed: &ParsedQuote) -> Result<[u8; PUBLIC_KEY_LEN]> {
+    if parsed.report_data[PUBLIC_KEY_LEN..]
+        .iter()
+        .any(|byte| *byte != 0)
+    {
+        return Err("report_data is not public_key || zero padding".to_string());
+    }
+
+    parsed.report_data[..PUBLIC_KEY_LEN]
+        .try_into()
+        .map_err(|_| "report_data is too short for public key".to_string())
 }
 
 pub fn verify_policy(
@@ -162,15 +165,20 @@ pub fn verify_policy(
     expected_mrenclave: Option<&[u8; MEASUREMENT_LEN]>,
     allow_debug: bool,
 ) -> Result<()> {
-    star_attestation::verify_policy(
-        parsed,
-        &QuotePolicy {
-            expected_mrenclave: expected_mrenclave.copied(),
-            expected_mrsigner: Some(*expected_mrsigner),
-            allow_debug,
-            allow_advisory: false,
-        },
-    )
+    if &parsed.mrsigner != expected_mrsigner {
+        return Err("MRSIGNER does not match the trusted signer".to_string());
+    }
+    if let Some(expected_mrenclave) = expected_mrenclave {
+        if &parsed.mrenclave != expected_mrenclave {
+            return Err("MRENCLAVE does not match the trusted enclave measurement".to_string());
+        }
+    }
+    if parsed.debug && !allow_debug {
+        return Err(
+            "debug enclave is not trusted; pass --allow-debug only for development".to_string(),
+        );
+    }
+    Ok(())
 }
 
 pub fn parse_hex_array<const N: usize>(input: &str, name: &str) -> Result<[u8; N]> {
@@ -272,115 +280,39 @@ fn quote_token_candidates(token: &str) -> impl Iterator<Item = &str> {
     .filter(|candidate| !candidate.is_empty())
 }
 
-fn load_qvl(qvl_library: Option<&Path>) -> Result<Library> {
-    let env_path = std::env::var_os("SGX_DCAP_QVL").map(PathBuf::from);
-    let path = qvl_library.map(PathBuf::from).or(env_path);
-
-    match path {
-        Some(path) => unsafe { Library::new(&path) }
-            .map_err(|err| format!("load QVL {}: {err}", path.display())),
-        None => unsafe { Library::new("libsgx_dcap_quoteverify.so") }.map_err(|err| {
-            format!("load QVL libsgx_dcap_quoteverify.so: {err}; set SGX_DCAP_QVL or pass --qvl")
-        }),
+pub fn dcap_status_name(status: TcbStatus) -> &'static str {
+    match status {
+        TcbStatus::UpToDate => "UpToDate",
+        TcbStatus::ConfigurationNeeded => "ConfigurationNeeded",
+        TcbStatus::SWHardeningNeeded => "SWHardeningNeeded",
+        TcbStatus::ConfigurationAndSWHardeningNeeded => "ConfigurationAndSWHardeningNeeded",
+        TcbStatus::OutOfDate => "OutOfDate",
+        TcbStatus::OutOfDateConfigurationNeeded => "OutOfDateConfigurationNeeded",
+        TcbStatus::Revoked => "Revoked",
     }
 }
 
-fn configure_qpl(library: &Library, qpl_library: Option<&Path>) -> Result<()> {
-    type SgxQvSetPath = unsafe extern "C" fn(path_type: i32, p_path: *const i8) -> u32;
-
-    let env_path = std::env::var_os("SGX_DCAP_QPL").map(PathBuf::from);
-    let Some(path) = qpl_library.map(PathBuf::from).or(env_path) else {
-        return Ok(());
-    };
-
-    let set_path: Symbol<SgxQvSetPath> = unsafe {
-        library
-            .get(b"sgx_qv_set_path")
-            .map_err(|err| format!("QVL does not export sgx_qv_set_path: {err}"))?
-    };
-    let path = CString::new(path.to_string_lossy().as_bytes())
-        .map_err(|_| "QPL path contains a NUL byte".to_string())?;
-    let status = unsafe { set_path(SGX_QV_QPL_PATH, path.as_ptr()) };
-
-    if status == SGX_QL_SUCCESS {
-        Ok(())
-    } else {
-        Err(format!(
-            "sgx_qv_set_path(SGX_QV_QPL_PATH) failed: {} / 0x{status:04x}",
-            quote3_error_name(status)
-        ))
-    }
+pub fn dcap_status_is_ok(status: TcbStatus) -> bool {
+    status == TcbStatus::UpToDate
 }
 
-pub fn qv_result_name(value: u32) -> &'static str {
-    match value {
-        SGX_QL_QV_RESULT_OK => "OK",
-        SGX_QL_QV_RESULT_CONFIG_NEEDED => "CONFIG_NEEDED",
-        SGX_QL_QV_RESULT_OUT_OF_DATE => "OUT_OF_DATE",
-        SGX_QL_QV_RESULT_OUT_OF_DATE_CONFIG_NEEDED => "OUT_OF_DATE_CONFIG_NEEDED",
-        SGX_QL_QV_RESULT_INVALID_SIGNATURE => "INVALID_SIGNATURE",
-        SGX_QL_QV_RESULT_REVOKED => "REVOKED",
-        SGX_QL_QV_RESULT_UNSPECIFIED => "UNSPECIFIED",
-        SGX_QL_QV_RESULT_SW_HARDENING_NEEDED => "SW_HARDENING_NEEDED",
-        SGX_QL_QV_RESULT_CONFIG_AND_SW_HARDENING_NEEDED => "CONFIG_AND_SW_HARDENING_NEEDED",
-        SGX_QL_QV_RESULT_TD_RELAUNCH_ADVISED => "TD_RELAUNCH_ADVISED",
-        SGX_QL_QV_RESULT_TD_RELAUNCH_ADVISED_CONFIG_NEEDED => "TD_RELAUNCH_ADVISED_CONFIG_NEEDED",
-        _ => "UNKNOWN",
-    }
-}
-
-pub fn qv_result_is_ok(value: u32) -> bool {
-    value == SGX_QL_QV_RESULT_OK
-}
-
-pub fn qv_result_is_advisory(value: u32) -> bool {
+pub fn dcap_status_is_advisory(status: TcbStatus) -> bool {
     matches!(
-        value,
-        SGX_QL_QV_RESULT_CONFIG_NEEDED
-            | SGX_QL_QV_RESULT_OUT_OF_DATE
-            | SGX_QL_QV_RESULT_OUT_OF_DATE_CONFIG_NEEDED
-            | SGX_QL_QV_RESULT_SW_HARDENING_NEEDED
-            | SGX_QL_QV_RESULT_CONFIG_AND_SW_HARDENING_NEEDED
+        status,
+        TcbStatus::ConfigurationNeeded
+            | TcbStatus::SWHardeningNeeded
+            | TcbStatus::ConfigurationAndSWHardeningNeeded
+            | TcbStatus::OutOfDate
+            | TcbStatus::OutOfDateConfigurationNeeded
     )
 }
 
-pub fn validate_qv_result(result: u32, allow_advisory: bool) -> Result<()> {
-    if qv_result_is_ok(result) || (allow_advisory && qv_result_is_advisory(result)) {
+pub fn validate_dcap_status(status: TcbStatus, allow_advisory: bool) -> Result<()> {
+    if dcap_status_is_ok(status) || (allow_advisory && dcap_status_is_advisory(status)) {
         return Ok(());
     }
 
-    Err(format!(
-        "quote verification result is {} / 0x{result:08x}",
-        qv_result_name(result)
-    ))
-}
-
-pub fn quote3_error_name(value: u32) -> &'static str {
-    match value {
-        0x0000 => "SGX_QL_SUCCESS",
-        0xe001 => "SGX_QL_ERROR_UNEXPECTED",
-        0xe002 => "SGX_QL_ERROR_INVALID_PARAMETER",
-        0xe003 => "SGX_QL_ERROR_OUT_OF_MEMORY",
-        0xe00d => "SGX_QL_INTERFACE_UNAVAILABLE",
-        0xe011 => "SGX_QL_NO_PLATFORM_CERT_DATA",
-        0xe019 => "SGX_QL_NETWORK_ERROR",
-        0xe01b => "SGX_QL_NO_QUOTE_COLLATERAL_DATA",
-        0xe01d => "SGX_QL_QUOTE_FORMAT_UNSUPPORTED",
-        0xe022 => "SGX_QL_PCK_CERT_CHAIN_ERROR",
-        0xe023 => "SGX_QL_TCBINFO_UNSUPPORTED_FORMAT",
-        0xe024 => "SGX_QL_TCBINFO_MISMATCH",
-        0xe025 => "SGX_QL_QEIDENTITY_UNSUPPORTED_FORMAT",
-        0xe026 => "SGX_QL_QEIDENTITY_MISMATCH",
-        0xe034 => "SGX_QL_UNABLE_TO_GET_COLLATERAL",
-        0xe03b => "SGX_QL_ERROR_QVL_QVE_MISMATCH",
-        0xe052 => "SGX_QL_PSW_NOT_AVAILABLE",
-        0xe053 => "SGX_QL_COLLATERAL_VERSION_NOT_SUPPORTED",
-        0xe064 => "SGX_QL_SUPPLEMENTAL_DATA_VERSION_NOT_SUPPORTED",
-        0xe065 => "SGX_QL_ROOT_CA_UNTRUSTED",
-        0xe066 => "SGX_QL_TCB_NOT_SUPPORTED",
-        0xe068 => "SGX_QL_RESULT_INVALID_SIGNATURE",
-        _ => "UNKNOWN",
-    }
+    Err(format!("quote TCB status is {}", dcap_status_name(status)))
 }
 
 #[cfg(test)]
@@ -390,7 +322,7 @@ mod tests {
     const QUOTE_HEADER_LEN: usize = 48;
     const SGX_REPORT_BODY_LEN: usize = 384;
     const QUOTE_V3: u16 = 3;
-    const SGX_QL_ALG_ECDSA_P256: u16 = 2;
+    const AUTH_DATA_V3_LEN: usize = 64 + 64 + 384 + 64 + 2 + 2 + 4;
 
     fn fake_quote(
         mrenclave: [u8; MEASUREMENT_LEN],
@@ -398,7 +330,8 @@ mod tests {
         public_key: [u8; PUBLIC_KEY_LEN],
         debug: bool,
     ) -> Vec<u8> {
-        let mut quote = vec![0u8; QUOTE_HEADER_LEN + SGX_REPORT_BODY_LEN];
+        let auth_data_len_offset = QUOTE_HEADER_LEN + SGX_REPORT_BODY_LEN;
+        let mut quote = vec![0u8; auth_data_len_offset + 4 + AUTH_DATA_V3_LEN];
         quote[0..2].copy_from_slice(&QUOTE_V3.to_le_bytes());
         quote[2..4].copy_from_slice(&SGX_QL_ALG_ECDSA_P256.to_le_bytes());
 
@@ -408,6 +341,8 @@ mod tests {
         quote[report + 64..report + 96].copy_from_slice(&mrenclave);
         quote[report + 128..report + 160].copy_from_slice(&mrsigner);
         quote[report + 320..report + 352].copy_from_slice(&public_key);
+        quote[auth_data_len_offset..auth_data_len_offset + 4]
+            .copy_from_slice(&(AUTH_DATA_V3_LEN as u32).to_le_bytes());
         quote
     }
 
@@ -451,11 +386,11 @@ mod tests {
     }
 
     #[test]
-    fn names_dcap_qvl_results() {
-        assert_eq!(qv_result_name(SGX_QL_QV_RESULT_OK), "OK");
-        assert_eq!(qv_result_name(SGX_QL_QV_RESULT_OUT_OF_DATE), "OUT_OF_DATE");
-        assert!(qv_result_is_advisory(SGX_QL_QV_RESULT_OUT_OF_DATE));
-        assert!(!qv_result_is_advisory(SGX_QL_QV_RESULT_INVALID_SIGNATURE));
+    fn names_dcap_statuses() {
+        assert_eq!(dcap_status_name(TcbStatus::UpToDate), "UpToDate");
+        assert_eq!(dcap_status_name(TcbStatus::OutOfDate), "OutOfDate");
+        assert!(dcap_status_is_advisory(TcbStatus::OutOfDate));
+        assert!(!dcap_status_is_advisory(TcbStatus::Revoked));
     }
 
     #[test]

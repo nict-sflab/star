@@ -490,8 +490,7 @@ fn public_key_attestation_quote_verifies_with_tools_policy() {
         expected_public_key: Some(&public_key),
         allow_debug: true,
         allow_advisory: true,
-        qvl_library: None,
-        qpl_library: None,
+        pccs_url: None,
     };
     let verified = star_tools::verify_quote(&quote, &policy).expect("verify quote with tools");
 

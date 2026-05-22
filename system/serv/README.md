@@ -183,7 +183,7 @@ Keep `key-manager.keys.sealed` on the key-manager host; it is sealed with SGX
 The verifier reads a raw quote, a base64 quote, or a startup log from stdin:
 
 ```bash
-cargo run --manifest-path tools/Cargo.toml --release -- inspect \
+cargo run --manifest-path tools/verifier/Cargo.toml --release -- inspect \
   < /tmp/star-app-attest.log
 ```
 
@@ -197,20 +197,21 @@ Use measurements from `inspect`:
 ```bash
 . /etc/set-environment
 
-cargo run --manifest-path tools/Cargo.toml --release -- verify \
+cargo run --manifest-path tools/verifier/Cargo.toml --release -- verify \
   --mrsigner <32-byte hex MRSIGNER> \
   --mrenclave <32-byte hex MRENCLAVE> \
   --public-key <32-byte hex public key> \
   --allow-debug \
+  --pccs-url <PCCS URL> \
   < /tmp/star-app-attest.log
 ```
 
 For development enclaves, `--allow-debug` is required when the quote debug flag
-is true. If Intel DCAP QVL returns an advisory result such as `OUT_OF_DATE`,
+is true. If DCAP verification returns an advisory TCB status such as `OutOfDate`,
 verification fails by default; pass `--allow-advisory` only when that is accepted
 by the local policy.
 
-The verifier loads QVL from `--qvl`, `SGX_DCAP_QVL`, or
-`libsgx_dcap_quoteverify.so`. The quote provider path can be set with `--qpl` or
-`SGX_DCAP_QPL`. Startup key sharing uses QvE report evidence; if QvE is not in
-a standard library directory, set `SGX_DCAP_QVE` to `libsgx_qve.signed.so.1`.
+The verifier uses the pure Rust `dcap-qvl` crate and fetches collateral from
+`--pccs-url`, `PCCS_URL`, or the crate's default PCCS URL. Startup key sharing
+still uses QvE report evidence; if QvE is not in a standard library directory,
+set `SGX_DCAP_QVE` to `libsgx_qve.signed.so.1`.

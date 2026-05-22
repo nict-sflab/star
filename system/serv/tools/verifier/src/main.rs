@@ -1,11 +1,10 @@
 use std::env;
 use std::io::{self, Read};
-use std::path::PathBuf;
 
 use star_tools::{
-    MEASUREMENT_LEN, PUBLIC_KEY_LEN, ParsedQuote, QuoteVerificationPolicy, VerifiedQuote,
-    decode_quote_input, hex, parse_hex_array, parse_quote, public_key_from_report_data,
-    qv_result_is_ok, qv_result_name, verify_quote,
+    DcapVerification, MEASUREMENT_LEN, PUBLIC_KEY_LEN, ParsedQuote, QuoteVerificationPolicy,
+    VerifiedQuote, dcap_status_is_ok, dcap_status_name, decode_quote_input, hex, parse_hex_array,
+    parse_quote, public_key_from_report_data, verify_quote,
 };
 
 fn main() {
@@ -45,8 +44,7 @@ fn command_verify(mut args: Vec<String>) -> Result<(), String> {
         optional_hex::<PUBLIC_KEY_LEN>(&mut args, "--public-key", "public key")?;
     let allow_debug = take_flag(&mut args, "--allow-debug");
     let allow_advisory = take_flag(&mut args, "--allow-advisory");
-    let qvl = optional_path(&mut args, "--qvl")?;
-    let qpl = optional_path(&mut args, "--qpl")?;
+    let pccs_url = take_value(&mut args, "--pccs-url")?;
     reject_extra(&args)?;
 
     let quote = read_stdin_quote()?;
@@ -56,12 +54,11 @@ fn command_verify(mut args: Vec<String>) -> Result<(), String> {
         expected_public_key: expected_public_key.as_ref(),
         allow_debug,
         allow_advisory,
-        qvl_library: qvl.as_deref(),
-        qpl_library: qpl.as_deref(),
+        pccs_url: pccs_url.as_deref(),
     };
     let verified = verify_quote(&quote, &policy)?;
     print_verified_quote_summary(&quote, &verified);
-    print_qv_result(verified.dcap.quote_verification_result);
+    print_dcap_status(&verified.dcap);
     println!("report_data public key binding OK");
     println!("local policy OK");
     Ok(())
@@ -75,14 +72,20 @@ fn command_inspect(args: Vec<String>) -> Result<(), String> {
     Ok(())
 }
 
-fn print_qv_result(result: u32) {
-    if qv_result_is_ok(result) {
-        println!("DCAP quote verification OK: {}", qv_result_name(result));
+fn print_dcap_status(dcap: &DcapVerification) {
+    if dcap_status_is_ok(dcap.status) {
+        println!(
+            "DCAP quote verification OK: {}",
+            dcap_status_name(dcap.status)
+        );
     } else {
         println!(
-            "DCAP quote verification advisory accepted: {} / 0x{result:08x}",
-            qv_result_name(result)
+            "DCAP quote verification advisory accepted: {}",
+            dcap_status_name(dcap.status)
         );
+    }
+    if !dcap.advisory_ids.is_empty() {
+        println!("advisory IDs: {}", dcap.advisory_ids.join(","));
     }
 }
 
@@ -132,10 +135,6 @@ fn optional_hex<const N: usize>(
         .transpose()
 }
 
-fn optional_path(args: &mut Vec<String>, flag: &str) -> Result<Option<PathBuf>, String> {
-    Ok(take_value(args, flag)?.map(PathBuf::from))
-}
-
 fn required_value(args: &mut Vec<String>, flag: &str) -> Result<String, String> {
     take_value(args, flag)?.ok_or_else(|| format!("missing required {flag}"))
 }
@@ -179,6 +178,6 @@ fn print_usage() {
     eprintln!(
         "Usage:
   star_tools inspect < quote_or_startup_log.txt
-  star_tools verify --mrsigner HEX [--mrenclave HEX] [--public-key HEX] [--allow-debug] [--allow-advisory] [--qvl PATH] [--qpl PATH] < quote_or_startup_log.txt"
+  star_tools verify --mrsigner HEX [--mrenclave HEX] [--public-key HEX] [--allow-debug] [--allow-advisory] [--pccs-url URL] < quote_or_startup_log.txt"
     );
 }
