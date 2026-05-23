@@ -21,12 +21,12 @@ use star_attestation::qve;
 pub mod api;
 pub mod enclave;
 pub mod filter;
-pub mod key_manager;
-pub mod key_manager_service;
 pub mod proxy;
 mod sgx;
 pub mod tls;
 pub(crate) mod tls_utils;
+
+pub use key_manager_service::KeyManagerRuntime;
 
 pub fn all_prefix(max: u32) -> Vec<u32> {
     (0u32..max).collect()

@@ -10,10 +10,10 @@ use criterion::{BatchSize, Criterion, Throughput, black_box, criterion_group, cr
 use rand_core::OsRng;
 use simple_filter_box::{core::Entry, dashmap::DashMapFilterBox};
 use star_app::{
-    benchmark_key_bundle,
+    KeyManagerRuntime,
     enclave::{EnclaveRuntime, EnclaveRuntimes},
     filter::StarFilter,
-    install_benchmark_keys_for_enclave, install_benchmark_keys_for_pool,
+    install_key_manager_keys_for_enclave, install_key_manager_keys_for_pool,
 };
 use star_core::{client::User, secure_channel::client::SecureChannelClient};
 use tokio::{
@@ -121,14 +121,14 @@ impl TokenRequestGenerator {
 fn build_keyed_filter_and_request_generator() -> (HashMapStarFilter, TokenRequestGenerator) {
     let _aesm_proxy = common::aesm_proxy::AesmProxyGuard::start();
 
-    let key_bundle = benchmark_key_bundle().expect("benchmark key bundle");
+    let key_manager = KeyManagerRuntime::from_env_with_sealed_keys(&[]).expect("key manager");
     let filter_enclave =
         EnclaveRuntimes::from_env(filter_enclave_count()).expect("filter enclave pool");
     let issue_enclave = EnclaveRuntime::from_env().expect("issue enclave");
 
-    install_benchmark_keys_for_pool(&filter_enclave, &key_bundle)
+    install_key_manager_keys_for_pool(&key_manager, &filter_enclave)
         .expect("install filter enclave benchmark keys");
-    install_benchmark_keys_for_enclave(&issue_enclave, &key_bundle)
+    install_key_manager_keys_for_enclave(&key_manager, &issue_enclave)
         .expect("install issue enclave benchmark keys");
 
     let filter = StarFilter::new(
@@ -368,10 +368,10 @@ fn bench_diagnostics(c: &mut Criterion) {
     let _aesm_proxy = common::aesm_proxy::AesmProxyGuard::start();
 
     let rt = current_thread_runtime();
-    let key_bundle = benchmark_key_bundle().expect("benchmark key bundle");
+    let key_manager = KeyManagerRuntime::from_env_with_sealed_keys(&[]).expect("key manager");
 
     let request_enclave = EnclaveRuntime::from_env().expect("request enclave");
-    install_benchmark_keys_for_enclave(&request_enclave, &key_bundle)
+    install_key_manager_keys_for_enclave(&key_manager, &request_enclave)
         .expect("install request enclave benchmark keys");
     let request = Arc::new(build_request(&request_enclave));
 
@@ -380,7 +380,7 @@ fn bench_diagnostics(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(1));
 
     let public_key_enclave = EnclaveRuntime::from_env().expect("public key enclave");
-    install_benchmark_keys_for_enclave(&public_key_enclave, &key_bundle)
+    install_key_manager_keys_for_enclave(&key_manager, &public_key_enclave)
         .expect("install public key enclave benchmark keys");
     let public_key_enclave = Arc::new(StdMutex::new(public_key_enclave));
 
@@ -399,7 +399,7 @@ fn bench_diagnostics(c: &mut Criterion) {
     });
 
     let issue_token_enclave = EnclaveRuntime::from_env().expect("issue token enclave");
-    install_benchmark_keys_for_enclave(&issue_token_enclave, &key_bundle)
+    install_key_manager_keys_for_enclave(&key_manager, &issue_token_enclave)
         .expect("install issue token enclave benchmark keys");
     let issue_token_enclave = Arc::new(StdMutex::new(issue_token_enclave));
 

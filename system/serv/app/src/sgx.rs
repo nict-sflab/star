@@ -109,11 +109,11 @@ fn release_target_dir(manifest_dir: &Path, binary_name: &str) -> Result<PathBuf,
         candidates.push(PathBuf::from(target_dir));
     }
 
-    if let Some(parent) = manifest_dir.parent() {
-        candidates.push(parent.join("target"));
+    let mut current = Some(manifest_dir);
+    while let Some(path) = current {
+        candidates.push(path.join("target"));
+        current = path.parent();
     }
-
-    candidates.push(manifest_dir.join("target"));
 
     for candidate in candidates {
         let target_dir = candidate.join(SGX_TARGET).join("release");

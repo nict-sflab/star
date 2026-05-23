@@ -497,7 +497,7 @@ pub fn take_u32_be(payload: &mut &[u8]) -> Result<u32> {
     Ok(u32::from_be_bytes(bytes))
 }
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", any(unix, windows, libloading_docs)))]
 pub mod qve;
 
 pub fn parse_quote(quote: &[u8]) -> Result<ParsedQuote> {

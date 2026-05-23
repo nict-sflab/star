@@ -308,7 +308,7 @@ impl EnclaveRuntime {
 }
 
 fn install_key_manager_keys_for_runtime(
-    key_manager: &crate::key_manager::KeyManagerRuntime,
+    key_manager: &crate::KeyManagerRuntime,
     recipient: &EnclaveRuntime,
 ) -> Result<(), EnclaveError> {
     let key_manager_quote = key_manager
@@ -328,7 +328,11 @@ fn install_key_manager_keys_for_runtime(
     let key_manager_evidence_for_recipient = crate::evidence_for_verifier_or_local(
         &key_manager_quote,
         &recipient_target_info,
-        |target_info| key_manager.local_public_key_attestation(target_info),
+        |target_info| {
+            key_manager
+                .local_public_key_attestation(target_info)
+                .map_err(|err| EnclaveError::InvalidSealedKeys(err.to_string()))
+        },
     )?;
 
     let keys = key_manager

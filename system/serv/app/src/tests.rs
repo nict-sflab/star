@@ -1,6 +1,6 @@
 use crate::api::{DEFAULT_PUBLIC_KEY_API, DEFAULT_REGISTER_API};
 use crate::enclave::report_data_for_public_key;
-use crate::key_manager::KeyManagerRuntime;
+use crate::KeyManagerRuntime;
 use crate::{all_prefix, build_server_without_startup_attestation};
 
 use crate::tls::STAR_TLS_EXTENSION_TYPE;

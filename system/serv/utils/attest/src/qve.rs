@@ -1,3 +1,5 @@
+#![cfg(any(unix, windows, libloading_docs))]
+
 use std::ffi::{CStr, CString, c_void};
 use std::os::raw::{c_char, c_int, c_long};
 use std::path::{Path, PathBuf};
@@ -8,6 +10,7 @@ use std::string::{String, ToString};
 
 #[cfg(unix)]
 use libloading::os::unix::{Library as UnixLibrary, RTLD_GLOBAL, RTLD_NOW};
+#[cfg(any(unix, windows, libloading_docs))]
 use libloading::{Library, Symbol};
 use rand::{TryRngCore, rngs::OsRng};
 

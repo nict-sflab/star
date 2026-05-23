@@ -1,1 +1,1 @@
-include!("../../utils/attest/src/sgx_quote.rs");
+include!("../../../attest/src/sgx_quote.rs");

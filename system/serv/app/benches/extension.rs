@@ -17,11 +17,11 @@ use openssl::ssl::{
 };
 use rand_core::OsRng;
 use simple_filter_box::{core::Entry, dashmap::DashMapFilterBox};
-use star_app::benchmark_key_bundle;
 use star_app::enclave::{EnclaveRuntime, EnclaveRuntimes};
 use star_app::filter::{StarFilter, StarFilterErrorStatus};
-use star_app::install_benchmark_keys_for_enclave;
-use star_app::install_benchmark_keys_for_pool;
+use star_app::{
+    KeyManagerRuntime, install_key_manager_keys_for_enclave, install_key_manager_keys_for_pool,
+};
 use star_app::tls::STAR_TLS_EXTENSION_TYPE;
 use star_core::{client::User, secure_channel::client::SecureChannelClient};
 
@@ -389,14 +389,14 @@ fn build_keyed_filter_and_request(
     build_request: impl FnOnce(&EnclaveRuntime) -> Vec<u8>,
 ) -> (Arc<BenchFilter>, Vec<u8>) {
     let _aesm_proxy = common::aesm_proxy::AesmProxyGuard::start();
-    let key_bundle = benchmark_key_bundle().expect("benchmark key bundle");
+    let key_manager = KeyManagerRuntime::from_env_with_sealed_keys(&[]).expect("key manager");
     let filter_enclave =
         EnclaveRuntimes::from_env(FILTER_ENCLAVE_POOL_SIZE).expect("filter enclave pool");
     let issue_enclave = EnclaveRuntime::from_env().expect("issue enclave");
 
-    install_benchmark_keys_for_pool(&filter_enclave, &key_bundle)
+    install_key_manager_keys_for_pool(&key_manager, &filter_enclave)
         .expect("install filter enclave benchmark keys");
-    install_benchmark_keys_for_enclave(&issue_enclave, &key_bundle)
+    install_key_manager_keys_for_enclave(&key_manager, &issue_enclave)
         .expect("install issue enclave benchmark keys");
 
     let filter = Arc::new(BenchFilter::new(
