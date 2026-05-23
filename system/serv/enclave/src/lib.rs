@@ -198,12 +198,9 @@ impl EnclaveApp {
         }
     }
 
-    fn attest(&self, payload: &[u8]) -> (u8, Vec<u8>) {
-        let report_data: [u8; 64] = match payload.try_into() {
-            Ok(report_data) => report_data,
-            Err(_) => return (STATUS_BAD_REQUEST, b"attest needs 64 bytes".to_vec()),
-        };
-
+    fn attest(&self, _: &[u8]) -> (u8, Vec<u8>) {
+        let report_data = report_data_for_public_key(self.enclave().unwrap().public_key());
+    
         match attest::attest(report_data) {
             Ok(quote) => (STATUS_OK, quote),
             Err(err) => (STATUS_PANIC, err.into_bytes()),

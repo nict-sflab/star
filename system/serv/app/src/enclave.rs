@@ -268,7 +268,7 @@ impl EnclaveRuntime {
         &self,
         report_data: [u8; ATTESTATION_REPORT_DATA_LEN],
     ) -> Result<Vec<u8>, EnclaveError> {
-        self.call(OP_ATTEST, &report_data)
+        self.call(OP_ATTEST, &[0 as u8; ATTESTATION_REPORT_DATA_LEN])
     }
 
     pub fn transfer_public_key(&self) -> Result<[u8; ENCLAVE_PUBLIC_KEY_LEN], EnclaveError> {

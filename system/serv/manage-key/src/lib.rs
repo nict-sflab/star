@@ -94,14 +94,7 @@ impl KeyManagerApp {
     }
 
     fn attest(&self, payload: &[u8]) -> (u8, Vec<u8>) {
-        let report_data = if payload.is_empty() {
-            report_data_for_public_key(self.keys.public_key())
-        } else {
-            match payload.try_into() {
-                Ok(report_data) => report_data,
-                Err(_) => return (STATUS_BAD_REQUEST, b"attest needs 64 bytes".to_vec()),
-            }
-        };
+        let report_data = report_data_for_public_key(self.keys.public_key());
 
         match attest::attest(report_data) {
             Ok(quote) => (STATUS_OK, quote),
