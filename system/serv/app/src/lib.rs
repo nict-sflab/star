@@ -130,16 +130,12 @@ fn install_keys_remotely(
     let recipient_target_info = recipient.qve_target_info()?;
 
     let recipient_evidence_for_key_manager =
-        match qve::evidence_for_verifier(&recipient_quote, &key_manager_target_info) {
-            Ok(evidence) => evidence,
-            Err(_) => qve::evidence_for_untrusted_verifier(&recipient_quote),
-        };
+        qve::evidence_for_verifier(&recipient_quote, &key_manager_target_info)
+            .map_err(enclave::EnclaveError::Qve)?;
 
     let key_manager_evidence_for_recipient =
-        match qve::evidence_for_verifier(&key_manager_quote, &recipient_target_info) {
-            Ok(evidence) => evidence,
-            Err(_) => qve::evidence_for_untrusted_verifier(&key_manager_quote),
-        };
+        qve::evidence_for_verifier(&key_manager_quote, &recipient_target_info)
+            .map_err(enclave::EnclaveError::Qve)?;
 
     let keys = key_manager.export_keys(&recipient_evidence_for_key_manager)?;
     recipient.install_keys(&key_manager_evidence_for_recipient, &keys)?;

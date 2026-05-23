@@ -73,11 +73,24 @@ pub fn evidence_for_verifier(
     let mut collateral_expiration_status = 1u32;
     let mut quote_verification_result = SGX_QL_QV_RESULT_UNSPECIFIED;
 
+    let mut collateral = ptr::null_mut();
+    let mut collateral_size = 0u32;
+    if let Ok(get_collateral) = unsafe { library.get::<Symbol<TeeQvGetCollateral>>(b"tee_qv_get_collateral") } {
+        unsafe {
+            get_collateral(
+                quote.as_ptr(),
+                quote_size,
+                &mut collateral,
+                &mut collateral_size,
+            );
+        }
+    }
+
     let status = unsafe {
         verify(
             quote.as_ptr(),
             quote_size,
-            ptr::null(),
+            collateral as *const c_void,
             expiration_check_date as c_long,
             &mut collateral_expiration_status,
             &mut quote_verification_result,
@@ -86,6 +99,12 @@ pub fn evidence_for_verifier(
             supplemental_data.as_mut_ptr(),
         )
     };
+
+    if !collateral.is_null() {
+        if let Ok(free_collateral) = unsafe { library.get::<Symbol<TeeQvFreeCollateral>>(b"tee_qv_free_collateral") } {
+            unsafe { free_collateral(collateral) };
+        }
+    }
 
     if status != SGX_QL_SUCCESS {
         let untrusted_status = verify_without_qve_report(&library, &verify, quote, quote_size);
@@ -105,10 +124,6 @@ pub fn evidence_for_verifier(
         quote_verification_result,
         supplemental_data: &supplemental_data,
     })
-}
-
-pub fn evidence_for_untrusted_verifier(quote: &[u8]) -> Vec<u8> {
-    panic!("Fallback triggered!");
 }
 
 fn verify_without_qve_report(
@@ -295,7 +310,7 @@ fn load_global_library(name: &str, env_name: &str) -> Result<UnixLibrary> {
                 "load {name} from {env_name}={}: {err}",
                 path.display()
             )
-        });
+        }).inspect(|_| eprintln!("DEBUG: Loaded {} from {}", name, path.display()));
     }
 
     for path in candidate_library_paths(name) {
@@ -304,11 +319,13 @@ fn load_global_library(name: &str, env_name: &str) -> Result<UnixLibrary> {
         }
 
         if let Ok(library) = unsafe { UnixLibrary::open(Some(path.as_os_str()), flags) } {
+            eprintln!("DEBUG: Loaded {} from candidate path {}", name, path.display());
             return Ok(library);
         }
     }
 
     if let Ok(library) = unsafe { UnixLibrary::open(Some(name), flags) } {
+        eprintln!("DEBUG: Loaded {} from system path", name);
         return Ok(library);
     }
 
@@ -387,6 +404,7 @@ fn configure_qve(library: &Library) -> Result<()> {
         );
     };
 
+    eprintln!("DEBUG: Configuring QvE path to: {}", path.display());
     configure_qv_path(library, SGX_QV_QVE_PATH, &path, "SGX_QV_QVE_PATH")
 }
 
@@ -395,6 +413,7 @@ fn configure_qpl(library: &Library) -> Result<()> {
         return Ok(());
     };
 
+    eprintln!("DEBUG: Configuring QPL path to: {}", path.display());
     configure_qv_path(library, SGX_QV_QPL_PATH, &path, "SGX_QV_QPL_PATH")
 }
 
@@ -411,16 +430,19 @@ fn configure_qv_path(
             .get(b"sgx_qv_set_path")
             .map_err(|err| format!("QVL does not export set_path: {err}"))?
     };
-    let path = cstring_path(path)?;
-    let status = unsafe { set_path(path_type, path.as_ptr()) };
+    let c_path = cstring_path(path)?;
+    let status = unsafe { set_path(path_type, c_path.as_ptr()) };
 
     if status == SGX_QL_SUCCESS {
         Ok(())
     } else {
-        Err(format!(
-            "sgx_qv_set_path({path_type_name}) failed: {} / 0x{status:04x}",
+        let msg = format!(
+            "sgx_qv_set_path({path_type_name}, {}) failed: {} / 0x{status:04x}",
+            path.display(),
             quote3_error_name(status)
-        ))
+        );
+        eprintln!("ERROR: {}", msg);
+        Err(msg)
     }
 }
 

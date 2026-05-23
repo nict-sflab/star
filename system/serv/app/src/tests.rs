@@ -372,7 +372,6 @@ fn test_all() {
         std::env::set_var("STAR_ALLOW_DEBUG_ENCLAVES", "1");
         std::env::set_var("STAR_ALLOW_ADVISORY_ENCLAVES", "1");
         std::env::set_var("STAR_TRUST_SAME_SIGNER_ENCLAVES", "1");
-        std::env::set_var("STAR_TRUST_UNTRUSTED_EVIDENCE", "1");
     }
 
     let server_handle = thread::spawn(move || {

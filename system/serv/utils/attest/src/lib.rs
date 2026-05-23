@@ -604,7 +604,7 @@ fn trusted_verify_qve_evidence(evidence: &QveEvidence<'_>) -> Result<()> {
 
     let report_mac_valid = report
         .verify(|key, data, mac| constant_time_eq(&aes_cmac_128::<aes::Aes128>(key, data), mac));
-    if !report_mac_valid && !truthy_env("STAR_TRUST_UNTRUSTED_EVIDENCE") {
+    if !report_mac_valid {
         return Err("QvE report MAC is invalid".into());
     }
 
@@ -621,33 +621,13 @@ fn trusted_verify_qve_evidence(evidence: &QveEvidence<'_>) -> Result<()> {
         .report_info
         .get(QVE_REPORT_DATA_OFFSET..QVE_REPORT_DATA_OFFSET + CHALLENGE_LEN)
         .ok_or_else(|| "QvE report_data is truncated".to_string())?;
-    if (!constant_time_eq(&digest, &report_data[..32])
-        || report_data[32..].iter().any(|byte| *byte != 0))
-        && !truthy_env("STAR_TRUST_UNTRUSTED_EVIDENCE")
+    if !constant_time_eq(&digest, &report_data[..32])
+        || report_data[32..].iter().any(|byte| *byte != 0)
     {
         return Err("QvE report_data does not match verified quote data".into());
     }
 
-    if truthy_env("STAR_TRUST_UNTRUSTED_EVIDENCE") {
-        return Ok(());
-    }
-
     verify_qve_identity(evidence.report_info)
-}
-
-fn truthy_env(name: &str) -> bool {
-    if let Some(value) = std::env::var(name).ok() {
-        return matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES");
-    }
-
-    // fallback to build-time environment for enclaves
-    match name {
-        "STAR_TRUST_UNTRUSTED_EVIDENCE" => matches!(
-            option_env!("STAR_TRUST_UNTRUSTED_EVIDENCE"),
-            Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("YES")
-        ),
-        _ => false,
-    }
 }
 
 #[cfg(target_env = "sgx")]
