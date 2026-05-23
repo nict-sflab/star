@@ -93,7 +93,7 @@ impl KeyManagerApp {
         (STATUS_OK, self.keys.public_key().to_vec())
     }
 
-    fn attest(&self, payload: &[u8]) -> (u8, Vec<u8>) {
+    fn attest(&self, _payload: &[u8]) -> (u8, Vec<u8>) {
         let report_data = report_data_for_public_key(self.keys.public_key());
 
         match attest::attest(report_data) {
