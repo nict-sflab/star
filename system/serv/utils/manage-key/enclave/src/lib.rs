@@ -11,12 +11,11 @@ use hpke::{
 };
 use rand::{rngs::OsRng, RngCore};
 #[cfg(target_env = "sgx")]
-use sgx_isa::{AttributesFlags, Report, Targetinfo};
+use sgx_isa::{AttributesFlags, Report};
 #[cfg(target_env = "sgx")]
 use star_attestation::parse_measurement_hex;
 use star_attestation::{
-    report_data_for_public_key, verify_qve_evidence_public_key, QuotePolicy, PUBLIC_KEY_LEN,
-    QVE_TARGET_INFO_LEN,
+    report_data_for_public_key, verify_raw_quote_evidence_public_key, QuotePolicy, PUBLIC_KEY_LEN,
 };
 #[cfg(target_env = "sgx")]
 use std::slice;
@@ -29,7 +28,6 @@ const OP_INIT: u8 = 0;
 const OP_PUBLIC_KEY: u8 = 1;
 const OP_ATTEST: u8 = 4;
 const OP_EXPORT_KEYS: u8 = 5;
-const OP_QVE_TARGET_INFO: u8 = 6;
 
 const STATUS_OK: u8 = 0;
 const STATUS_BAD_REQUEST: u8 = 2;
@@ -92,18 +90,11 @@ impl KeyManagerApp {
         (STATUS_OK, self.keys.public_key().to_vec())
     }
 
-    fn attest(&self, payload: &[u8]) -> (u8, Vec<u8>) {
+    fn attest(&self, _payload: &[u8]) -> (u8, Vec<u8>) {
         let report_data = report_data_for_public_key(self.keys.public_key());
 
         match attest::attest(report_data) {
             Ok(quote) => (STATUS_OK, quote),
-            Err(err) => (STATUS_PANIC, err.into_bytes()),
-        }
-    }
-
-    fn qve_target_info(&self, _: &[u8]) -> (u8, Vec<u8>) {
-        match qve_target_info() {
-            Ok(target_info) => (STATUS_OK, target_info),
             Err(err) => (STATUS_PANIC, err.into_bytes()),
         }
     }
@@ -114,40 +105,11 @@ impl KeyManagerApp {
             Err(err) => return (STATUS_BAD_REQUEST, err.into_bytes()),
         };
 
-        let (quote, collateral) = match star_attestation::decode_raw_quote_evidence(payload) {
-            Ok(evidence) => (evidence.quote, evidence.collateral),
-            Err(err) => return (STATUS_BAD_REQUEST, err.into_bytes()),
-        };
-
-        let parsed = match star_attestation::parse_quote(quote) {
-            Ok(parsed) => parsed,
-            Err(err) => return (STATUS_BAD_REQUEST, err.into_bytes()),
-        };
-
-        if let Err(err) = star_attestation::verify_policy(&parsed, &recipient_policy) {
-            return (STATUS_BAD_REQUEST, err.into_bytes());
-        }
-
-        let recipient_public_key = match star_attestation::public_key_from_report_data(&parsed) {
-            Ok(pk) => pk,
-            Err(err) => return (STATUS_BAD_REQUEST, err.into_bytes()),
-        };
-
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
-        let parsed_collateral = match dcap_qvl::collateral::get_collateral_from_bytes(collateral) {
-            Ok(c) => c,
-            Err(err) => return (STATUS_BAD_REQUEST, format!("parse collateral: {err:?}").into_bytes()),
-        };
-
-        match dcap_qvl::verify::verify(quote, &parsed_collateral, now) {
-            Ok(_) => {}
-            Err(err) => {
-                // If it's an advisory error and policy allows advisory, we could accept it.
-                // For simplicity and strict security, any verify error fails unless we parse it.
-                // dcap_qvl returns different error types. Let's just fail for now.
-                return (STATUS_BAD_REQUEST, format!("quote verification failed: {:?}", err).into_bytes());
-            }
-        }
+        let recipient_public_key =
+            match verify_raw_quote_evidence_public_key(payload, &recipient_policy) {
+                Ok(public_key) => public_key,
+                Err(err) => return (STATUS_BAD_REQUEST, err.into_bytes()),
+            };
 
         let plaintext = encode_key_bundle(self.keys);
         match self
@@ -165,21 +127,9 @@ impl KeyManagerApp {
             OP_PUBLIC_KEY => self.public_key(payload),
             OP_ATTEST => self.attest(payload),
             OP_EXPORT_KEYS => self.export_keys(payload),
-            OP_QVE_TARGET_INFO => self.qve_target_info(payload),
             _ => (STATUS_BAD_REQUEST, b"unknown operation".to_vec()),
         }
     }
-}
-
-#[cfg(target_env = "sgx")]
-fn qve_target_info() -> Result<Vec<u8>, String> {
-    let target_info = Targetinfo::from(Report::for_self());
-    Ok(AsRef::<[u8]>::as_ref(&target_info).to_vec())
-}
-
-#[cfg(not(target_env = "sgx"))]
-fn qve_target_info() -> Result<Vec<u8>, String> {
-    Err("QvE targetinfo is only available inside SGX".into())
 }
 
 #[cfg(target_env = "sgx")]
@@ -408,8 +358,8 @@ pub extern "C" fn entry(p1: u64, p2: u64, p3: u64, _ignore: u64, p4: u64, p5: u6
     library_entry(p1, p2, p3, p4, p5)
 }
 
-// library_entry is the SGX entry point for the key-manager library. 
-// It dispatches to the KeyManagerApp and handles the translation between raw pointers and Rust types, 
+// library_entry is the SGX entry point for the key-manager library.
+// It dispatches to the KeyManagerApp and handles the translation between raw pointers and Rust types,
 // as well as error handling and status codes.
 #[cfg(target_env = "sgx")]
 fn library_entry(
@@ -506,7 +456,7 @@ fn is_user_range(ptr: *const u8, len: usize) -> bool {
     end < base || start > enclave_end
 }
 
-// image_base returns the base address of the enclave in memory, 
+// image_base returns the base address of the enclave in memory,
 // which is needed to validate that user pointers do not point into the enclave's own memory.
 #[cfg(target_env = "sgx")]
 fn image_base() -> usize {

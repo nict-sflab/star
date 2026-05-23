@@ -8,15 +8,15 @@ use std::error::Error;
 use std::sync::Arc;
 
 use crate::filter::StarFilter;
-use key_manager_client::RemoteKeyManagerRuntime;
 use crate::tls::configure_tls_token_extension;
 use crate::{
     api::{DEFAULT_PUBLIC_KEY_API, DEFAULT_REGISTER_API},
     enclave::EnclaveRuntimes,
     proxy::StarProxy,
 };
+use key_manager_client::RemoteKeyManagerRuntime;
 
-use star_attestation::qve;
+use star_attestation::dcap;
 
 pub mod api;
 pub mod enclave;
@@ -119,12 +119,10 @@ fn install_keys_remotely(
     let recipient_quote = recipient.transfer_key_attestation()?;
 
     let recipient_evidence_for_key_manager =
-        qve::raw_evidence_for_verifier(&recipient_quote)
-            .map_err(enclave::EnclaveError::Qve)?;
+        dcap::raw_evidence_for_verifier(&recipient_quote).map_err(enclave::EnclaveError::Dcap)?;
 
     let key_manager_evidence_for_recipient =
-        qve::raw_evidence_for_verifier(&key_manager_quote)
-            .map_err(enclave::EnclaveError::Qve)?;
+        dcap::raw_evidence_for_verifier(&key_manager_quote).map_err(enclave::EnclaveError::Dcap)?;
 
     let keys = key_manager.export_keys(&recipient_evidence_for_key_manager)?;
     recipient.install_keys(&key_manager_evidence_for_recipient, &keys)?;
@@ -136,8 +134,6 @@ pub fn benchmark_key_bundle() -> Result<Vec<u8>, Box<dyn Error>> {
     let key_manager = KeyManagerRuntime::from_env_with_sealed_keys(&[])?;
     Ok(key_manager.sealed_keys().to_vec())
 }
-
-
 
 #[cfg(test)]
 pub(crate) fn build_server_without_startup_attestation(
@@ -165,7 +161,8 @@ fn build_server_with_startup_attestation(
     max_prefix: u32,
     emit_startup_attestation: bool,
 ) -> Result<Server, Box<dyn Error>> {
-    let key_manager = RemoteKeyManagerRuntime::from_env().ok_or("STAR_KEY_MANAGER_URL is required")?;
+    let key_manager =
+        RemoteKeyManagerRuntime::from_env().ok_or("STAR_KEY_MANAGER_URL is required")?;
     let installed = install_keys_from_remote_key_manager(key_manager)?;
 
     build_server_from_installed_enclaves(
@@ -193,11 +190,9 @@ fn install_keys_from_remote_key_manager(
     let filter_export = key_manager.export_keys_for_recipient_quote(&filter_quote)?;
     let issue_export = key_manager.export_keys_for_recipient_quote(&issue_quote)?;
     let key_manager_evidence_for_filter =
-        qve::raw_evidence_for_verifier(&key_manager_quote)
-            .map_err(enclave::EnclaveError::Qve)?;
+        dcap::raw_evidence_for_verifier(&key_manager_quote).map_err(enclave::EnclaveError::Dcap)?;
     let key_manager_evidence_for_issue =
-        qve::raw_evidence_for_verifier(&key_manager_quote)
-            .map_err(enclave::EnclaveError::Qve)?;
+        dcap::raw_evidence_for_verifier(&key_manager_quote).map_err(enclave::EnclaveError::Dcap)?;
 
     filter_enclave.install_keys(&key_manager_evidence_for_filter, &filter_export.envelope)?;
     issue_enclave.install_keys(&key_manager_evidence_for_issue, &issue_export.envelope)?;
@@ -341,19 +336,19 @@ fn print_startup_attestation(attestation: StartupAttestation<'_>) -> Result<(), 
         URL_SAFE.encode(attestation.issue_quote)
     );
     println!(
-        "STAR_FILTER_ENCLAVE_QVE_EVIDENCE_FOR_KEY_MANAGER_BASE64={}",
+        "STAR_FILTER_ENCLAVE_DCAP_EVIDENCE_FOR_KEY_MANAGER_BASE64={}",
         URL_SAFE.encode(attestation.filter_evidence_for_key_manager)
     );
     println!(
-        "STAR_ISSUE_ENCLAVE_QVE_EVIDENCE_FOR_KEY_MANAGER_BASE64={}",
+        "STAR_ISSUE_ENCLAVE_DCAP_EVIDENCE_FOR_KEY_MANAGER_BASE64={}",
         URL_SAFE.encode(attestation.issue_evidence_for_key_manager)
     );
     println!(
-        "STAR_KEY_MANAGER_QVE_EVIDENCE_FOR_FILTER_ENCLAVE_BASE64={}",
+        "STAR_KEY_MANAGER_DCAP_EVIDENCE_FOR_FILTER_ENCLAVE_BASE64={}",
         URL_SAFE.encode(attestation.key_manager_evidence_for_filter)
     );
     println!(
-        "STAR_KEY_MANAGER_QVE_EVIDENCE_FOR_ISSUE_ENCLAVE_BASE64={}",
+        "STAR_KEY_MANAGER_DCAP_EVIDENCE_FOR_ISSUE_ENCLAVE_BASE64={}",
         URL_SAFE.encode(attestation.key_manager_evidence_for_issue)
     );
     Ok(())

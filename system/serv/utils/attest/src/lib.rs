@@ -272,11 +272,56 @@ pub fn take_blob<'a>(payload: &mut &'a [u8]) -> Result<&'a [u8]> {
     Ok(blob)
 }
 
-#[cfg(all(feature = "std", any(unix, windows, libloading_docs)))]
-pub mod qve;
+#[cfg(all(feature = "host-dcap", any(unix, windows)))]
+pub mod dcap;
+
+#[cfg(feature = "dcap-verify")]
+pub fn verify_raw_quote_evidence_public_key(
+    payload: &[u8],
+    policy: &QuotePolicy,
+) -> Result<[u8; PUBLIC_KEY_LEN]> {
+    let evidence = decode_raw_quote_evidence(payload)?;
+    let mut collateral_bytes = evidence.collateral;
+    let collateral =
+        <dcap_qvl::QuoteCollateralV3 as parity_scale_codec::Decode>::decode(&mut collateral_bytes)
+            .map_err(|err| format!("parse DCAP collateral: {err}"))?;
+    if !collateral_bytes.is_empty() {
+        return Err("trailing DCAP collateral bytes".into());
+    }
+
+    let parsed = parse_quote(evidence.quote)?;
+    verify_policy(&parsed, policy)?;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|err| format!("system clock is before UNIX_EPOCH: {err}"))?
+        .as_secs();
+    let verified = dcap_qvl::verify::QuoteVerifier::new_prod()
+        .allow_debug(policy.allow_debug)
+        .verify(evidence.quote, &collateral, now)
+        .map_err(|err| format!("verify DCAP quote: {err}"))?;
+
+    let final_status = verified.platform_status.clone().merge(&verified.qe_status);
+    validate_dcap_status(final_status.status, policy.allow_advisory)?;
+
+    public_key_from_report_data(&parsed)
+}
+
+#[cfg(feature = "dcap-verify")]
+fn validate_dcap_status(status: dcap_qvl::tcb_info::TcbStatus, allow_advisory: bool) -> Result<()> {
+    use dcap_qvl::tcb_info::TcbStatus;
+
+    match status {
+        TcbStatus::UpToDate => Ok(()),
+        TcbStatus::Revoked => Err("quote TCB status is Revoked".into()),
+        _ if allow_advisory => Ok(()),
+        _ => Err(format!(
+            "quote TCB status is {status}; advisory status is not allowed"
+        )),
+    }
+}
 
 pub fn parse_quote(quote: &[u8]) -> Result<ParsedQuote> {
-
     let report_body_offset = sgx_report_body_offset(quote)?;
 
     let attributes_offset = report_body_offset + 48;

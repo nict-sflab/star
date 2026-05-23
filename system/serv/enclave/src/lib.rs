@@ -3,19 +3,17 @@
 mod attest;
 
 use hpke::{
-    aead::ChaCha20Poly1305 as HpkeChaCha20Poly1305,
-    kdf::HkdfSha256,
-    kem::X25519HkdfSha256,
+    aead::ChaCha20Poly1305 as HpkeChaCha20Poly1305, kdf::HkdfSha256, kem::X25519HkdfSha256,
     setup_receiver, Deserializable, HpkeError, OpModeR,
 };
 use rand::rngs::OsRng;
 #[cfg(target_env = "sgx")]
-use sgx_isa::{AttributesFlags, Report, Targetinfo};
+use sgx_isa::{AttributesFlags, Report};
 #[cfg(target_env = "sgx")]
 use star_attestation::parse_measurement_hex;
 use star_attestation::{
-    report_data_for_public_key, take_blob, verify_qve_evidence_public_key, QuotePolicy,
-    PUBLIC_KEY_LEN, QVE_TARGET_INFO_LEN,
+    report_data_for_public_key, take_blob, verify_raw_quote_evidence_public_key, QuotePolicy,
+    PUBLIC_KEY_LEN,
 };
 use star_core::{secure_channel::server::SecureChannelServer, serv::enclave::Enclave};
 #[cfg(target_env = "sgx")]
@@ -34,7 +32,6 @@ const OP_ISSUE_TOKEN: u8 = 3;
 const OP_ATTEST: u8 = 4;
 const OP_TRANSFER_PUBLIC_KEY: u8 = 5;
 const OP_INSTALL_KEYS: u8 = 6;
-const OP_QVE_TARGET_INFO: u8 = 7;
 
 const STATUS_OK: u8 = 0;
 const STATUS_NOT_INITIALIZED: u8 = 1;
@@ -113,7 +110,7 @@ impl EnclaveApp {
         };
 
         let manager_public_key =
-            match verify_qve_evidence_public_key(manager_evidence, &manager_policy) {
+            match verify_raw_quote_evidence_public_key(manager_evidence, &manager_policy) {
                 Ok(public_key) => public_key,
                 Err(err) => return (STATUS_BAD_REQUEST, err.into_bytes()),
             };
@@ -213,15 +210,6 @@ impl EnclaveApp {
         }
     }
 
-    // qve_target_info returns the Targetinfo structure
-    // needed to target local transfer attestation quotes at a QvE.
-    fn qve_target_info(&self, _: &[u8]) -> (u8, Vec<u8>) {
-        match qve_target_info() {
-            Ok(target_info) => (STATUS_OK, target_info),
-            Err(err) => (STATUS_PANIC, err.into_bytes()),
-        }
-    }
-
     fn handle_shared(&self, op: u8, payload: &[u8]) -> (u8, Vec<u8>) {
         match op {
             OP_PUBLIC_KEY => self.public_key(payload),
@@ -229,7 +217,6 @@ impl EnclaveApp {
             OP_ISSUE_TOKEN => self.issue_token(payload),
             OP_ATTEST => self.attest(payload),
             OP_TRANSFER_PUBLIC_KEY => self.transfer_public_key(payload),
-            OP_QVE_TARGET_INFO => self.qve_target_info(payload),
             _ => (STATUS_BAD_REQUEST, b"unknown operation".to_vec()),
         }
     }
@@ -453,17 +440,6 @@ fn decode_install_request(payload: &[u8]) -> Result<(&[u8], &[u8]), String> {
     }
 
     Ok((evidence, envelope))
-}
-
-#[cfg(target_env = "sgx")]
-fn qve_target_info() -> Result<Vec<u8>, String> {
-    let target_info = Targetinfo::from(Report::for_self());
-    Ok(AsRef::<[u8]>::as_ref(&target_info).to_vec())
-}
-
-#[cfg(not(target_env = "sgx"))]
-fn qve_target_info() -> Result<Vec<u8>, String> {
-    Err("QvE targetinfo is only available inside SGX".into())
 }
 
 #[cfg(target_env = "sgx")]

@@ -80,21 +80,16 @@ mod tests {
     }
 
     #[test]
-    fn qve_evidence_round_trips() {
+    fn raw_quote_evidence_round_trips() {
         let quote = [1u8; 64];
-        let report_info = [2u8; QVE_REPORT_INFO_LEN];
-        let supplemental_data = [3u8; 24];
-        let evidence = QveEvidence {
+        let collateral = [2u8; 96];
+        let evidence = RawQuoteEvidence {
             quote: &quote,
-            report_info: &report_info,
-            expiration_check_date: 1_774_972_800,
-            collateral_expiration_status: 0,
-            quote_verification_result: SGX_QL_QV_RESULT_OK,
-            supplemental_data: &supplemental_data,
+            collateral: &collateral,
         };
 
-        let encoded = encode_qve_evidence(&evidence).expect("encode evidence");
-        let decoded = decode_qve_evidence(&encoded).expect("decode evidence");
+        let encoded = encode_raw_quote_evidence(&evidence);
+        let decoded = decode_raw_quote_evidence(&encoded).expect("decode evidence");
 
         assert_eq!(decoded, evidence);
     }

@@ -25,7 +25,6 @@ into the enclave builds:
 ```bash
 . /etc/set-environment
 
-export SGX_DCAP_QVE=/tmp/psw/ae/data/prebuilt/libsgx_qve.signed.so
 export STAR_ALLOW_DEBUG_ENCLAVES=1
 export STAR_ALLOW_ADVISORY_ENCLAVES=1
 export STAR_TRUST_SAME_SIGNER_ENCLAVES=1
@@ -37,17 +36,6 @@ cargo bench
 `OUT_OF_DATE` for local development. `STAR_TRUST_SAME_SIGNER_ENCLAVES=1` is only
 for tests and benchmarks where exact peer measurements are not embedded; it
 trusts same-platform SGX local reports from enclaves signed by the same signer.
-
-If the QvE shared object has not already been unpacked on the machine, extract it
-from the prebuilt DCAP archive and rerun the same benchmark command:
-
-```bash
-mkdir -p /tmp/psw
-tar -xf /nix/store/ayvxyj7i04bsy8qy55ww18kmx272hv9f-prebuilt_dcap_1.22.tar.gz \
-  -C /tmp/psw \
-  ./ae/data/prebuilt/libsgx_qve.signed.so
-chmod 755 /tmp/psw/ae/data/prebuilt/libsgx_qve.signed.so
-```
 
 To run one benchmark at a time while debugging:
 
@@ -92,7 +80,7 @@ export STAR_TRUST_SAME_SIGNER_ENCLAVES=1
 ```
 
 The host prints the key-manager and serving-enclave remote attestation quotes to
-stdout before key transfer, plus the QvE evidence used for enclave-to-enclave
+stdout before key transfer, plus the DCAP evidence used for enclave-to-enclave
 key sharing:
 
 ```text
@@ -101,23 +89,20 @@ STAR_ATTESTATION_QUOTE_BASE64=<key-manager quote>
 STAR_KEY_MANAGER_QUOTE_BASE64=<key-manager quote>
 STAR_FILTER_ENCLAVE_TRANSFER_QUOTE_BASE64=<serving enclave transfer quote>
 STAR_ISSUE_ENCLAVE_TRANSFER_QUOTE_BASE64=<serving enclave transfer quote>
-STAR_FILTER_ENCLAVE_QVE_EVIDENCE_FOR_KEY_MANAGER_BASE64=<QvE evidence>
-STAR_ISSUE_ENCLAVE_QVE_EVIDENCE_FOR_KEY_MANAGER_BASE64=<QvE evidence>
-STAR_KEY_MANAGER_QVE_EVIDENCE_FOR_FILTER_ENCLAVE_BASE64=<QvE evidence>
-STAR_KEY_MANAGER_QVE_EVIDENCE_FOR_ISSUE_ENCLAVE_BASE64=<QvE evidence>
+STAR_FILTER_ENCLAVE_DCAP_EVIDENCE_FOR_KEY_MANAGER_BASE64=<raw quote evidence>
+STAR_ISSUE_ENCLAVE_DCAP_EVIDENCE_FOR_KEY_MANAGER_BASE64=<raw quote evidence>
+STAR_KEY_MANAGER_DCAP_EVIDENCE_FOR_FILTER_ENCLAVE_BASE64=<raw quote evidence>
+STAR_KEY_MANAGER_DCAP_EVIDENCE_FOR_ISSUE_ENCLAVE_BASE64=<raw quote evidence>
 ```
 
 The key-manager quote binds the service public key by setting SGX `report_data`
 to `public_key || 32 zero bytes`. Serving enclave transfer quotes bind their
 ephemeral transfer public keys the same way. The host carries quotes and
 ciphertexts, but the policy decision is made in enclave code. For key sharing,
-the host asks Intel DCAP QVL/QvE to produce QvE evidence targeted to the verifier
-enclave. If QvE cannot produce in-enclave evidence for an advisory result that
-the local policy accepts, the host falls back to a same-platform SGX local
-report. The verifier enclave checks the QvE report MAC or local report MAC,
-QvE report-data hash when QvE evidence is used, QvE identity, DCAP result,
-collateral freshness, peer identity policy, debug policy, and `report_data`
-public-key binding before using the attested HPKE key.
+the host fetches DCAP collateral for each peer quote and passes the raw quote
+plus collateral to the verifier enclave. The verifier enclave checks the DCAP
+result, collateral freshness, peer identity policy, debug policy, advisory
+policy, and `report_data` public-key binding before using the attested HPKE key.
 
 Example:
 
@@ -167,13 +152,13 @@ POST /star/key-manager/export
 ```
 
 `POST /star/key-manager/export` accepts a base64 serving-enclave transfer quote
-and returns a base64 payload containing the key-manager quote, the QvE evidence
-targeted to key-manager, and the encrypted key envelope. The serving host then
-generates QvE evidence for the key-manager quote targeted to its own enclave and
+and returns a base64 payload containing the key-manager quote, the DCAP evidence
+for the serving enclave, and the encrypted key envelope. The serving host then
+generates DCAP evidence for the key-manager quote and
 installs the envelope locally.
 
 For a remote key-manager, same-platform SGX local-report fallback is not used.
-Both hosts must have their own AESM/QVL/QvE setup, and production builds should
+Both hosts must have their own AESM/DCAP setup, and production builds should
 pin the trusted peer `MRENCLAVE` or `MRSIGNER` before building the `.sgxs` files.
 Keep `key-manager.keys.sealed` on the key-manager host; it is sealed with SGX
 `MRENCLAVE` policy and is not a portable backup format.
@@ -213,5 +198,4 @@ by the local policy.
 
 The verifier uses the pure Rust `dcap-qvl` crate and fetches collateral from
 `--pccs-url`, `PCCS_URL`, or the crate's default PCCS URL. Startup key sharing
-still uses QvE report evidence; if QvE is not in a standard library directory,
-set `SGX_DCAP_QVE` to `libsgx_qve.signed.so.1`.
+uses the same raw quote plus DCAP collateral evidence format inside SGX.

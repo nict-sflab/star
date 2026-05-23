@@ -77,7 +77,7 @@ pub enum EnclaveError {
     InvalidSealedKeys(String),
     Library(String),
     KeyManagerService(String),
-    Qve(String),
+    Dcap(String),
     Remote { status: u64, payload: Vec<u8> },
     ResponseTooLarge { len: usize },
     Storage(io::Error),
@@ -94,7 +94,7 @@ impl fmt::Display for EnclaveError {
             Self::InvalidSealedKeys(err) => write!(f, "invalid sealed keys: {err}"),
             Self::Library(err) => write!(f, "enclave library call failed: {err}"),
             Self::KeyManagerService(err) => write!(f, "key-manager service failed: {err}"),
-            Self::Qve(err) => write!(f, "QvE verification failed: {err}"),
+            Self::Dcap(err) => write!(f, "DCAP evidence failed: {err}"),
             Self::Remote { status, payload } => write!(
                 f,
                 "enclave returned status {status} with {} bytes",
@@ -117,7 +117,7 @@ impl Error for EnclaveError {
             Self::InvalidSealedKeys(_) => None,
             Self::Library(_) => None,
             Self::KeyManagerService(_) => None,
-            Self::Qve(_) => None,
+            Self::Dcap(_) => None,
             Self::Remote { .. } => None,
             Self::ResponseTooLarge { .. } => None,
             Self::Storage(err) => Some(err),
@@ -189,7 +189,6 @@ impl EnclaveRuntimes {
     ) -> Result<(), EnclaveError> {
         self.runtime.install_keys(manager_evidence, envelope)
     }
-
 }
 
 pub struct EnclaveRuntime {
@@ -263,7 +262,6 @@ impl EnclaveRuntime {
         self.call(OP_INSTALL_KEYS, &payload)?;
         Ok(())
     }
-
 
     fn call(&self, op: u64, payload: &[u8]) -> Result<Vec<u8>, EnclaveError> {
         self.library

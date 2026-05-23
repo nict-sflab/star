@@ -20,7 +20,7 @@ log = "0.4"
 constant-time-utils = { path = "../../../../constant-time-utils", default-features = false }
 simple-filter-box = { path = "../../../../simple-filter-box", default-features = false, features = ["dashmap"] }
 star-core = { path = "../../../core" }
-star_attestation = { path = "../utils/attest" }
+star_attestation = { path = "../utils/attest", features = ["host-dcap"] }
 aesm-client = { version = "0.6.2", features = ["sgxs"] }
 enclave-runner = "0.8"
 enclave-runner-sgx = "0.1"
