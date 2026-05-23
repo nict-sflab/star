@@ -1,4 +1,4 @@
-#![no_std]
+#![cfg_attr(not(feature = "std"), no_std)]
 
 extern crate alloc;
 
@@ -487,7 +487,7 @@ fn take_i64_be(payload: &mut &[u8]) -> Result<i64> {
     Ok(i64::from_be_bytes(bytes))
 }
 
-fn take_u32_be(payload: &mut &[u8]) -> Result<u32> {
+pub fn take_u32_be(payload: &mut &[u8]) -> Result<u32> {
     let bytes: [u8; 4] = payload
         .get(..4)
         .ok_or_else(|| "missing u32".to_string())?
@@ -497,7 +497,11 @@ fn take_u32_be(payload: &mut &[u8]) -> Result<u32> {
     Ok(u32::from_be_bytes(bytes))
 }
 
+#[cfg(feature = "std")]
+pub mod qve;
+
 pub fn parse_quote(quote: &[u8]) -> Result<ParsedQuote> {
+
     let report_body_offset = sgx_report_body_offset(quote)?;
 
     let attributes_offset = report_body_offset + 48;

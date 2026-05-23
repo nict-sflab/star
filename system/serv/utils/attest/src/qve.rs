@@ -3,16 +3,17 @@ use std::os::raw::{c_char, c_int, c_long};
 use std::path::{Path, PathBuf};
 use std::ptr;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::vec::Vec;
+use std::string::{String, ToString};
 
 #[cfg(unix)]
 use libloading::os::unix::{Library as UnixLibrary, RTLD_GLOBAL, RTLD_NOW};
 use libloading::{Library, Symbol};
 use rand::{TryRngCore, rngs::OsRng};
-use star_attestation::{
-    QVE_REPORT_INFO_LEN, QVE_TARGET_INFO_LEN, QveEvidence, encode_qve_evidence,
-};
 
-use crate::enclave::EnclaveError;
+use crate::{
+    QVE_REPORT_INFO_LEN, QVE_TARGET_INFO_LEN, QveEvidence, Result, encode_qve_evidence,
+};
 
 const SGX_QL_SUCCESS: u32 = 0x0000;
 const SGX_QL_QV_RESULT_UNSPECIFIED: u32 = 0x0000a006;
@@ -25,12 +26,12 @@ const QVE_TARGET_INFO_OFFSET: usize = QVE_NONCE_LEN;
 pub fn evidence_for_verifier(
     quote: &[u8],
     verifier_target_info: &[u8],
-) -> Result<Vec<u8>, EnclaveError> {
+) -> Result<Vec<u8>> {
     if verifier_target_info.len() != QVE_TARGET_INFO_LEN {
-        return Err(EnclaveError::Qve(format!(
+        return Err(format!(
             "verifier targetinfo must be {QVE_TARGET_INFO_LEN} bytes, got {}",
             verifier_target_info.len()
-        )));
+        ));
     }
 
     let _sgx_runtime = preload_sgx_runtime()?;
@@ -45,21 +46,21 @@ pub fn evidence_for_verifier(
 
     OsRng
         .try_fill_bytes(&mut report_info[QVE_NONCE_OFFSET..QVE_NONCE_OFFSET + QVE_NONCE_LEN])
-        .map_err(|err| EnclaveError::Qve(format!("generate QvE nonce: {err}")))?;
+        .map_err(|err| format!("generate QvE nonce: {err}"))?;
     report_info[QVE_TARGET_INFO_OFFSET..QVE_TARGET_INFO_OFFSET + QVE_TARGET_INFO_LEN]
         .copy_from_slice(verifier_target_info);
 
     let verify: Symbol<SgxQvVerifyQuote> = unsafe {
         library
             .get(b"sgx_qv_verify_quote")
-            .map_err(|err| EnclaveError::Qve(format!("QVL does not export verify: {err}")))?
+            .map_err(|err| format!("QVL does not export verify: {err}"))?
     };
 
     let expiration_check_date = now_unix_timestamp()?;
     let quote_size: u32 = quote
         .len()
         .try_into()
-        .map_err(|_| EnclaveError::Qve("quote is too large for QVL".to_string()))?;
+        .map_err(|_| "quote is too large for QVL".to_string())?;
     let mut collateral_expiration_status = 1u32;
     let mut quote_verification_result = SGX_QL_QV_RESULT_UNSPECIFIED;
 
@@ -79,10 +80,10 @@ pub fn evidence_for_verifier(
 
     if status != SGX_QL_SUCCESS {
         let untrusted_status = verify_without_qve_report(&library, &verify, quote, quote_size);
-        return Err(EnclaveError::Qve(format!(
+        return Err(format!(
             "sgx_qv_verify_quote with QvE failed: {} / 0x{status:04x}; untrusted QVL status: {untrusted_status}",
             quote3_error_name(status),
-        )));
+        ));
     }
 
     encode_qve_evidence(&QveEvidence {
@@ -93,7 +94,6 @@ pub fn evidence_for_verifier(
         quote_verification_result,
         supplemental_data: &supplemental_data,
     })
-    .map_err(EnclaveError::Qve)
 }
 
 fn verify_without_qve_report(
@@ -261,25 +261,25 @@ fn read_u32_le(bytes: &[u8], offset: usize) -> Option<u32> {
 }
 
 #[cfg(unix)]
-fn preload_sgx_runtime() -> Result<Vec<UnixLibrary>, EnclaveError> {
+fn preload_sgx_runtime() -> Result<Vec<UnixLibrary>> {
     Ok(vec![load_global_library("libsgx_urts.so.2", "SGX_URTS")?])
 }
 
 #[cfg(not(unix))]
-fn preload_sgx_runtime() -> Result<Vec<()>, EnclaveError> {
+fn preload_sgx_runtime() -> Result<Vec<()>> {
     Ok(Vec::new())
 }
 
 #[cfg(unix)]
-fn load_global_library(name: &str, env_name: &str) -> Result<UnixLibrary, EnclaveError> {
+fn load_global_library(name: &str, env_name: &str) -> Result<UnixLibrary> {
     let flags = RTLD_NOW | RTLD_GLOBAL;
 
     if let Some(path) = std::env::var_os(env_name).map(PathBuf::from) {
         return unsafe { UnixLibrary::open(Some(path.as_os_str()), flags) }.map_err(|err| {
-            EnclaveError::Qve(format!(
+            format!(
                 "load {name} from {env_name}={}: {err}",
                 path.display()
-            ))
+            )
         });
     }
 
@@ -297,9 +297,9 @@ fn load_global_library(name: &str, env_name: &str) -> Result<UnixLibrary, Enclav
         return Ok(library);
     }
 
-    Err(EnclaveError::Qve(format!(
+    Err(format!(
         "load {name}: set {env_name} or make the SGX runtime library visible"
-    )))
+    ))
 }
 
 #[cfg(unix)]
@@ -348,34 +348,34 @@ fn nix_sgx_psw_library_paths(name: &str) -> Vec<PathBuf> {
     paths
 }
 
-fn load_qvl() -> Result<Library, EnclaveError> {
+fn load_qvl() -> Result<Library> {
     let path = std::env::var_os("SGX_DCAP_QVL").map(PathBuf::from);
     match path {
         Some(path) => unsafe { Library::new(&path) }
-            .map_err(|err| EnclaveError::Qve(format!("load QVL {}: {err}", path.display()))),
+            .map_err(|err| format!("load QVL {}: {err}", path.display())),
         None => unsafe { Library::new("libsgx_dcap_quoteverify.so") }
             .or_else(|_| unsafe {
                 Library::new("/run/current-system/sw/lib/libsgx_dcap_quoteverify.so")
             })
             .map_err(|err| {
-                EnclaveError::Qve(format!(
+                format!(
                     "load QVL libsgx_dcap_quoteverify.so: {err}; set SGX_DCAP_QVL"
-                ))
+                )
             }),
     }
 }
 
-fn configure_qve(library: &Library) -> Result<(), EnclaveError> {
+fn configure_qve(library: &Library) -> Result<()> {
     let Some(path) = qve_enclave_path() else {
-        return Err(EnclaveError::Qve(
+        return Err(
             "Intel QvE enclave libsgx_qve.signed.so is not installed; set SGX_DCAP_QVE".to_string(),
-        ));
+        );
     };
 
     configure_qv_path(library, SGX_QV_QVE_PATH, &path, "SGX_QV_QVE_PATH")
 }
 
-fn configure_qpl(library: &Library) -> Result<(), EnclaveError> {
+fn configure_qpl(library: &Library) -> Result<()> {
     let Some(path) = std::env::var_os("SGX_DCAP_QPL").map(PathBuf::from) else {
         return Ok(());
     };
@@ -388,13 +388,13 @@ fn configure_qv_path(
     path_type: i32,
     path: &Path,
     path_type_name: &str,
-) -> Result<(), EnclaveError> {
+) -> Result<()> {
     type SgxQvSetPath = unsafe extern "C" fn(path_type: i32, p_path: *const i8) -> u32;
 
     let set_path: Symbol<SgxQvSetPath> = unsafe {
         library
             .get(b"sgx_qv_set_path")
-            .map_err(|err| EnclaveError::Qve(format!("QVL does not export set_path: {err}")))?
+            .map_err(|err| format!("QVL does not export set_path: {err}"))?
     };
     let path = cstring_path(path)?;
     let status = unsafe { set_path(path_type, path.as_ptr()) };
@@ -402,14 +402,14 @@ fn configure_qv_path(
     if status == SGX_QL_SUCCESS {
         Ok(())
     } else {
-        Err(EnclaveError::Qve(format!(
+        Err(format!(
             "sgx_qv_set_path({path_type_name}) failed: {} / 0x{status:04x}",
             quote3_error_name(status)
-        )))
+        ))
     }
 }
 
-pub(crate) fn qve_enclave_path() -> Option<PathBuf> {
+pub fn qve_enclave_path() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("SGX_DCAP_QVE").map(PathBuf::from) {
         if path.is_file() {
             return Some(path);
@@ -455,19 +455,19 @@ fn library_search_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-fn cstring_path(path: &Path) -> Result<CString, EnclaveError> {
+fn cstring_path(path: &Path) -> Result<CString> {
     CString::new(path.to_string_lossy().as_bytes())
-        .map_err(|_| EnclaveError::Qve("QPL path contains a NUL byte".to_string()))
+        .map_err(|_| "QPL path contains a NUL byte".to_string())
 }
 
-fn now_unix_timestamp() -> Result<i64, EnclaveError> {
+fn now_unix_timestamp() -> Result<i64> {
     let seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|err| EnclaveError::Qve(format!("system clock is before UNIX_EPOCH: {err}")))?
+        .map_err(|err| format!("system clock is before UNIX_EPOCH: {err}"))?
         .as_secs();
     seconds
         .try_into()
-        .map_err(|_| EnclaveError::Qve("UNIX timestamp is too large".to_string()))
+        .map_err(|_| "UNIX timestamp is too large".to_string())
 }
 
 fn quote3_error_name(value: u32) -> &'static str {

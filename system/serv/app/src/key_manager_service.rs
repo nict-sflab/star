@@ -13,7 +13,7 @@ use crate::key_manager::{
     DEFAULT_KEY_MANAGER_PUBLIC_KEY_API, KeyManagerExport, KeyManagerRuntime,
     encode_key_manager_export_response,
 };
-use crate::qve;
+use star_attestation::qve;
 
 pub const DEFAULT_KEY_MANAGER_ADDR: &str = "0.0.0.0:8090";
 pub const STAR_KEY_MANAGER_ADDR: &str = "STAR_KEY_MANAGER_ADDR";

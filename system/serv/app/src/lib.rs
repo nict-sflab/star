@@ -16,13 +16,14 @@ use crate::{
     proxy::StarProxy,
 };
 
+use star_attestation::qve;
+
 pub mod api;
 pub mod enclave;
 pub mod filter;
 pub mod key_manager;
 pub mod key_manager_service;
 pub mod proxy;
-pub mod qve;
 mod sgx;
 pub mod tls;
 pub(crate) mod tls_utils;
@@ -303,9 +304,11 @@ fn install_keys_from_remote_key_manager(
     let filter_export = key_manager.export_keys_for_recipient_quote(&filter_quote)?;
     let issue_export = key_manager.export_keys_for_recipient_quote(&issue_quote)?;
     let key_manager_evidence_for_filter =
-        qve::evidence_for_verifier(&key_manager_quote, &filter_target_info)?;
+        qve::evidence_for_verifier(&key_manager_quote, &filter_target_info)
+            .map_err(enclave::EnclaveError::Qve)?;
     let key_manager_evidence_for_issue =
-        qve::evidence_for_verifier(&key_manager_quote, &issue_target_info)?;
+        qve::evidence_for_verifier(&key_manager_quote, &issue_target_info)
+            .map_err(enclave::EnclaveError::Qve)?;
 
     filter_enclave.install_keys(&key_manager_evidence_for_filter, &filter_export.envelope)?;
     issue_enclave.install_keys(&key_manager_evidence_for_issue, &issue_export.envelope)?;

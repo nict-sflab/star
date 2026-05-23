@@ -350,7 +350,7 @@ fn test_all() {
     let _sgx_test_guard = SGX_TEST_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if crate::qve::qve_enclave_path().is_none() {
+    if star_attestation::qve::qve_enclave_path().is_none() {
         eprintln!("skipping test_all: Intel QvE enclave libsgx_qve.signed.so is not installed");
         return;
     }

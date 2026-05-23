@@ -4228,6 +4228,8 @@ name = "star_attestation"
 version = "0.1.0"
 dependencies = [
  "aes",
+ "libloading 0.8.9",
+ "rand 0.9.4",
  "sgx-isa",
  "sha2",
 ]
