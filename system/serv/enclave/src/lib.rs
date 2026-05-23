@@ -43,7 +43,7 @@ const STATUS_BAD_REQUEST: u8 = 2;
 const STATUS_PANIC: u8 = 4;
 const STATUS_BUFFER_TOO_SMALL: u8 = 5;
 
-// EnclaveApp manages the enclave state and dispatches operations. 
+// EnclaveApp manages the enclave state and dispatches operations.
 struct EnclaveApp {
     enclave: Option<Enclave>,
     transfer_receiver: TransferReceiver,
@@ -95,8 +95,8 @@ impl EnclaveApp {
         (STATUS_OK, self.transfer_receiver.public_key().to_vec())
     }
 
-    // install_keys verifies the manager's evidence, decrypts the key-manager's envelope, 
-    // and initializes the enclave with the contained keys. 
+    // install_keys verifies the manager's evidence, decrypts the key-manager's envelope,
+    // and initializes the enclave with the contained keys.
     // It returns a panic status if the keys are
     fn install_keys(&mut self, payload: &[u8]) -> (u8, Vec<u8>) {
         if self.enclave.is_some() {
@@ -198,16 +198,23 @@ impl EnclaveApp {
         }
     }
 
-    fn attest(&self, _: &[u8]) -> (u8, Vec<u8>) {
-        let report_data = report_data_for_public_key(self.enclave().unwrap().public_key());
-    
+    fn attest(&self, payload: &[u8]) -> (u8, Vec<u8>) {
+        if !payload.is_empty() {
+            return (
+                STATUS_BAD_REQUEST,
+                b"transfer attestation does not accept host report_data".to_vec(),
+            );
+        }
+
+        let report_data = report_data_for_public_key(self.transfer_receiver.public_key());
+
         match attest::attest(report_data) {
             Ok(quote) => (STATUS_OK, quote),
             Err(err) => (STATUS_PANIC, err.into_bytes()),
         }
     }
 
-    // local_transfer_attest produces a quote for the transfer key, 
+    // local_transfer_attest produces a quote for the transfer key,
     // targeted at the provided QvE targetinfo.
     fn local_transfer_attest(&self, payload: &[u8]) -> (u8, Vec<u8>) {
         if payload.len() != QVE_TARGET_INFO_LEN {
@@ -225,7 +232,7 @@ impl EnclaveApp {
         }
     }
 
-    // qve_target_info returns the Targetinfo structure 
+    // qve_target_info returns the Targetinfo structure
     // needed to target local transfer attestation quotes at a QvE.
     fn qve_target_info(&self, _: &[u8]) -> (u8, Vec<u8>) {
         match qve_target_info() {
