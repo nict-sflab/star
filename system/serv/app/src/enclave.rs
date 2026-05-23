@@ -264,13 +264,6 @@ impl EnclaveRuntime {
         self.call(OP_ISSUE_TOKEN, &payload)
     }
 
-    fn attest(
-        &self,
-        report_data: [u8; ATTESTATION_REPORT_DATA_LEN],
-    ) -> Result<Vec<u8>, EnclaveError> {
-        self.call(OP_ATTEST, &[0 as u8; ATTESTATION_REPORT_DATA_LEN])
-    }
-
     pub fn transfer_public_key(&self) -> Result<[u8; ENCLAVE_PUBLIC_KEY_LEN], EnclaveError> {
         let response = self.call(OP_TRANSFER_PUBLIC_KEY, &[])?;
         let len = response.len();
@@ -282,8 +275,7 @@ impl EnclaveRuntime {
     }
 
     pub fn transfer_key_attestation(&self) -> Result<Vec<u8>, EnclaveError> {
-        let public_key = self.transfer_public_key()?;
-        self.attest(report_data_for_public_key(public_key))
+        self.call(OP_ATTEST, &[])
     }
 
     pub fn local_transfer_key_attestation(

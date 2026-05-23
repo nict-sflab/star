@@ -5,8 +5,8 @@ mod attest;
 use hpke::{
     aead::ChaCha20Poly1305 as HpkeChaCha20Poly1305,
     kdf::HkdfSha256,
-    kem::{Kem as _, X25519HkdfSha256},
-    setup_receiver, Deserializable, HpkeError, OpModeR, Serializable,
+    kem::X25519HkdfSha256,
+    setup_receiver, Deserializable, HpkeError, OpModeR,
 };
 use rand::rngs::OsRng;
 #[cfg(target_env = "sgx")]
@@ -17,7 +17,7 @@ use star_attestation::{
     report_data_for_public_key, take_blob, verify_qve_evidence_public_key, QuotePolicy,
     PUBLIC_KEY_LEN, QVE_TARGET_INFO_LEN,
 };
-use star_core::serv::enclave::Enclave;
+use star_core::{secure_channel::server::SecureChannelServer, serv::enclave::Enclave};
 #[cfg(target_env = "sgx")]
 use std::slice;
 #[cfg(target_env = "sgx")]
@@ -43,7 +43,7 @@ const STATUS_BAD_REQUEST: u8 = 2;
 const STATUS_PANIC: u8 = 4;
 const STATUS_BUFFER_TOO_SMALL: u8 = 5;
 
-// EnclaveApp manages the enclave state and dispatches operations. 
+// EnclaveApp manages the enclave state and dispatches operations.
 struct EnclaveApp {
     enclave: Option<Enclave>,
     transfer_receiver: TransferReceiver,
@@ -95,8 +95,8 @@ impl EnclaveApp {
         (STATUS_OK, self.transfer_receiver.public_key().to_vec())
     }
 
-    // install_keys verifies the manager's evidence, decrypts the key-manager's envelope, 
-    // and initializes the enclave with the contained keys. 
+    // install_keys verifies the manager's evidence, decrypts the key-manager's envelope,
+    // and initializes the enclave with the contained keys.
     // It returns a panic status if the keys are
     fn install_keys(&mut self, payload: &[u8]) -> (u8, Vec<u8>) {
         if self.enclave.is_some() {
@@ -198,16 +198,23 @@ impl EnclaveApp {
         }
     }
 
-    fn attest(&self, _: &[u8]) -> (u8, Vec<u8>) {
-        let report_data = report_data_for_public_key(self.enclave().unwrap().public_key());
-    
+    fn attest(&self, payload: &[u8]) -> (u8, Vec<u8>) {
+        if !payload.is_empty() {
+            return (
+                STATUS_BAD_REQUEST,
+                b"transfer attestation does not accept host report_data".to_vec(),
+            );
+        }
+
+        let report_data = report_data_for_public_key(self.transfer_receiver.public_key());
+
         match attest::attest(report_data) {
             Ok(quote) => (STATUS_OK, quote),
             Err(err) => (STATUS_PANIC, err.into_bytes()),
         }
     }
 
-    // local_transfer_attest produces a quote for the transfer key, 
+    // local_transfer_attest produces a quote for the transfer key,
     // targeted at the provided QvE targetinfo.
     fn local_transfer_attest(&self, payload: &[u8]) -> (u8, Vec<u8>) {
         if payload.len() != QVE_TARGET_INFO_LEN {
@@ -225,7 +232,7 @@ impl EnclaveApp {
         }
     }
 
-    // qve_target_info returns the Targetinfo structure 
+    // qve_target_info returns the Targetinfo structure
     // needed to target local transfer attestation quotes at a QvE.
     fn qve_target_info(&self, _: &[u8]) -> (u8, Vec<u8>) {
         match qve_target_info() {
@@ -390,22 +397,18 @@ unsafe extern "C" {
 }
 
 struct TransferReceiver {
-    sk: <X25519HkdfSha256 as hpke::kem::Kem>::PrivateKey,
-    pk: <X25519HkdfSha256 as hpke::kem::Kem>::PublicKey,
+    channel: SecureChannelServer,
 }
 
 impl TransferReceiver {
     fn random(rng: &mut OsRng) -> Self {
-        let (sk, pk) = X25519HkdfSha256::gen_keypair(rng);
-        Self { sk, pk }
+        Self {
+            channel: SecureChannelServer::random(rng),
+        }
     }
 
     fn public_key(&self) -> [u8; PUBLIC_KEY_LEN] {
-        let bytes = self.pk.to_bytes();
-        let bytes_ref: &[u8] = bytes.as_ref();
-        bytes_ref
-            .try_into()
-            .expect("X25519 public key must be 32 bytes")
+        self.channel.public_key()
     }
 
     fn open_auth(
@@ -413,39 +416,31 @@ impl TransferReceiver {
         envelope: &[u8],
         sender_public_key: [u8; PUBLIC_KEY_LEN],
     ) -> Result<Vec<u8>, HpkeError> {
-        open_auth_envelope(&self.sk, envelope, sender_public_key)
+        const AAD_LEN: usize = 32;
+        const INFO_LEN: usize = 32;
+        const ENC_LEN: usize = 32;
+
+        if envelope.len() < AAD_LEN + INFO_LEN + ENC_LEN {
+            return Err(HpkeError::MessageLimitReached);
+        }
+
+        let aad = &envelope[..AAD_LEN];
+        let info = &envelope[AAD_LEN..AAD_LEN + INFO_LEN];
+        let enc = &envelope[AAD_LEN + INFO_LEN..AAD_LEN + INFO_LEN + ENC_LEN];
+        let ciphertext = &envelope[AAD_LEN + INFO_LEN + ENC_LEN..];
+
+        let enc = <X25519HkdfSha256 as hpke::kem::Kem>::EncappedKey::from_bytes(enc)?;
+        let sender_pk =
+            <X25519HkdfSha256 as hpke::kem::Kem>::PublicKey::from_bytes(&sender_public_key)?;
+        let mut ctx = setup_receiver::<HpkeChaCha20Poly1305, HkdfSha256, X25519HkdfSha256>(
+            &OpModeR::Auth(sender_pk),
+            &self.channel.sk,
+            &enc,
+            info,
+        )?;
+
+        ctx.open(ciphertext, aad)
     }
-}
-
-fn open_auth_envelope(
-    receiver_sk: &<X25519HkdfSha256 as hpke::kem::Kem>::PrivateKey,
-    envelope: &[u8],
-    sender_public_key: [u8; PUBLIC_KEY_LEN],
-) -> Result<Vec<u8>, HpkeError> {
-    const AAD_LEN: usize = 32;
-    const INFO_LEN: usize = 32;
-    const ENC_LEN: usize = 32;
-
-    if envelope.len() < AAD_LEN + INFO_LEN + ENC_LEN {
-        return Err(HpkeError::MessageLimitReached);
-    }
-
-    let aad = &envelope[..AAD_LEN];
-    let info = &envelope[AAD_LEN..AAD_LEN + INFO_LEN];
-    let enc = &envelope[AAD_LEN + INFO_LEN..AAD_LEN + INFO_LEN + ENC_LEN];
-    let ciphertext = &envelope[AAD_LEN + INFO_LEN + ENC_LEN..];
-
-    let enc = <X25519HkdfSha256 as hpke::kem::Kem>::EncappedKey::from_bytes(enc)?;
-    let sender_pk =
-        <X25519HkdfSha256 as hpke::kem::Kem>::PublicKey::from_bytes(&sender_public_key)?;
-    let mut ctx = setup_receiver::<HpkeChaCha20Poly1305, HkdfSha256, X25519HkdfSha256>(
-        &OpModeR::Auth(sender_pk),
-        receiver_sk,
-        &enc,
-        info,
-    )?;
-
-    ctx.open(ciphertext, aad)
 }
 
 #[derive(Clone, Copy)]
