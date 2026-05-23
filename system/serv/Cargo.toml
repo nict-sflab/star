@@ -3,7 +3,9 @@ members = [
     "utils/attest",
     "app",
     "enclave",
-    "manage-key",
+    "utils/manage-key/enclave",
+    "utils/manage-key/service",
+    "utils/manage-key/client",
     "tools/verifier",
 ]
 resolver = "3"

@@ -33,13 +33,14 @@ rand_core = "0.6"
 foreign-types = "0.3"
 openssl-sys = "0.9"
 ureq = "2"
+key-manager-client = { path = "../utils/manage-key/client" }
 
 [features]
 default = []
 
 [[bin]]
-name = "star_key_manager"
-path = "src/key_manager_service_main.rs"
+name = "star_app"
+path = "src/main.rs"
 
 [dev-dependencies]
 star_tools = { path = "../tools/verifier" }
@@ -49,6 +50,7 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 cpu-time = "1"
 anyhow = "1"
 dashmap = "6.1"
+key-manager-service = { path = "../utils/manage-key/service" }
 
 [[bench]]
 name = "filter"

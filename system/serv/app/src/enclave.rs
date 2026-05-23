@@ -208,12 +208,6 @@ impl EnclaveRuntimes {
         self.runtime.install_keys(manager_evidence, envelope)
     }
 
-    pub fn install_benchmark_keys(
-        &self,
-        sealed_key_manager_keys: &[u8],
-    ) -> Result<(), EnclaveError> {
-        self.runtime.install_benchmark_keys(sealed_key_manager_keys)
-    }
 }
 
 pub struct EnclaveRuntime {
@@ -306,15 +300,6 @@ impl EnclaveRuntime {
         Ok(())
     }
 
-    pub fn install_benchmark_keys(
-        &self,
-        sealed_key_manager_keys: &[u8],
-    ) -> Result<(), EnclaveError> {
-        let key_manager = crate::key_manager::KeyManagerRuntime::from_env_with_sealed_keys(
-            sealed_key_manager_keys,
-        )?;
-        install_key_manager_keys_for_runtime(&key_manager, self)
-    }
 
     fn call(&self, op: u64, payload: &[u8]) -> Result<Vec<u8>, EnclaveError> {
         self.library

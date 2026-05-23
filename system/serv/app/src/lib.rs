@@ -8,7 +8,7 @@ use std::error::Error;
 use std::sync::Arc;
 
 use crate::filter::StarFilter;
-use crate::key_manager::{KeyManagerRuntime, RemoteKeyManagerRuntime};
+use key_manager_client::RemoteKeyManagerRuntime;
 use crate::tls::configure_tls_token_extension;
 use crate::{
     api::{DEFAULT_PUBLIC_KEY_API, DEFAULT_REGISTER_API},
@@ -195,21 +195,7 @@ pub fn benchmark_key_bundle() -> Result<Vec<u8>, Box<dyn Error>> {
     Ok(key_manager.sealed_keys().to_vec())
 }
 
-pub fn install_benchmark_keys_for_pool(
-    recipient: &EnclaveRuntimes,
-    sealed_key_manager_keys: &[u8],
-) -> Result<(), Box<dyn Error>> {
-    recipient.install_benchmark_keys(sealed_key_manager_keys)?;
-    Ok(())
-}
 
-pub fn install_benchmark_keys_for_enclave(
-    recipient: &enclave::EnclaveRuntime,
-    sealed_key_manager_keys: &[u8],
-) -> Result<(), Box<dyn Error>> {
-    recipient.install_benchmark_keys(sealed_key_manager_keys)?;
-    Ok(())
-}
 
 #[cfg(test)]
 pub(crate) fn build_server_without_startup_attestation(
@@ -237,10 +223,8 @@ fn build_server_with_startup_attestation(
     max_prefix: u32,
     emit_startup_attestation: bool,
 ) -> Result<Server, Box<dyn Error>> {
-    let installed = match RemoteKeyManagerRuntime::from_env() {
-        Some(key_manager) => install_keys_from_remote_key_manager(key_manager)?,
-        None => install_keys_from_local_key_manager()?,
-    };
+    let key_manager = RemoteKeyManagerRuntime::from_env().ok_or("STAR_KEY_MANAGER_URL is required")?;
+    let installed = install_keys_from_remote_key_manager(key_manager)?;
 
     build_server_from_installed_enclaves(
         api_addr,
@@ -251,41 +235,6 @@ fn build_server_with_startup_attestation(
         emit_startup_attestation,
         installed,
     )
-}
-
-fn install_keys_from_local_key_manager() -> Result<InstalledEnclaves, Box<dyn Error>> {
-    let key_manager = KeyManagerRuntime::from_env()?;
-    let filter_enclave = EnclaveRuntimes::from_env(10)?;
-    let issue_enclave = enclave::EnclaveRuntime::from_env()?;
-
-    let public_key = key_manager.public_key()?;
-    let key_manager_quote = key_manager.public_key_attestation()?;
-    let key_manager_target_info = key_manager.qve_target_info()?;
-    let filter_install = install_keys_for_local_recipient(
-        &key_manager,
-        &key_manager_quote,
-        &key_manager_target_info,
-        &filter_enclave,
-    )?;
-    let issue_install = install_keys_for_local_recipient(
-        &key_manager,
-        &key_manager_quote,
-        &key_manager_target_info,
-        &issue_enclave,
-    )?;
-
-    Ok(InstalledEnclaves {
-        public_key,
-        key_manager_quote,
-        filter_quote: filter_install.recipient_quote,
-        issue_quote: issue_install.recipient_quote,
-        filter_evidence_for_key_manager: filter_install.recipient_evidence_for_key_manager,
-        issue_evidence_for_key_manager: issue_install.recipient_evidence_for_key_manager,
-        key_manager_evidence_for_filter: filter_install.key_manager_evidence_for_recipient,
-        key_manager_evidence_for_issue: issue_install.key_manager_evidence_for_recipient,
-        filter_enclave,
-        issue_enclave,
-    })
 }
 
 fn install_keys_from_remote_key_manager(
