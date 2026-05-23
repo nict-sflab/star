@@ -19,7 +19,7 @@ async fn exit_filter(
     status: impl TryInto<StatusCode>,
     session: &mut Session,
 ) -> pingora::Result<bool> {
-    let mut header = ResponseHeader::build(status, None)?;
+    let header = ResponseHeader::build(status, None)?;
     session
         .write_response_header(Box::new(header), true)
         .await?;
@@ -64,8 +64,8 @@ impl<T: FilterBox + Send + Sync> ProxyHttp for StarProxy<T> {
 
     async fn response_filter(
         &self,
-        session: &mut Session,
-        upstream_response: &mut ResponseHeader,
+        _session: &mut Session,
+        _upstream_response: &mut ResponseHeader,
         _ctx: &mut Self::CTX,
     ) -> pingora::Result<()>
     where

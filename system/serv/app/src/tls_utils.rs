@@ -1,5 +1,3 @@
-use std::sync::OnceLock;
-
 use openssl::ssl::SslAlert;
 
 use crate::filter::StarFilterErrorStatus;
