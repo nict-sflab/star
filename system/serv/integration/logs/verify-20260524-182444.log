@@ -1,0 +1,12 @@
+
+== README Verify A Quote ==
++ cargo run --manifest-path tools/verifier/Cargo.toml --release -- verify --mrsigner 9affcfae47b848ec2caf1c49b4b283531e1cc425f93582b36806e52a43d78d1a --mrenclave 2ee038770bccbafce7ba2c52cf2e5745d06665aa9ca9442c462df7b4880e9b93 --public-key b581d5859ddc38ce8995747ef4d88bf82f5725f1ca268de1cd5f760f6fa1bb3b --allow-debug --allow-advisory --pccs-url https://pccs.phala.network < /home/akama/star/system/serv/integration/logs/star-app-attest-20260524-182444.log
+quote size: 4600 bytes
+public key: b581d5859ddc38ce8995747ef4d88bf82f5725f1ca268de1cd5f760f6fa1bb3b
+mrenclave: 2ee038770bccbafce7ba2c52cf2e5745d06665aa9ca9442c462df7b4880e9b93
+mrsigner : 9affcfae47b848ec2caf1c49b4b283531e1cc425f93582b36806e52a43d78d1a
+debug    : true
+DCAP quote verification advisory accepted: OutOfDate
+advisory IDs: INTEL-DOC-10000,INTEL-DOC-10001,INTEL-SA-00609
+report_data public key binding OK
+local policy OK
