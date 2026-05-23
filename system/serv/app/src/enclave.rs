@@ -5,8 +5,6 @@ use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::{Condvar, Mutex};
 
-use star_attestation::QVE_TARGET_INFO_LEN;
-
 use crate::env_or_default;
 use crate::sgx::{LibraryRuntime, build_sgxs};
 
@@ -28,14 +26,12 @@ const OP_ISSUE_TOKEN: u64 = 3;
 const OP_ATTEST: u64 = 4;
 const OP_TRANSFER_PUBLIC_KEY: u64 = 5;
 const OP_INSTALL_KEYS: u64 = 6;
-const OP_QVE_TARGET_INFO: u64 = 7;
 
 const PUBLIC_KEY_RESPONSE_CAPACITY: usize = 32;
 const ISSUE_CRED_RESPONSE_CAPACITY: usize = 128;
 const ISSUE_TOKEN_RESPONSE_CAPACITY: usize = 32;
 const ATTEST_RESPONSE_CAPACITY: usize = 32;
 const INSTALL_KEYS_RESPONSE_CAPACITY: usize = 0;
-const QVE_TARGET_INFO_RESPONSE_CAPACITY: usize = QVE_TARGET_INFO_LEN;
 
 pub struct EnclaveRuntimes {
     runtime: EnclaveRuntime,
@@ -186,10 +182,6 @@ impl EnclaveRuntimes {
         self.runtime.transfer_key_attestation()
     }
 
-    pub fn qve_target_info(&self) -> Result<Vec<u8>, EnclaveError> {
-        self.runtime.qve_target_info()
-    }
-
     pub fn install_keys(
         &self,
         manager_evidence: &[u8],
@@ -260,17 +252,6 @@ impl EnclaveRuntime {
 
     pub fn transfer_key_attestation(&self) -> Result<Vec<u8>, EnclaveError> {
         self.call(OP_ATTEST, &[])
-    }
-
-    pub fn qve_target_info(&self) -> Result<Vec<u8>, EnclaveError> {
-        let response = self.call(OP_QVE_TARGET_INFO, &[])?;
-        if response.len() != QVE_TARGET_INFO_LEN {
-            return Err(EnclaveError::Qve(format!(
-                "enclave returned targetinfo with invalid length {}",
-                response.len()
-            )));
-        }
-        Ok(response)
     }
 
     pub fn install_keys(
@@ -351,7 +332,6 @@ fn initial_response_capacity(op: u64, payload_len: usize) -> usize {
         OP_ATTEST => ATTEST_RESPONSE_CAPACITY,
         OP_TRANSFER_PUBLIC_KEY => PUBLIC_KEY_RESPONSE_CAPACITY,
         OP_INSTALL_KEYS => INSTALL_KEYS_RESPONSE_CAPACITY,
-        OP_QVE_TARGET_INFO => QVE_TARGET_INFO_RESPONSE_CAPACITY,
         _ => 1024,
     }
 }

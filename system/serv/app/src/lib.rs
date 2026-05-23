@@ -76,7 +76,6 @@ pub fn install_key_manager_keys_for_enclave(
 
 trait KeyRecipient {
     fn transfer_key_attestation(&self) -> Result<Vec<u8>, enclave::EnclaveError>;
-    fn qve_target_info(&self) -> Result<Vec<u8>, enclave::EnclaveError>;
     fn install_keys(
         &self,
         manager_evidence: &[u8],
@@ -87,10 +86,6 @@ trait KeyRecipient {
 impl KeyRecipient for EnclaveRuntimes {
     fn transfer_key_attestation(&self) -> Result<Vec<u8>, enclave::EnclaveError> {
         self.transfer_key_attestation()
-    }
-
-    fn qve_target_info(&self) -> Result<Vec<u8>, enclave::EnclaveError> {
-        self.qve_target_info()
     }
 
     fn install_keys(
@@ -107,10 +102,6 @@ impl KeyRecipient for enclave::EnclaveRuntime {
         self.transfer_key_attestation()
     }
 
-    fn qve_target_info(&self) -> Result<Vec<u8>, enclave::EnclaveError> {
-        self.qve_target_info()
-    }
-
     fn install_keys(
         &self,
         manager_evidence: &[u8],
@@ -125,16 +116,14 @@ fn install_keys_remotely(
     recipient: &impl KeyRecipient,
 ) -> Result<(), Box<dyn Error>> {
     let key_manager_quote = key_manager.public_key_attestation()?;
-    let key_manager_target_info = key_manager.qve_target_info()?;
     let recipient_quote = recipient.transfer_key_attestation()?;
-    let recipient_target_info = recipient.qve_target_info()?;
 
     let recipient_evidence_for_key_manager =
-        qve::evidence_for_verifier(&recipient_quote, &key_manager_target_info)
+        qve::raw_evidence_for_verifier(&recipient_quote)
             .map_err(enclave::EnclaveError::Qve)?;
 
     let key_manager_evidence_for_recipient =
-        qve::evidence_for_verifier(&key_manager_quote, &recipient_target_info)
+        qve::raw_evidence_for_verifier(&key_manager_quote)
             .map_err(enclave::EnclaveError::Qve)?;
 
     let keys = key_manager.export_keys(&recipient_evidence_for_key_manager)?;
@@ -200,16 +189,14 @@ fn install_keys_from_remote_key_manager(
     let key_manager_quote = key_manager.public_key_attestation()?;
     let filter_quote = filter_enclave.transfer_key_attestation()?;
     let issue_quote = issue_enclave.transfer_key_attestation()?;
-    let filter_target_info = filter_enclave.qve_target_info()?;
-    let issue_target_info = issue_enclave.qve_target_info()?;
 
     let filter_export = key_manager.export_keys_for_recipient_quote(&filter_quote)?;
     let issue_export = key_manager.export_keys_for_recipient_quote(&issue_quote)?;
     let key_manager_evidence_for_filter =
-        qve::evidence_for_verifier(&key_manager_quote, &filter_target_info)
+        qve::raw_evidence_for_verifier(&key_manager_quote)
             .map_err(enclave::EnclaveError::Qve)?;
     let key_manager_evidence_for_issue =
-        qve::evidence_for_verifier(&key_manager_quote, &issue_target_info)
+        qve::raw_evidence_for_verifier(&key_manager_quote)
             .map_err(enclave::EnclaveError::Qve)?;
 
     filter_enclave.install_keys(&key_manager_evidence_for_filter, &filter_export.envelope)?;

@@ -11,6 +11,7 @@ star_attestation = { path = "../../attest" }
 hpke = { version = "0.11", default-features = false, features = ["alloc", "x25519"] }
 aesm-client = "0.6.2"
 sgx-isa = { version = "0.5.0", features = ["serde"] }
+dcap-qvl = { version = "0.4.1", default-features = false, features = ["ring", "std", "report"] }
 
 serde = { version = "1", features = ["derive"] }
 bincode = "1"

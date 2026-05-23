@@ -114,11 +114,40 @@ impl KeyManagerApp {
             Err(err) => return (STATUS_BAD_REQUEST, err.into_bytes()),
         };
 
-        let recipient_public_key = match verify_qve_evidence_public_key(payload, &recipient_policy)
-        {
-            Ok(public_key) => public_key,
+        let (quote, collateral) = match star_attestation::decode_raw_quote_evidence(payload) {
+            Ok(evidence) => (evidence.quote, evidence.collateral),
             Err(err) => return (STATUS_BAD_REQUEST, err.into_bytes()),
         };
+
+        let parsed = match star_attestation::parse_quote(quote) {
+            Ok(parsed) => parsed,
+            Err(err) => return (STATUS_BAD_REQUEST, err.into_bytes()),
+        };
+
+        if let Err(err) = star_attestation::verify_policy(&parsed, &recipient_policy) {
+            return (STATUS_BAD_REQUEST, err.into_bytes());
+        }
+
+        let recipient_public_key = match star_attestation::public_key_from_report_data(&parsed) {
+            Ok(pk) => pk,
+            Err(err) => return (STATUS_BAD_REQUEST, err.into_bytes()),
+        };
+
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+        let parsed_collateral = match dcap_qvl::collateral::get_collateral_from_bytes(collateral) {
+            Ok(c) => c,
+            Err(err) => return (STATUS_BAD_REQUEST, format!("parse collateral: {err:?}").into_bytes()),
+        };
+
+        match dcap_qvl::verify::verify(quote, &parsed_collateral, now) {
+            Ok(_) => {}
+            Err(err) => {
+                // If it's an advisory error and policy allows advisory, we could accept it.
+                // For simplicity and strict security, any verify error fails unless we parse it.
+                // dcap_qvl returns different error types. Let's just fail for now.
+                return (STATUS_BAD_REQUEST, format!("quote verification failed: {:?}", err).into_bytes());
+            }
+        }
 
         let plaintext = encode_key_bundle(self.keys);
         match self

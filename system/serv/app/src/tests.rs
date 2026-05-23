@@ -350,10 +350,6 @@ fn test_all() {
     let _sgx_test_guard = SGX_TEST_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if star_attestation::qve::qve_enclave_path().is_none() {
-        eprintln!("skipping test_all: Intel QvE enclave libsgx_qve.signed.so is not installed");
-        return;
-    }
     let (_aesm_proxy, _aesm_proxy_env) = start_aesm_proxy_for_sgx_tests();
     let _sealed_keys = KeyManagerSealedKeysGuard::fresh();
     let api_addr = unused_loopback_addr();
