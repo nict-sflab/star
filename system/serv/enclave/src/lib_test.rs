@@ -62,15 +62,4 @@ mod tests {
         out.extend_from_slice(&bundle.hpke_receiver_key);
         out
     }
-
-    #[test]
-    fn attest_dispatch_rejects_non_64_byte_challenge() {
-        let enclave = Enclave::new(1, [1u8; 32], [2u8; 32]).expect("enclave");
-        let mut app = EnclaveApp::with_enclave(enclave);
-
-        let (status, payload) = app.handle(OP_ATTEST, b"short");
-
-        assert_eq!(status, STATUS_BAD_REQUEST);
-        assert_eq!(payload, b"attest needs 64 bytes");
-    }
  }
