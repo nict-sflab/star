@@ -45,30 +45,6 @@ pub fn attest(_: [u8; CHALLENGE_LEN]) -> Result<Vec<u8>, String> {
 }
 
 #[cfg(target_env = "sgx")]
-pub fn local_attest(
-    report_data: [u8; CHALLENGE_LEN],
-    verifier_target_info: &[u8],
-) -> Result<Vec<u8>, String> {
-    use sgx_isa::{Report, Targetinfo};
-
-    if verifier_target_info.len() != TARGET_INFO_LEN {
-        return Err(format!(
-            "targetinfo must be {TARGET_INFO_LEN} bytes, got {}",
-            verifier_target_info.len()
-        ));
-    }
-    let target_info = Targetinfo::try_copy_from(verifier_target_info)
-        .ok_or_else(|| "parse verifier targetinfo".to_string())?;
-    let report = Report::for_target(&target_info, &report_data);
-    Ok(AsRef::<[u8]>::as_ref(&report).to_vec())
-}
-
-#[cfg(not(target_env = "sgx"))]
-pub fn local_attest(_: [u8; CHALLENGE_LEN], _: &[u8]) -> Result<Vec<u8>, String> {
-    Err("local attestation is only available inside the Fortanix SGX target".to_string())
-}
-
-#[cfg(target_env = "sgx")]
 fn select_ecdsa_p256_key(aesm: &aesm_client::AesmClient) -> Result<Vec<u8>, String> {
     let key_ids = aesm
         .get_supported_att_key_ids()

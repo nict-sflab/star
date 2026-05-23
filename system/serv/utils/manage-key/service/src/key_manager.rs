@@ -3,7 +3,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use key_manager_client::ENCLAVE_PUBLIC_KEY_LEN;
-use star_attestation::{LOCAL_REPORT_LEN, QVE_TARGET_INFO_LEN};
+use star_attestation::QVE_TARGET_INFO_LEN;
 
 use crate::sgx::{build_sgxs, EnclaveError, LibraryRuntime};
 
@@ -22,13 +22,11 @@ const OP_PUBLIC_KEY: u64 = 1;
 const OP_ATTEST: u64 = 4;
 const OP_EXPORT_KEYS: u64 = 5;
 const OP_QVE_TARGET_INFO: u64 = 6;
-const OP_LOCAL_ATTEST: u64 = 7;
 
 const PUBLIC_KEY_RESPONSE_CAPACITY: usize = 32;
 const ATTEST_RESPONSE_CAPACITY: usize = 32;
 const EXPORT_KEYS_RESPONSE_CAPACITY: usize = 256;
 const QVE_TARGET_INFO_RESPONSE_CAPACITY: usize = QVE_TARGET_INFO_LEN;
-const LOCAL_ATTEST_RESPONSE_CAPACITY: usize = LOCAL_REPORT_LEN;
 const INIT_RESPONSE_CAPACITY: usize = 1024;
 
 pub struct KeyManagerRuntime {
@@ -87,13 +85,6 @@ impl KeyManagerRuntime {
         self.call(OP_ATTEST, &[])
     }
 
-    pub fn local_public_key_attestation(
-        &self,
-        verifier_target_info: &[u8],
-    ) -> Result<Vec<u8>, EnclaveError> {
-        self.call(OP_LOCAL_ATTEST, verifier_target_info)
-    }
-
     pub fn export_keys(&self, recipient_evidence: &[u8]) -> Result<Vec<u8>, EnclaveError> {
         self.call(OP_EXPORT_KEYS, recipient_evidence)
     }
@@ -122,7 +113,6 @@ fn initial_response_capacity(op: u64) -> usize {
         OP_ATTEST => ATTEST_RESPONSE_CAPACITY,
         OP_EXPORT_KEYS => EXPORT_KEYS_RESPONSE_CAPACITY,
         OP_QVE_TARGET_INFO => QVE_TARGET_INFO_RESPONSE_CAPACITY,
-        OP_LOCAL_ATTEST => LOCAL_ATTEST_RESPONSE_CAPACITY,
         _ => 1024,
     }
 }

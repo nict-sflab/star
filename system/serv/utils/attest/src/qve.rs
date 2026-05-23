@@ -37,14 +37,20 @@ pub fn evidence_for_verifier(
         ));
     }
 
-    let _sgx_runtime = preload_sgx_runtime()?;
-    let library = load_qvl()?;
+    let _sgx_runtime = preload_sgx_runtime().map_err(|e| { eprintln!("preload_sgx_runtime failed: {}", e); e })?;
+    let library = load_qvl().map_err(|e| { eprintln!("load_qvl failed: {}", e); e })?;
     configure_qve_trace(&library);
-    configure_qve(&library)?;
-    configure_qpl(&library)?;
+    configure_qve(&library).map_err(|e| { eprintln!("configure_qve failed: {}", e); e })?;
+    configure_qpl(&library).map_err(|e| { eprintln!("configure_qpl failed: {}", e); e })?;
 
-    let supplemental_data_size = 0;
-    let supplemental_data = Vec::new();
+    let mut supplemental_data_size = 0u32;
+    if let Ok(get_size) = unsafe { library.get::<Symbol<unsafe extern "C" fn(*mut u32) -> u32>>(b"sgx_qv_get_quote_supplemental_data_size") } {
+        unsafe { get_size(&mut supplemental_data_size) };
+    }
+    if supplemental_data_size == 0 {
+        supplemental_data_size = 2048; // fallback size
+    }
+    let mut supplemental_data = vec![0u8; supplemental_data_size as usize];
     let mut report_info = vec![0u8; QVE_REPORT_INFO_LEN];
 
     OsRng
@@ -77,16 +83,18 @@ pub fn evidence_for_verifier(
             &mut quote_verification_result,
             report_info.as_mut_ptr() as *mut c_void,
             supplemental_data_size,
-            ptr::null_mut(),
+            supplemental_data.as_mut_ptr(),
         )
     };
 
     if status != SGX_QL_SUCCESS {
         let untrusted_status = verify_without_qve_report(&library, &verify, quote, quote_size);
-        return Err(format!(
+        let msg = format!(
             "sgx_qv_verify_quote with QvE failed: {} / 0x{status:04x}; untrusted QVL status: {untrusted_status}",
             quote3_error_name(status),
-        ));
+        );
+        eprintln!("ERROR: {}", msg);
+        return Err(msg);
     }
 
     encode_qve_evidence(&QveEvidence {
@@ -97,6 +105,10 @@ pub fn evidence_for_verifier(
         quote_verification_result,
         supplemental_data: &supplemental_data,
     })
+}
+
+pub fn evidence_for_untrusted_verifier(quote: &[u8]) -> Vec<u8> {
+    panic!("Fallback triggered!");
 }
 
 fn verify_without_qve_report(

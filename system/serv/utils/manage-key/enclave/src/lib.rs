@@ -30,7 +30,6 @@ const OP_PUBLIC_KEY: u8 = 1;
 const OP_ATTEST: u8 = 4;
 const OP_EXPORT_KEYS: u8 = 5;
 const OP_QVE_TARGET_INFO: u8 = 6;
-const OP_LOCAL_ATTEST: u8 = 7;
 
 const STATUS_OK: u8 = 0;
 const STATUS_BAD_REQUEST: u8 = 2;
@@ -102,18 +101,9 @@ impl KeyManagerApp {
         }
     }
 
-    fn local_attest(&self, payload: &[u8]) -> (u8, Vec<u8>) {
-        if payload.len() != QVE_TARGET_INFO_LEN {
-            return (
-                STATUS_BAD_REQUEST,
-                format!("local attest needs {QVE_TARGET_INFO_LEN} bytes of verifier targetinfo")
-                    .into_bytes(),
-            );
-        }
-
-        let report_data = report_data_for_public_key(self.keys.public_key());
-        match attest::local_attest(report_data, payload) {
-            Ok(report) => (STATUS_OK, report),
+    fn qve_target_info(&self, _: &[u8]) -> (u8, Vec<u8>) {
+        match qve_target_info() {
+            Ok(target_info) => (STATUS_OK, target_info),
             Err(err) => (STATUS_PANIC, err.into_bytes()),
         }
     }
@@ -140,13 +130,6 @@ impl KeyManagerApp {
         }
     }
 
-    fn qve_target_info(&self, _: &[u8]) -> (u8, Vec<u8>) {
-        match qve_target_info() {
-            Ok(target_info) => (STATUS_OK, target_info),
-            Err(err) => (STATUS_PANIC, err.into_bytes()),
-        }
-    }
-
     fn handle(&mut self, op: u8, payload: &[u8]) -> (u8, Vec<u8>) {
         match op {
             OP_INIT => self.init(payload),
@@ -154,7 +137,6 @@ impl KeyManagerApp {
             OP_ATTEST => self.attest(payload),
             OP_EXPORT_KEYS => self.export_keys(payload),
             OP_QVE_TARGET_INFO => self.qve_target_info(payload),
-            OP_LOCAL_ATTEST => self.local_attest(payload),
             _ => (STATUS_BAD_REQUEST, b"unknown operation".to_vec()),
         }
     }

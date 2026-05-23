@@ -5,7 +5,7 @@ use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::{Condvar, Mutex};
 
-use star_attestation::{LOCAL_REPORT_LEN, QVE_TARGET_INFO_LEN};
+use star_attestation::QVE_TARGET_INFO_LEN;
 
 use crate::env_or_default;
 use crate::sgx::{LibraryRuntime, build_sgxs};
@@ -29,7 +29,6 @@ const OP_ATTEST: u64 = 4;
 const OP_TRANSFER_PUBLIC_KEY: u64 = 5;
 const OP_INSTALL_KEYS: u64 = 6;
 const OP_QVE_TARGET_INFO: u64 = 7;
-const OP_LOCAL_TRANSFER_ATTEST: u64 = 8;
 
 const PUBLIC_KEY_RESPONSE_CAPACITY: usize = 32;
 const ISSUE_CRED_RESPONSE_CAPACITY: usize = 128;
@@ -37,7 +36,6 @@ const ISSUE_TOKEN_RESPONSE_CAPACITY: usize = 32;
 const ATTEST_RESPONSE_CAPACITY: usize = 32;
 const INSTALL_KEYS_RESPONSE_CAPACITY: usize = 0;
 const QVE_TARGET_INFO_RESPONSE_CAPACITY: usize = QVE_TARGET_INFO_LEN;
-const LOCAL_TRANSFER_ATTEST_RESPONSE_CAPACITY: usize = LOCAL_REPORT_LEN;
 
 pub struct EnclaveRuntimes {
     runtime: EnclaveRuntime,
@@ -188,14 +186,6 @@ impl EnclaveRuntimes {
         self.runtime.transfer_key_attestation()
     }
 
-    pub fn local_transfer_key_attestation(
-        &self,
-        verifier_target_info: &[u8],
-    ) -> Result<Vec<u8>, EnclaveError> {
-        self.runtime
-            .local_transfer_key_attestation(verifier_target_info)
-    }
-
     pub fn qve_target_info(&self) -> Result<Vec<u8>, EnclaveError> {
         self.runtime.qve_target_info()
     }
@@ -272,13 +262,6 @@ impl EnclaveRuntime {
         self.call(OP_ATTEST, &[])
     }
 
-    pub fn local_transfer_key_attestation(
-        &self,
-        verifier_target_info: &[u8],
-    ) -> Result<Vec<u8>, EnclaveError> {
-        self.call(OP_LOCAL_TRANSFER_ATTEST, verifier_target_info)
-    }
-
     pub fn qve_target_info(&self) -> Result<Vec<u8>, EnclaveError> {
         let response = self.call(OP_QVE_TARGET_INFO, &[])?;
         if response.len() != QVE_TARGET_INFO_LEN {
@@ -305,40 +288,6 @@ impl EnclaveRuntime {
         self.library
             .call(op, payload, initial_response_capacity(op, payload.len()))
     }
-}
-
-fn install_key_manager_keys_for_runtime(
-    key_manager: &crate::KeyManagerRuntime,
-    recipient: &EnclaveRuntime,
-) -> Result<(), EnclaveError> {
-    let key_manager_quote = key_manager
-        .public_key_attestation()
-        .map_err(|err| EnclaveError::InvalidSealedKeys(err.to_string()))?;
-    let recipient_quote = recipient.transfer_key_attestation()?;
-    let key_manager_target_info = key_manager
-        .qve_target_info()
-        .map_err(|err| EnclaveError::InvalidSealedKeys(err.to_string()))?;
-    let recipient_target_info = recipient.qve_target_info()?;
-
-    let recipient_evidence_for_key_manager = crate::evidence_for_verifier_or_local(
-        &recipient_quote,
-        &key_manager_target_info,
-        |target_info| recipient.local_transfer_key_attestation(target_info),
-    )?;
-    let key_manager_evidence_for_recipient = crate::evidence_for_verifier_or_local(
-        &key_manager_quote,
-        &recipient_target_info,
-        |target_info| {
-            key_manager
-                .local_public_key_attestation(target_info)
-                .map_err(|err| EnclaveError::InvalidSealedKeys(err.to_string()))
-        },
-    )?;
-
-    let keys = key_manager
-        .export_keys(&recipient_evidence_for_key_manager)
-        .map_err(|err| EnclaveError::InvalidSealedKeys(err.to_string()))?;
-    recipient.install_keys(&key_manager_evidence_for_recipient, &keys)
 }
 
 pub fn report_data_for_public_key(
@@ -403,7 +352,6 @@ fn initial_response_capacity(op: u64, payload_len: usize) -> usize {
         OP_TRANSFER_PUBLIC_KEY => PUBLIC_KEY_RESPONSE_CAPACITY,
         OP_INSTALL_KEYS => INSTALL_KEYS_RESPONSE_CAPACITY,
         OP_QVE_TARGET_INFO => QVE_TARGET_INFO_RESPONSE_CAPACITY,
-        OP_LOCAL_TRANSFER_ATTEST => LOCAL_TRANSFER_ATTEST_RESPONSE_CAPACITY,
         _ => 1024,
     }
 }

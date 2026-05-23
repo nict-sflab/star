@@ -88,7 +88,7 @@ pub(crate) fn build_sgxs(
         Command::new("ftxsgx-elf2sgxs")
             .arg(&elf_path)
             .arg("--library")
-            .arg("--debug")
+            //.arg("--debug")
             .arg("--heap-size")
             .arg(heap_size)
             .arg("--stack-size")
