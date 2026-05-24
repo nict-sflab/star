@@ -12,28 +12,12 @@ fn render_html(title: &str, headline: &str, body: &str) -> String {
         .replace("{{body}}", body)
 }
 
-fn spawn_upstream(bind_addr: &str) -> (String, thread::JoinHandle<()>) {
-    let server = TinyServer::http(bind_addr).expect("bind upstream");
+fn spawn_content_server(bind_addr: &str) -> (String, thread::JoinHandle<()>) {
+    let server = TinyServer::http(bind_addr).expect("bind content server");
     let addr = server
         .server_addr()
         .to_ip()
-        .expect("upstream should bind to IP")
-        .to_string();
-    let handle = thread::spawn(move || {
-        while let Ok(request) = server.recv() {
-            let response = Response::from_string("OK");
-            let _ = request.respond(response);
-        }
-    });
-    (addr, handle)
-}
-
-fn spawn_html_server(bind_addr: &str) -> (String, thread::JoinHandle<()>) {
-    let server = TinyServer::http(bind_addr).expect("bind html server");
-    let addr = server
-        .server_addr()
-        .to_ip()
-        .expect("html server should bind to IP")
+        .expect("content server should bind to IP")
         .to_string();
     let handle = thread::spawn(move || {
         while let Ok(request) = server.recv() {
@@ -55,21 +39,27 @@ fn spawn_html_server(bind_addr: &str) -> (String, thread::JoinHandle<()>) {
 fn main() {
     let api_addr = env_or_default("STAR_API_ADDR", "0.0.0.0:8080");
     let proxy_addr = env_or_default("STAR_PROXY_ADDR", "0.0.0.0:18081");
-    let upstream_bind_addr = env_or_default("STAR_EXAMPLE_UPSTREAM_ADDR", "127.0.0.1:3000");
-    let html_bind_addr = env_or_default("STAR_EXAMPLE_HTML_ADDR", "127.0.0.1:3001");
-
-    let (upstream_addr, _upstream_handle) = spawn_upstream(&upstream_bind_addr);
-    let (_html_addr, _html_handle) = spawn_html_server(&html_bind_addr);
-    let server = build_server(
-        &api_addr,
-        &proxy_addr,
-        &upstream_addr,
-        all_prefix(1),
-        1,
+    let content_bind_addr = env_or_first(
+        &[
+            "STAR_EXAMPLE_CONTENT_ADDR",
+            "STAR_EXAMPLE_HTML_ADDR",
+            "STAR_EXAMPLE_UPSTREAM_ADDR",
+        ],
+        "127.0.0.1:3000",
     );
+
+    let (content_addr, _content_handle) = spawn_content_server(&content_bind_addr);
+    let server = build_server(&api_addr, &proxy_addr, &content_addr, all_prefix(1), 1);
     server.unwrap().run_forever();
 }
 
 fn env_or_default(name: &str, default: &str) -> String {
     env::var(name).unwrap_or_else(|_| default.to_string())
+}
+
+fn env_or_first(names: &[&str], default: &str) -> String {
+    names
+        .iter()
+        .find_map(|name| env::var(name).ok())
+        .unwrap_or_else(|| default.to_string())
 }

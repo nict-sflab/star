@@ -5,16 +5,4 @@
 <body>
   <h1>{{headline}}</h1>
   <p>{{body}}</p>
-  <button onclick="submit()">Submit</button>
-  <script>
-    const submit = async () => {
-      const resp = await fetch(`http://localhost:18080/`, {
-        method: "GET",
-      })
-
-      console.log("response:", resp)
-      const text = await resp.text()
-      alert(text)
-    }
-  </script>
 </body>
