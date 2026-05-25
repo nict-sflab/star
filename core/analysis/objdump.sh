@@ -1,5 +1,5 @@
 cd ../
-for A in 0x4019884 0x4014fc5 0x4012cd3 0x40121b5 0x4013af9; do
+for A in 0x401C544 0x4014DB5 0x4017C85 0x40166C9 0x40158D5; do
   F=$(printf "0x%x" $((A - 0x4000000)))
   echo "=== A=$A F=$F ==="
   objdump -Cd --demangle ./target/release/analysis \
