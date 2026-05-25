@@ -8,7 +8,7 @@ const OP_ONE_BENCH_NAME: &str = "op_one";
 
 fn bench_enclave_call_latency(c: &mut Criterion) {
     let enclave = EnclaveRuntime::from_env().expect("enclave");
-    assert_eq!(enclave.one().expect("OP_ONE"), [1]);
+    assert_eq!(enclave.one().expect("OP_ONE"), [1; 32]);
 
     let mut group = c.benchmark_group(BENCH_GROUP_NAME);
     group.sample_size(40);

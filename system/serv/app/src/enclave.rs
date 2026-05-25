@@ -33,7 +33,9 @@ const ISSUE_CRED_RESPONSE_CAPACITY: usize = 128;
 const ISSUE_TOKEN_RESPONSE_CAPACITY: usize = 32;
 const ATTEST_RESPONSE_CAPACITY: usize = 32;
 const INSTALL_KEYS_RESPONSE_CAPACITY: usize = 0;
-const ONE_RESPONSE_CAPACITY: usize = 1;
+const ISSUE_TOKEN_REQUEST_CAPACITY: usize = 8 + 192;
+const ONE_RESPONSE_CAPACITY: usize = ISSUE_TOKEN_RESPONSE_CAPACITY;
+const ONE_REQUEST_PAYLOAD: [u8; ISSUE_TOKEN_REQUEST_CAPACITY] = [0; ISSUE_TOKEN_REQUEST_CAPACITY];
 
 pub struct EnclaveRuntimes {
     runtime: EnclaveRuntime,
@@ -266,7 +268,7 @@ impl EnclaveRuntime {
     }
 
     pub fn one(&self) -> Result<Vec<u8>, EnclaveError> {
-        self.call(OP_ONE, &[])
+        self.call(OP_ONE, &ONE_REQUEST_PAYLOAD)
     }
 
     fn call(&self, op: u64, payload: &[u8]) -> Result<Vec<u8>, EnclaveError> {

@@ -212,7 +212,7 @@ impl EnclaveApp {
     }
 
     fn one(&self, _: &[u8]) -> (u8, Vec<u8>) {
-        (STATUS_OK, vec![1])
+        (STATUS_OK, vec![1; 32])
     }
 
     fn handle_shared(&self, op: u8, payload: &[u8]) -> (u8, Vec<u8>) {
