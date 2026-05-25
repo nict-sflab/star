@@ -19,8 +19,8 @@ fn main() {
     rng.fill_bytes(&mut token_sk);
     rng.fill_bytes(&mut hpke_sk);
 
-    timecop::poison(&hpke_sk);
-    timecop::poison(&token_sk);
+    timecop::poison(hpke_sk.as_slice());
+    timecop::poison(token_sk.as_slice());
 
     let max_tokens_per_credential = 3u32;
     let enclave = Enclave::new(max_tokens_per_credential, token_sk, hpke_sk)
@@ -29,13 +29,13 @@ fn main() {
     // User setup and credential issuance.
     let pk = enclave.public_key();
 
-    timecop::unpoison(&pk);
+    timecop::unpoison(pk.as_slice());
     let sender = SecureChannelClient::new(pk).expect("failed to initialize sender");
     let mut user = User::new(max_tokens_per_credential as u64, sender);
     let (cipher, ck) = user.request_credential(&mut rng);
     let credential_bytes: Vec<u8> = enclave.issue_cred(&cipher, &mut rng);
 
-    timecop::unpoison(&credential_bytes);
+    timecop::unpoison(credential_bytes.as_slice());
     user.receive_credential(&credential_bytes, &ck);
 
     let envelope = user
@@ -44,7 +44,7 @@ fn main() {
     let token = enclave
         .issue_token(&envelope, period.to_be_bytes())
         .expect("token issuance failed");
-    timecop::unpoison(&token);
+    timecop::unpoison(token.as_slice()  );
 
     let mut token_sk = [0u8; 32];
     let mut hpke_sk = [0u8; 32];
