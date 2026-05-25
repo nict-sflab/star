@@ -22,7 +22,13 @@ use std::slice;
 use std::sync::{OnceLock, RwLock};
 
 const PERIOD_LEN: usize = 8;
-const MAX_TICKETS: u32 = 3_000_000_000;
+// This policy value must be embedded in the enclave image so that changing the
+// per-credential request limit changes MRENCLAVE. build.rs generates it from
+// STAR_MAX_COUNT at enclave build time; runtime environment variables are
+// intentionally not used here.
+include!(concat!(env!("OUT_DIR"), "/max_count.rs"));
+#[used]
+static MEASURED_MAX_COUNT_BE: [u8; 4] = MAX_COUNT.to_be_bytes();
 const MAX_PAYLOAD_LEN: usize = 16 * 1024 * 1024;
 
 const OP_INIT: u8 = 0;
@@ -44,15 +50,13 @@ const STATUS_BUFFER_TOO_SMALL: u8 = 5;
 struct EnclaveApp {
     enclave: Option<Enclave>,
     transfer_receiver: TransferReceiver,
-    max: u32,
 }
 
 impl EnclaveApp {
-    fn new(max: u32) -> Self {
+    fn new() -> Self {
         Self {
             enclave: None,
             transfer_receiver: TransferReceiver::random(&mut OsRng),
-            max,
         }
     }
 
@@ -61,7 +65,6 @@ impl EnclaveApp {
         Self {
             enclave: Some(enclave),
             transfer_receiver: TransferReceiver::random(&mut OsRng),
-            max: MAX_TICKETS,
         }
     }
 
@@ -137,7 +140,7 @@ impl EnclaveApp {
             Err(err) => return (STATUS_BAD_REQUEST, err.into_bytes()),
         };
 
-        match Enclave::new(self.max, enc_key, hpke_receiver_key) {
+        match Enclave::new(enclave_max_count(), enc_key, hpke_receiver_key) {
             Ok(enclave) => {
                 self.enclave = Some(enclave);
                 (STATUS_OK, Vec::new())
@@ -236,6 +239,10 @@ impl EnclaveApp {
     }
 }
 
+fn enclave_max_count() -> u32 {
+    u32::from_be_bytes(MEASURED_MAX_COUNT_BE)
+}
+
 pub fn run() {}
 
 #[cfg(target_env = "sgx")]
@@ -271,7 +278,7 @@ fn library_entry(
         Err(status) => return (status as u64, 0),
     };
 
-    let app = LIBRARY_APP.get_or_init(|| RwLock::new(EnclaveApp::new(MAX_TICKETS)));
+    let app = LIBRARY_APP.get_or_init(|| RwLock::new(EnclaveApp::new()));
     let (status, response) = if matches!(op, OP_INIT | OP_INSTALL_KEYS) {
         match app.write() {
             Ok(mut app) => app.handle(op, input),
