@@ -92,6 +92,7 @@ system/serv/enclave/enclave_*.h
 system/serv/app/examples/certs/
 core/analysis/.cargo
 vgcore.*
+system/serv/app/certs/*
 system/serv/app/certs/server.crt
 system/serv/app/certs/server.key
 system/serv/app/diff.txt
