@@ -77,11 +77,15 @@ impl SecureChannelServer {
         let enc = &cipher[AAD_LEN + INFO_LEN..AAD_LEN + INFO_LEN + ENC_LEN];
         let ciphertext = &cipher[AAD_LEN + INFO_LEN + ENC_LEN..];
 
+        #[cfg(feature = "timecop")]
+        timecop::poison(ciphertext);
+
         let key = self
             .receive_hpke(enc, info, aad, ciphertext)
             .expect("decryption failed");
+
         #[cfg(feature = "timecop")]
-        timecop::poison(&key);
+        timecop::poison(key.as_slice());
 
         let mut nonce_bytes = [0u8; 12];
         rng.fill_bytes(&mut nonce_bytes);
@@ -95,8 +99,6 @@ impl SecureChannelServer {
         result.extend_from_slice(&nonce_bytes);
         result.extend_from_slice(&ciphertext);
 
-        #[cfg(feature = "timecop")]
-        timecop::poison(&key);
         result
     }
 }

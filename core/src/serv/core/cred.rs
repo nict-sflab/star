@@ -29,15 +29,12 @@ impl Credential {
         rng.fill_bytes(&mut uid);
 
         #[cfg(feature = "timecop")]
-        timecop::poison(&uid);
+        timecop::poison(uid.as_slice());
 
         // calc code ← MAC(uid, sk)
         let mut mac = Hmac::<Sha256>::new_from_slice(&sk).expect("HMAC can take key of any size");
         mac.update(&uid);
         let code: Long = mac.finalize().into_bytes().into();
-
-        #[cfg(feature = "timecop")]
-        timecop::unpoison(&uid);
 
         Self { uid, code }
     }
