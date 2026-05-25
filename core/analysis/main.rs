@@ -63,20 +63,18 @@ fn fail1() {
     type Aead = ChaCha20Poly1305;
     type Kdf = HkdfSha384;
     type Kem = X25519HkdfSha256;
-    let mut sk_bytes = [0u8; 32];
+
+    let sk_bytes = [0u8; 32];
+    timecop::poison(sk_bytes.as_slice());
 
     let sk = <X25519HkdfSha256 as hpke::kem::Kem>::PrivateKey::from_bytes(&sk_bytes).unwrap();
-    let pk = X25519HkdfSha256::sk_to_pk(&sk);
 
-    let plain = [1u8; 32];
+    let plain = [0u8; 32];
     let bad_encapped_key =
         <Kem as KemTrait>::EncappedKey::from_bytes(&plain).expect("bad enc parse failed");
 
     let info = b"ct-test";
 
-    timecop::poison(sk_bytes.as_slice());
-
-    // this is taret
     let res =
         hpke::setup_receiver::<Aead, Kdf, Kem>(&OpModeR::Base, &sk, &bad_encapped_key, info);
     assert!(matches!(res, Err(HpkeError::DecapError)));
@@ -87,11 +85,14 @@ fn fail2() {
     let mut hpke_sk = [0u8; 32];
     rng.fill_bytes(&mut hpke_sk);
 
+    timecop::poison(hpke_sk.as_slice());
     let receiver = SecureChannelServer::new(hpke_sk).unwrap();
+
     let receiver_pk = receiver.public_key();
+    timecop::unpoison(receiver_pk.as_slice());
 
     let sender = SecureChannelClient::new(receiver_pk).expect("sender init failed");
-    let (envelope, shared_key) = sender
+    let (envelope, _shared_key) = sender
         .send_shared_key(&mut rng)
         .expect("send shared key failed");
 
@@ -103,13 +104,13 @@ fn fail2() {
     assert!(envelope.len() >= min_len, "HPKE envelope too short");
 
     envelope[min_len - 1] = !envelope[min_len - 1];
+
     let aad = &envelope[..AAD_LEN];
     let info = &envelope[AAD_LEN..AAD_LEN + INFO_LEN];
     let enc = &envelope[AAD_LEN + INFO_LEN..AAD_LEN + INFO_LEN + ENC_LEN];
     let ciphertext = &envelope[AAD_LEN + INFO_LEN + ENC_LEN..];
 
-    timecop::poison(hpke_sk.as_slice());
-    // this is taret
+    // this is target
     let decrypted_key = receiver.receive_hpke(enc, info, aad, ciphertext);
     assert!(matches!(decrypted_key, Err(hpke::HpkeError::OpenError)));
 }
