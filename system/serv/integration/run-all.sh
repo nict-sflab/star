@@ -2,10 +2,10 @@
 set -Eeuo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-ENV_FILE="$ROOT/integration/readme-env.sh"
+ENV_FILE="$ROOT/integration/env.sh"
 LOG_DIR="$ROOT/integration/logs"
 RUN_ID=$(date +%Y%m%d-%H%M%S)
-LOG_FILE="$LOG_DIR/readme-integration-$RUN_ID.log"
+LOG_FILE="$LOG_DIR/integration-$RUN_ID.log"
 APP_LOG="$LOG_DIR/star-app-attest-$RUN_ID.log"
 KEY_MANAGER_LOG="$LOG_DIR/key-manager-$RUN_ID.log"
 INSPECT_LOG="$LOG_DIR/inspect-$RUN_ID.log"
@@ -15,7 +15,7 @@ SGX_TARGET=x86_64-fortanix-unknown-sgx
 mkdir -p "$LOG_DIR"
 cd "$ROOT"
 
-# shellcheck source=integration/readme-env.sh
+# shellcheck source=integration/env.sh
 . "$ENV_FILE"
 
 export STAR_KEY_MANAGER_SEALED_KEYS="$LOG_DIR/key-manager-$RUN_ID.keys.sealed"

@@ -100,12 +100,12 @@ fi
 if [ -n "${OPENSSL_LIB_DIR:-}" ]; then
     prepend_ld_library_path "$OPENSSL_LIB_DIR"
 elif command -v openssl >/dev/null 2>&1 && command -v ldd >/dev/null 2>&1; then
-    _readme_env_openssl_libdir=$(
+    _env_openssl_libdir=$(
         ldd "$(command -v openssl)" 2>/dev/null |
             awk '/libssl\.so|libcrypto\.so/ && $3 ~ /^\// { sub("/[^/]+$", "", $3); print $3; exit }'
     )
-    prepend_ld_library_path "$_readme_env_openssl_libdir"
-    unset _readme_env_openssl_libdir
+    prepend_ld_library_path "$_env_openssl_libdir"
+    unset _env_openssl_libdir
 fi
 
 unset -f prepend_path

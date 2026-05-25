@@ -4,7 +4,7 @@ set -Eeuo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 SERV_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 SYSTEM_ROOT=$(cd "$SERV_ROOT/.." && pwd)
-ENV_FILE="${STAR_INTEGRATION_ENV:-$SERV_ROOT/integration/readme-env.sh}"
+ENV_FILE="${STAR_INTEGRATION_ENV:-$SERV_ROOT/integration/env.sh}"
 LOG_DIR="$SERV_ROOT/integration/logs"
 RUN_ID=$(date +%Y%m%d-%H%M%S)
 LOG_FILE="$LOG_DIR/client-server-integration-$RUN_ID.log"
@@ -15,7 +15,7 @@ UPSTREAM_LOG="$LOG_DIR/client-server-upstream-$RUN_ID.log"
 
 mkdir -p "$LOG_DIR"
 
-# shellcheck source=integration/readme-env.sh
+# shellcheck source=integration/env.sh
 . "$ENV_FILE"
 
 TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/star-client-server.XXXXXX")

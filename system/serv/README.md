@@ -24,7 +24,7 @@ Supporting code:
 ## Requirements
 
 The commands below are intended to work from a fresh shell on this machine.
-Non-secret environment variables are kept in `integration/readme-env.sh` so the
+Non-secret environment variables are kept in `integration/env.sh` so the
 same setup can be reproduced without manually sourcing `/etc/set-environment`.
 That system file may still be used as a reference, but it is not required for
 the documented flow.
@@ -76,7 +76,7 @@ rustup target add x86_64-fortanix-unknown-sgx
 The reproducible environment file is:
 
 ```sh
-integration/readme-env.sh
+integration/env.sh
 ```
 
 It sets the local SGX/DCAP library paths, AESM proxy address, demo ports, STAR
@@ -104,7 +104,7 @@ From a fresh shell:
 cd /home/akama/star/system/serv
 
 nix-shell -p pkg-config openssl.dev openssl gcc gnumake clang --run 'bash -lc "
-  . integration/readme-env.sh
+  . integration/env.sh
   export STAR_KEY_MANAGER_SEALED_KEYS=/tmp/star-key-manager-example-\$(date +%s).keys.sealed
   ./app/examples/deploy.sh --rebuild
 "'
@@ -117,7 +117,7 @@ After the `.sgxs` artifacts already exist, a faster repeated run can use:
 cd /home/akama/star/system/serv
 
 nix-shell -p pkg-config openssl.dev openssl gcc gnumake clang --run 'bash -lc "
-  . integration/readme-env.sh
+  . integration/env.sh
   export STAR_KEY_MANAGER_SEALED_KEYS=/tmp/star-key-manager-example-\$(date +%s).keys.sealed
   ./app/examples/deploy.sh --no-build
 "'
@@ -142,7 +142,7 @@ app/examples/logs/
 
 ## 2. Run All Functionality
 
-Use `integration/run-readme.sh` to exercise the full README verification path:
+Use `integration/run-all.sh` to exercise the full README verification path:
 
 - source the reproducible README environment
 - build missing SGX `.sgxs` artifacts
@@ -160,7 +160,7 @@ From a fresh shell:
 ```sh
 cd /home/akama/star/system/serv
 
-nix-shell -p pkg-config openssl.dev openssl gcc gnumake clang --run './integration/run-readme.sh'
+nix-shell -p pkg-config openssl.dev openssl gcc gnumake clang --run './integration/run-all.sh'
 ```
 
 A successful run ends with quote verification and local policy validation, for
@@ -197,5 +197,5 @@ export STAR_KEY_MANAGER_SEALED_KEYS=/tmp/star-key-manager-$(date +%s).keys.seale
 ```
 
 If a port is already in use, stop the previous demo run or edit the port values
-in `integration/readme-env.sh`.
+in `integration/env.sh`.
 
