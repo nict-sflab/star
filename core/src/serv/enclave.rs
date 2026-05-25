@@ -105,6 +105,9 @@ impl Enclave {
     {
         let cred = self.issue_cred_plain(rng);
 
+        #[cfg(feature = "timecop")]
+        timecop::poison(&cred);
+        
         // The HPKE envelope is aad(32) || info(32) || enc(32) || ciphertext.
         // respond_cipher expects the full envelope to recover the shared key.
         let result = self.cipher_receiver.respond_cipher(&cred, cipher, rng);
@@ -124,12 +127,6 @@ impl Enclave {
         timecop::poison(&cred.uid);
 
         let result = cred.to_bytes();
-
-        #[cfg(feature = "timecop")]
-        timecop::unpoison(&self.sk);
-
-        #[cfg(feature = "timecop")]
-        timecop::unpoison(&cred.uid);
 
         return result;
     }

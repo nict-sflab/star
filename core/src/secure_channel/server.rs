@@ -77,9 +77,13 @@ impl SecureChannelServer {
         let enc = &cipher[AAD_LEN + INFO_LEN..AAD_LEN + INFO_LEN + ENC_LEN];
         let ciphertext = &cipher[AAD_LEN + INFO_LEN + ENC_LEN..];
 
+        #[cfg(feature = "timecop")]
+        timecop::poison(&ciphertext);
+
         let key = self
             .receive_hpke(enc, info, aad, ciphertext)
             .expect("decryption failed");
+
         #[cfg(feature = "timecop")]
         timecop::poison(&key);
 
@@ -96,7 +100,10 @@ impl SecureChannelServer {
         result.extend_from_slice(&ciphertext);
 
         #[cfg(feature = "timecop")]
-        timecop::poison(&key);
+        timecop::unpoison(&key);
+
+        #[cfg(feature = "timecop")]
+        timecop::unpoison(&ciphertext);
         result
     }
 }
