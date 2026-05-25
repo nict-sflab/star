@@ -23,7 +23,13 @@ impl fmt::Display for EnclaveError {
             Self::Build(err) => write!(f, "enclave build failed to start: {err}"),
             Self::BuildFailed(status) => write!(f, "enclave build failed: {status}"),
             Self::Library(err) => write!(f, "enclave library error: {err}"),
-            Self::Remote { status, .. } => write!(f, "enclave remote error: status {status}"),
+            Self::Remote { status, payload } => {
+                write!(f, "enclave remote error: status {status}")?;
+                if !payload.is_empty() {
+                    write!(f, ": {}", String::from_utf8_lossy(payload))?;
+                }
+                Ok(())
+            }
             Self::ResponseTooLarge { len } => write!(f, "enclave response too large: {len} bytes"),
         }
     }

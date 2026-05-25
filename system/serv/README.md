@@ -118,6 +118,84 @@ cargo run --manifest-path app/Cargo.toml --release --bin star_app \
 `AESM_PROXY` must point to an AESM TCP proxy reachable from inside the enclave.
 The local AESM service itself uses `/run/aesmd/aesm.socket`.
 
+## Run The Local End-To-End Example
+
+Use this path to exercise the whole local flow: key-manager enclave, serving
+enclaves, STAR TLS proxy, example HTTP content server, client proxy, and one
+request through the client proxy.
+
+Run from `system/serv` on an SGX machine with `aesmd.service` running:
+
+```bash
+. /etc/set-environment
+
+# Optional, but useful on a fresh checkout because the deploy script gives the
+# client proxy 120 seconds to return its first smoke response.
+CARGO_TARGET_DIR=$PWD/target \
+  cargo build --manifest-path ../client/Cargo.toml --release
+
+export STAR_KEY_MANAGER_SEALED_KEYS=/tmp/star-key-manager-e2e-$(date +%s).keys.sealed
+./app/examples/deploy.sh --rebuild
+```
+
+`--rebuild` matters for the first run after changing attestation policy. The
+development defaults in `app/examples/deploy.sh` are embedded into the `.sgxs`
+files at build time:
+
+```bash
+STAR_ALLOW_DEBUG_ENCLAVES=1
+STAR_ALLOW_ADVISORY_ENCLAVES=1
+STAR_TRUST_SAME_SIGNER_ENCLAVES=1
+```
+
+The temporary `STAR_KEY_MANAGER_SEALED_KEYS` path avoids stale local sealed blobs
+while doing a smoke test. Omit it when you intentionally want to reuse the
+default `app/examples/key-manager.keys.sealed` file.
+
+The script starts a TCP AESM proxy at `127.0.0.1:5555`, starts the key-manager
+service, starts the STAR example, starts the client proxy, then waits for one
+request through the client proxy. A successful smoke test prints:
+
+```text
+smoke response: <head>
+  <meta charset="utf-8">
+  <title>tiny_http HTML</title>
+</head>
+<body>
+  <h1>Hello from tiny_http</h1>
+  <p>This response is HTML.</p>
+</body>
+```
+
+After that, the demo stays running and prints the demo URL plus log paths. Press
+Ctrl-C to stop it. For later runs with the same `.sgxs` files and sealed key
+path, use:
+
+```bash
+./app/examples/deploy.sh --no-build
+```
+
+If you see `unseal key bundle: ChaCha20-Poly1305 encryption/decryption failed`,
+the key-manager is trying to open a stale sealed key blob. Use a fresh sealed
+key path for local development:
+
+```bash
+export STAR_KEY_MANAGER_SEALED_KEYS=/tmp/star-key-manager-e2e-$(date +%s).keys.sealed
+./app/examples/deploy.sh --rebuild
+```
+
+If the STAR example fails with `HTTP 400: export error: enclave remote error:
+status 2`, rebuild the `.sgxs` files so the development trust policy is embedded:
+
+```bash
+./app/examples/deploy.sh --rebuild
+```
+
+If attestation fails with `connect to AESM proxy: connection refused`, leave
+`AESM_PROXY` at the local demo default `127.0.0.1:5555` and confirm
+`aesmd.service` is running. The example script starts the TCP proxy, but the
+system AESM service must already be available on `/run/aesmd/aesm.socket`.
+
 ### Run Key-Manager Separately
 
 The default `star_app` path still starts the key-manager enclave in the same
