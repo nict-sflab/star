@@ -28,6 +28,7 @@ Useful environment overrides:
   STAR_PROXY_ADDR=127.0.0.1:18081
   STAR_EXAMPLE_CONTENT_ADDR=127.0.0.1:3000
   STAR_CLIENT_PROXY_LISTEN=127.0.0.1:18082
+  STAR_CLIENT_SMOKE_TIMEOUT=900
   STAR_EXAMPLE_LOG_DIR=$ROOT/app/examples/logs
 
 The app API listens on STAR_API_ADDR. The example content server is placed
@@ -87,6 +88,11 @@ source_environment() {
         set +u
         . "$STAR_ENV_FILE"
         set -u
+    elif [ -f "$ROOT/integration/readme-env.sh" ]; then
+        # shellcheck source=../../integration/readme-env.sh
+        set +u
+        . "$ROOT/integration/readme-env.sh"
+        set -u
     elif [ -f /etc/set-environment ]; then
         # shellcheck source=/dev/null
         set +u
@@ -109,10 +115,20 @@ default_parallelism() {
 
 stop_pid() {
     local pid="${1:-}"
-    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-        kill "$pid" 2>/dev/null || true
-        wait "$pid" 2>/dev/null || true
-    fi
+    [ -n "$pid" ] || return 0
+    kill -0 "$pid" 2>/dev/null || return 0
+
+    kill "$pid" 2>/dev/null || true
+    for _ in $(seq 1 10); do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            wait "$pid" 2>/dev/null || true
+            return 0
+        fi
+        sleep 1
+    done
+
+    kill -9 "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
 }
 
 KEY_MANAGER_PID=
@@ -381,7 +397,7 @@ start_client_proxy() {
     echo "started client proxy (pid $CLIENT_PROXY_PID)"
 
     local body
-    if ! body=$(wait_for_demo_response "$STAR_DEMO_URL" 120); then
+    if ! body=$(wait_for_demo_response "$STAR_DEMO_URL" "${STAR_CLIENT_SMOKE_TIMEOUT:-900}"); then
         sed -n '1,220p' "$CLIENT_PROXY_LOG" >&2 || true
         die "client proxy did not return a demo response"
     fi

@@ -10,12 +10,15 @@ APP_LOG="$LOG_DIR/star-app-attest-$RUN_ID.log"
 KEY_MANAGER_LOG="$LOG_DIR/key-manager-$RUN_ID.log"
 INSPECT_LOG="$LOG_DIR/inspect-$RUN_ID.log"
 VERIFY_LOG="$LOG_DIR/verify-$RUN_ID.log"
+SGX_TARGET=x86_64-fortanix-unknown-sgx
 
 mkdir -p "$LOG_DIR"
 cd "$ROOT"
 
 # shellcheck source=integration/readme-env.sh
 . "$ENV_FILE"
+
+export STAR_KEY_MANAGER_SEALED_KEYS="$LOG_DIR/key-manager-$RUN_ID.keys.sealed"
 
 exec > >(tee -a "$LOG_FILE") 2>&1
 
@@ -31,10 +34,20 @@ cleanup() {
 
 stop_pid() {
     local pid="${1:-}"
-    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-        kill "$pid" 2>/dev/null || true
-        wait "$pid" 2>/dev/null || true
-    fi
+    [ -n "$pid" ] || return 0
+    kill -0 "$pid" 2>/dev/null || return 0
+
+    kill "$pid" 2>/dev/null || true
+    for _ in $(seq 1 10); do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            wait "$pid" 2>/dev/null || true
+            return 0
+        fi
+        sleep 1
+    done
+
+    kill -9 "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
 }
 
 trap cleanup EXIT
@@ -61,6 +74,70 @@ run_with_stdin() {
     printf ' %q' "$@"
     printf ' < %q\n' "$stdin_file"
     "$@" < "$stdin_file"
+}
+
+default_parallelism() {
+    getconf _NPROCESSORS_ONLN 2>/dev/null || printf '1\n'
+}
+
+build_sgxs() {
+    local manifest_path="$1"
+    local binary_name="$2"
+    local output_path="$3"
+    local heap_size="$4"
+    local stack_size="$5"
+    local threads="$6"
+
+    command -v ftxsgx-elf2sgxs >/dev/null 2>&1 || {
+        echo "required command not found: ftxsgx-elf2sgxs" >&2
+        exit 1
+    }
+
+    cargo build --quiet --release --target "$SGX_TARGET" --manifest-path "$manifest_path"
+
+    local elf_path="$CARGO_TARGET_DIR/$SGX_TARGET/release/$binary_name"
+    if [ ! -f "$elf_path" ]; then
+        echo "cargo built $binary_name, but $elf_path was not found" >&2
+        exit 1
+    fi
+
+    mkdir -p "$(dirname "$output_path")"
+    ftxsgx-elf2sgxs "$elf_path" \
+        --library \
+        --heap-size "$heap_size" \
+        --stack-size "$stack_size" \
+        --threads "$threads" \
+        --output "$output_path"
+}
+
+ensure_sgxs() {
+    section "Build SGX Artifacts"
+
+    if [ "${STAR_README_REBUILD:-0}" = "1" ] || [ ! -f "$STAR_KEY_MANAGER_SGXS" ]; then
+        echo "building $STAR_KEY_MANAGER_SGXS"
+        build_sgxs \
+            "$ROOT/utils/manage-key/enclave/Cargo.toml" \
+            key-manager \
+            "$STAR_KEY_MANAGER_SGXS" \
+            "${STAR_KEY_MANAGER_HEAP_SIZE:-33554432}" \
+            "${STAR_KEY_MANAGER_STACK_SIZE:-131072}" \
+            "${STAR_KEY_MANAGER_THREADS:-1}"
+    else
+        echo "using $STAR_KEY_MANAGER_SGXS"
+    fi
+
+    if [ "${STAR_README_REBUILD:-0}" = "1" ] || [ ! -f "$STAR_ENCLAVE_SGXS" ]; then
+        echo "building $STAR_ENCLAVE_SGXS"
+        build_sgxs \
+            "$ROOT/enclave/Cargo.toml" \
+            enclave \
+            "$STAR_ENCLAVE_SGXS" \
+            "${STAR_ENCLAVE_HEAP_SIZE:-33554432}" \
+            "${STAR_ENCLAVE_STACK_SIZE:-131072}" \
+            "${STAR_ENCLAVE_THREADS:-$(default_parallelism)}"
+    else
+        echo "using $STAR_ENCLAVE_SGXS"
+    fi
 }
 
 wait_for_file_text() {
@@ -187,7 +264,8 @@ start_star_app() {
     fi
     stop_pid "$APP_PID"
     APP_PID=
-    sed -n '1,80p' "$APP_LOG"
+    grep -E '^(STAR_ATTESTATION_PUBLIC_KEY_BASE64|STAR_ATTESTATION_QUOTE_BASE64|STAR_KEY_MANAGER_QUOTE_BASE64|STAR_FILTER_ENCLAVE_TRANSFER_QUOTE_BASE64|STAR_ISSUE_ENCLAVE_TRANSFER_QUOTE_BASE64|STAR_FILTER_ENCLAVE_DCAP_EVIDENCE_FOR_KEY_MANAGER_BASE64|STAR_ISSUE_ENCLAVE_DCAP_EVIDENCE_FOR_KEY_MANAGER_BASE64|STAR_KEY_MANAGER_DCAP_EVIDENCE_FOR_FILTER_ENCLAVE_BASE64|STAR_KEY_MANAGER_DCAP_EVIDENCE_FOR_ISSUE_ENCLAVE_BASE64|use plain|use tls)' "$APP_LOG" |
+        sed -E 's/=.*/=<base64 omitted>/'
 }
 
 extract_field() {
@@ -203,6 +281,8 @@ section "Environment"
     echo "inspect log: $INSPECT_LOG"
     echo "verify log: $VERIFY_LOG"
     env | sort | grep -E '^(AESM|PCCS|SGX|STAR|TLS|NO_PROXY|PKG_CONFIG|OPENSSL|LD_LIBRARY_PATH|PATH|CC|AR|RANLIB)='
+
+ensure_sgxs
 
 start_aesm_proxy
 
