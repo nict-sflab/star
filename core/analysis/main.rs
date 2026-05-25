@@ -51,11 +51,11 @@ fn main() {
     rng.fill_bytes(&mut token_sk);
     rng.fill_bytes(&mut hpke_sk);
 
+    fail1();
+    fail2();
+
     timecop::unpoison(&hpke_sk);
     timecop::unpoison(&token_sk);
-
-    // fail1();
-    // fail2();
 
     println!("done");
 }
@@ -74,15 +74,16 @@ fn fail1() {
 
     let (sk_r, _pk_r) = Kem::gen_keypair(&mut OsRng);
     let bad_enc_bytes = [0u8; 32];
-    timecop::poison(&bad_enc_bytes);
 
     let bad_encapped_key =
         <Kem as KemTrait>::EncappedKey::from_bytes(&bad_enc_bytes).expect("bad enc parse failed");
 
     let info = b"ct-test";
-
+    
+    timecop::poison(&bad_enc_bytes);
     let res =
         hpke::setup_receiver::<Aead, Kdf, Kem>(&OpModeR::Base, &sk_r, &bad_encapped_key, info);
+    assert!(matches!(res, Err(HpkeError::DecapError)));
 
     timecop::unpoison(&bad_enc_bytes);
 }
@@ -91,7 +92,6 @@ fn fail2() {
     let mut rng = OsRng;
     let mut hpke_sk = [0u8; 32];
     rng.fill_bytes(&mut hpke_sk);
-    timecop::poison(&hpke_sk);
 
     let receiver = SecureChannelServer::new(hpke_sk).unwrap();
     let receiver_pk = receiver.public_key();
@@ -115,7 +115,10 @@ fn fail2() {
     let enc = &envelope[AAD_LEN + INFO_LEN..AAD_LEN + INFO_LEN + ENC_LEN];
     let ciphertext = &envelope[AAD_LEN + INFO_LEN + ENC_LEN..];
 
+    timecop::poison(&hpke_sk);
+
     let decrypted_key = receiver.receive_hpke(enc, info, aad, ciphertext);
+    assert!(matches!(decrypted_key, Err(hpke::HpkeError::OpenError)));
 
     timecop::unpoison(&hpke_sk);
 }
