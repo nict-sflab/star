@@ -66,13 +66,13 @@ fn fail1() {
 
     let (sk_r, _pk_r) = Kem::gen_keypair(&mut OsRng);
     let bad_enc_bytes = [0u8; 32];
-
     let bad_encapped_key =
         <Kem as KemTrait>::EncappedKey::from_bytes(&bad_enc_bytes).expect("bad enc parse failed");
 
     let info = b"ct-test";
-    
+
     timecop::poison(&bad_enc_bytes);
+    // this is taret
     let res =
         hpke::setup_receiver::<Aead, Kdf, Kem>(&OpModeR::Base, &sk_r, &bad_encapped_key, info);
     assert!(matches!(res, Err(HpkeError::DecapError)));
@@ -99,14 +99,13 @@ fn fail2() {
     assert!(envelope.len() >= min_len, "HPKE envelope too short");
 
     envelope[min_len - 1] = !envelope[min_len - 1];
-
     let aad = &envelope[..AAD_LEN];
     let info = &envelope[AAD_LEN..AAD_LEN + INFO_LEN];
     let enc = &envelope[AAD_LEN + INFO_LEN..AAD_LEN + INFO_LEN + ENC_LEN];
     let ciphertext = &envelope[AAD_LEN + INFO_LEN + ENC_LEN..];
 
-    timecop::poison(&hpke_sk);
-
+    timecop::poison(&hpke_sk.as_slice());
+    // this is taret
     let decrypted_key = receiver.receive_hpke(enc, info, aad, ciphertext);
     assert!(matches!(decrypted_key, Err(hpke::HpkeError::OpenError)));
 }
