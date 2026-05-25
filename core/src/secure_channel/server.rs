@@ -99,11 +99,6 @@ impl SecureChannelServer {
         result.extend_from_slice(&nonce_bytes);
         result.extend_from_slice(&ciphertext);
 
-        #[cfg(feature = "timecop")]
-        timecop::unpoison(key.as_slice());
-
-        #[cfg(feature = "timecop")]
-        timecop::unpoison(ciphertext.as_slice());
         result
     }
 }

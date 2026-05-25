@@ -36,9 +36,6 @@ impl Credential {
         mac.update(&uid);
         let code: Long = mac.finalize().into_bytes().into();
 
-        #[cfg(feature = "timecop")]
-        timecop::unpoison(uid.as_slice());
-
         Self { uid, code }
     }
 

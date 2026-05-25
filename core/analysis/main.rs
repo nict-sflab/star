@@ -44,18 +44,10 @@ fn main() {
     let token = enclave
         .issue_token(&envelope, period.to_be_bytes())
         .expect("token issuance failed");
-    timecop::unpoison(token.as_slice()  );
-
-    let mut token_sk = [0u8; 32];
-    let mut hpke_sk = [0u8; 32];
-    rng.fill_bytes(&mut token_sk);
-    rng.fill_bytes(&mut hpke_sk);
+    timecop::unpoison(token.as_slice());
 
     fail1();
     fail2();
-
-    timecop::unpoison(&hpke_sk);
-    timecop::unpoison(&token_sk);
 
     println!("done");
 }
@@ -84,8 +76,6 @@ fn fail1() {
     let res =
         hpke::setup_receiver::<Aead, Kdf, Kem>(&OpModeR::Base, &sk_r, &bad_encapped_key, info);
     assert!(matches!(res, Err(HpkeError::DecapError)));
-
-    timecop::unpoison(&bad_enc_bytes);
 }
 
 fn fail2() {
@@ -119,6 +109,4 @@ fn fail2() {
 
     let decrypted_key = receiver.receive_hpke(enc, info, aad, ciphertext);
     assert!(matches!(decrypted_key, Err(hpke::HpkeError::OpenError)));
-
-    timecop::unpoison(&hpke_sk);
 }

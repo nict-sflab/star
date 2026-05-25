@@ -94,8 +94,6 @@ impl Enclave {
         let token = Token::random(cred.uid, period, count);
         let result = token.to_bytes();
 
-        #[cfg(feature = "timecop")]
-        timecop::unpoison(request);
         return result;
     }
 
@@ -112,8 +110,6 @@ impl Enclave {
         // respond_cipher expects the full envelope to recover the shared key.
         let result = self.cipher_receiver.respond_cipher(&cred, cipher, rng);
 
-        #[cfg(feature = "timecop")]
-        timecop::unpoison(result.as_slice());
         result
     }
 
