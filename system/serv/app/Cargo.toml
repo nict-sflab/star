@@ -67,3 +67,7 @@ harness = false
 [[bench]]
 name = "tls"
 harness = false
+
+[[bench]]
+name = "call"
+harness = false

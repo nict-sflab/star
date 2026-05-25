@@ -32,6 +32,7 @@ const OP_ISSUE_TOKEN: u8 = 3;
 const OP_ATTEST: u8 = 4;
 const OP_TRANSFER_PUBLIC_KEY: u8 = 5;
 const OP_INSTALL_KEYS: u8 = 6;
+const OP_ONE: u8 = 7;
 
 const STATUS_OK: u8 = 0;
 const STATUS_NOT_INITIALIZED: u8 = 1;
@@ -210,6 +211,10 @@ impl EnclaveApp {
         }
     }
 
+    fn one(&self, _: &[u8]) -> (u8, Vec<u8>) {
+        (STATUS_OK, vec![1])
+    }
+
     fn handle_shared(&self, op: u8, payload: &[u8]) -> (u8, Vec<u8>) {
         match op {
             OP_PUBLIC_KEY => self.public_key(payload),
@@ -217,6 +222,7 @@ impl EnclaveApp {
             OP_ISSUE_TOKEN => self.issue_token(payload),
             OP_ATTEST => self.attest(payload),
             OP_TRANSFER_PUBLIC_KEY => self.transfer_public_key(payload),
+            OP_ONE => self.one(payload),
             _ => (STATUS_BAD_REQUEST, b"unknown operation".to_vec()),
         }
     }

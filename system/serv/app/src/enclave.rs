@@ -26,12 +26,14 @@ const OP_ISSUE_TOKEN: u64 = 3;
 const OP_ATTEST: u64 = 4;
 const OP_TRANSFER_PUBLIC_KEY: u64 = 5;
 const OP_INSTALL_KEYS: u64 = 6;
+const OP_ONE: u64 = 7;
 
 const PUBLIC_KEY_RESPONSE_CAPACITY: usize = 32;
 const ISSUE_CRED_RESPONSE_CAPACITY: usize = 128;
 const ISSUE_TOKEN_RESPONSE_CAPACITY: usize = 32;
 const ATTEST_RESPONSE_CAPACITY: usize = 32;
 const INSTALL_KEYS_RESPONSE_CAPACITY: usize = 0;
+const ONE_RESPONSE_CAPACITY: usize = 1;
 
 pub struct EnclaveRuntimes {
     runtime: EnclaveRuntime,
@@ -263,6 +265,10 @@ impl EnclaveRuntime {
         Ok(())
     }
 
+    pub fn one(&self) -> Result<Vec<u8>, EnclaveError> {
+        self.call(OP_ONE, &[])
+    }
+
     fn call(&self, op: u64, payload: &[u8]) -> Result<Vec<u8>, EnclaveError> {
         self.library
             .call(op, payload, initial_response_capacity(op, payload.len()))
@@ -330,6 +336,7 @@ fn initial_response_capacity(op: u64, payload_len: usize) -> usize {
         OP_ATTEST => ATTEST_RESPONSE_CAPACITY,
         OP_TRANSFER_PUBLIC_KEY => PUBLIC_KEY_RESPONSE_CAPACITY,
         OP_INSTALL_KEYS => INSTALL_KEYS_RESPONSE_CAPACITY,
+        OP_ONE => ONE_RESPONSE_CAPACITY,
         _ => 1024,
     }
 }
