@@ -30,6 +30,10 @@ name = "analysis"
 path = "./analysis/main.rs"
 required-features = ["timecop"]
 
+[[bin]]
+name = "comm"
+path = "./benches/comm.rs"
+
 [[bench]]
 name = "issue_token"
 path = "benches/enclave.rs"
