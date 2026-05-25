@@ -1,279 +1,201 @@
-# STAR Service SGX Attestation
+# STAR Rate-Limiting Service
 
-## Test
+This repository contains a rate-limiting service built with STAR anonymous
+tokens and Intel SGX remote attestation. The service lets a client obtain a
+rate-limit credential, attach an anonymous STAR token to traffic, and have a
+proxy enforce token validity and replay resistance without learning the
+client's registration identity.
 
-Run all service crates from this directory:
+## Components
 
-```bash
-cargo test --release
+| Repository path | Formal name | Purpose |
+| --- | --- | --- |
+| `enclave/` | Auth SGX Enclave | SGX enclave that implements the STAR authorization logic and produces attested keys. |
+| `app/` | Filtering Proxy | Host application and proxy that run the enclaves, expose registration/public-key endpoints, and filter upstream traffic using STAR tokens. |
+| `app/examples/` | Web App Server | Example upstream web server and deployment script used for the local end-to-end demo. |
+
+Supporting code:
+
+- `utils/manage-key/`: key-manager service and SGX enclave used to provision key material to the Auth SGX Enclave.
+- `tools/verifier/`: quote inspection and DCAP verification helper.
+- `integration/`: reproducible README environment and full integration runner.
+- `certs/`: local development certificates used by the example deployment.
+
+## Requirements
+
+The commands below are intended to work from a fresh shell on this machine.
+Non-secret environment variables are kept in `integration/readme-env.sh` so the
+same setup can be reproduced without manually sourcing `/etc/set-environment`.
+That system file may still be used as a reference, but it is not required for
+the documented flow.
+
+The machine must provide:
+
+- Intel SGX hardware and DCAP quote support.
+- Running AESM service, normally `aesmd.service`.
+- Access to SGX device nodes, for example `/dev/sgx_enclave` and
+  `/dev/sgx_provision`.
+- PCCS/DCAP collateral access. The checked-in README environment uses
+  `https://pccs.phala.network` by default.
+
+Dependencies observed from `/etc/nixos/configuration.nix` and required by the
+project:
+
+- Rust with `rustup`
+- Rust target `x86_64-fortanix-unknown-sgx`
+- `sgxs-tools`
+- `fortanix-sgx-tools`
+- Intel SGX PSW / AESM
+- Intel SGX DCAP quote provider and quote verification libraries
+- Intel SGX SDK
+- `protobuf`
+- `zlib`
+- `cmake`
+- `curl`
+- `git`
+- `clang`
+- `openssl`
+- C/C++ runtime from the system compiler toolchain
+- Docker-backed PCCS service or another reachable PCCS endpoint
+
+Additional build tools may be needed when starting from an otherwise empty
+shell. The verified commands use `nix-shell` to provide them:
+
+```sh
+nix-shell -p pkg-config openssl.dev openssl gcc gnumake clang
 ```
 
-The app test suite includes a real SGX quote test. It starts an in-process AESM
-TCP proxy on `127.0.0.1:5555` when that port is free, forwards requests to
-`/run/aesmd/aesm.socket`, obtains a quote for the enclave public key, and verifies
-it through the same policy path used by `tools verify`.
+If the SGX Rust target is not installed yet, install it once:
 
-This workspace intentionally excludes `rust-sgx-example`; it is only reference
-material.
-
-## Reproduce SGX Benchmarks
-
-On the SGX development machine used for this workspace, run benchmarks from this
-directory with the DCAP environment and the test/benchmark trust policy embedded
-into the enclave builds:
-
-```bash
-. /etc/set-environment
-
-export STAR_ALLOW_DEBUG_ENCLAVES=1
-export STAR_ALLOW_ADVISORY_ENCLAVES=1
-export STAR_TRUST_SAME_SIGNER_ENCLAVES=1
-
-cargo bench
+```sh
+rustup target add x86_64-fortanix-unknown-sgx
 ```
 
-`STAR_ALLOW_ADVISORY_ENCLAVES=1` accepts advisory DCAP results such as
-`OUT_OF_DATE` for local development. `STAR_TRUST_SAME_SIGNER_ENCLAVES=1` is only
-for tests and benchmarks where exact peer measurements are not embedded; it
-trusts same-platform SGX local reports from enclaves signed by the same signer.
+## Environment
 
-To run one benchmark at a time while debugging:
+The reproducible environment file is:
 
-```bash
-cargo bench -p star_app --bench extension
-cargo bench -p star_app --bench filter
-cargo bench -p star_app --bench storage
-cargo bench -p star_app --bench tls
+```sh
+integration/readme-env.sh
 ```
 
-## Start With Attestation
+It sets the local SGX/DCAP library paths, AESM proxy address, demo ports, STAR
+policy flags, target directories, and default certificate paths. It intentionally
+does not contain secrets.
 
-The service starts a separate `key-manager` enclave. The key-manager owns the
-STAR credential key and HPKE receiver key, attests the service public key, and
-only exports the key bundle to serving enclaves after checking their remote
-attestation evidence inside the key-manager enclave. Each serving enclave checks
-the key-manager evidence inside the serving enclave before accepting the
-encrypted key bundle.
+The README environment enables local-development policy:
 
-Trusted peer policy is evaluated inside the enclaves, not by the host. Production
-key sharing should pin exact peer `MRENCLAVE` values. For SGX development and
-benchmark runs, same-signer local-report trust can be enabled explicitly. Set
-these variables before building the `.sgxs` files so the values are embedded in
-the enclave binaries:
+- `STAR_ALLOW_DEBUG_ENCLAVES=1`
+- `STAR_ALLOW_ADVISORY_ENCLAVES=1`
+- `STAR_TRUST_SAME_SIGNER_ENCLAVES=1`
 
-```bash
-export STAR_TRUSTED_KEY_MANAGER_MRENCLAVE=<32-byte hex MRENCLAVE>
-export STAR_TRUSTED_ENCLAVE_MRENCLAVE=<32-byte hex MRENCLAVE>
-# Or set signer-level trust explicitly when that is the intended boundary.
-export STAR_TRUSTED_KEY_MANAGER_MRSIGNER=<32-byte hex MRSIGNER>
-export STAR_TRUSTED_ENCLAVE_MRSIGNER=<32-byte hex MRSIGNER>
+These settings are suitable for this local demo and integration verification.
+For production, pin the expected enclave measurements/signers and disable broad
+debug/advisory/same-signer trust.
 
-# Development enclaves only.
-export STAR_ALLOW_DEBUG_KEY_MANAGER=1
-export STAR_ALLOW_DEBUG_ENCLAVE=1
-export STAR_ALLOW_ADVISORY_KEY_MANAGER=1
-export STAR_ALLOW_ADVISORY_ENCLAVE=1
+## 1. Run The Example Environment
 
-# Test/benchmark-only local SGX policy when exact peer measurements are not
-# embedded. This trusts local reports from enclaves signed by the same signer.
-export STAR_TRUST_SAME_SIGNER_ENCLAVES=1
+Use `app/examples/deploy.sh` to run the Web App Server, Filtering Proxy,
+key-manager service, AESM TCP proxy, and local client proxy.
+
+From a fresh shell:
+
+```sh
+cd /home/akama/star/system/serv
+
+nix-shell -p pkg-config openssl.dev openssl gcc gnumake clang --run 'bash -lc "
+  . integration/readme-env.sh
+  export STAR_KEY_MANAGER_SEALED_KEYS=/tmp/star-key-manager-example-\$(date +%s).keys.sealed
+  ./app/examples/deploy.sh --rebuild
+"'
 ```
 
-The host prints the key-manager and serving-enclave remote attestation quotes to
-stdout before key transfer, plus the DCAP evidence used for enclave-to-enclave
-key sharing:
+Use `--rebuild` for the first run or whenever SGX artifacts should be rebuilt.
+After the `.sgxs` artifacts already exist, a faster repeated run can use:
+
+```sh
+cd /home/akama/star/system/serv
+
+nix-shell -p pkg-config openssl.dev openssl gcc gnumake clang --run 'bash -lc "
+  . integration/readme-env.sh
+  export STAR_KEY_MANAGER_SEALED_KEYS=/tmp/star-key-manager-example-\$(date +%s).keys.sealed
+  ./app/examples/deploy.sh --no-build
+"'
+```
+
+The script performs a client smoke request. A successful run prints the HTML
+response from the Web App Server, then keeps the demo services running until
+interrupted with `Ctrl-C`.
+
+Default local endpoints:
+
+- Web App Server: `127.0.0.1:18081`
+- Filtering Proxy API: `http://127.0.0.1:18080`
+- Filtering Proxy TLS listener: `127.0.0.1:18443`
+- Client proxy listener: `127.0.0.1:18180`
+
+Logs are written under:
+
+```sh
+app/examples/logs/
+```
+
+## 2. Run All Functionality
+
+Use `integration/run-readme.sh` to exercise the full README verification path:
+
+- source the reproducible README environment
+- build missing SGX `.sgxs` artifacts
+- start the AESM TCP proxy
+- start the key-manager service
+- run release tests
+- run Criterion benchmarks
+- run individual extension/filter/storage/TLS benchmarks
+- start `star_app` for attestation
+- inspect the generated quote
+- verify the quote with the DCAP verifier
+
+From a fresh shell:
+
+```sh
+cd /home/akama/star/system/serv
+
+nix-shell -p pkg-config openssl.dev openssl gcc gnumake clang --run './integration/run-readme.sh'
+```
+
+A successful run ends with quote verification and local policy validation, for
+example:
 
 ```text
-STAR_ATTESTATION_PUBLIC_KEY_BASE64=<public key>
-STAR_ATTESTATION_QUOTE_BASE64=<key-manager quote>
-STAR_KEY_MANAGER_QUOTE_BASE64=<key-manager quote>
-STAR_FILTER_ENCLAVE_TRANSFER_QUOTE_BASE64=<serving enclave transfer quote>
-STAR_ISSUE_ENCLAVE_TRANSFER_QUOTE_BASE64=<serving enclave transfer quote>
-STAR_FILTER_ENCLAVE_DCAP_EVIDENCE_FOR_KEY_MANAGER_BASE64=<raw quote evidence>
-STAR_ISSUE_ENCLAVE_DCAP_EVIDENCE_FOR_KEY_MANAGER_BASE64=<raw quote evidence>
-STAR_KEY_MANAGER_DCAP_EVIDENCE_FOR_FILTER_ENCLAVE_BASE64=<raw quote evidence>
-STAR_KEY_MANAGER_DCAP_EVIDENCE_FOR_ISSUE_ENCLAVE_BASE64=<raw quote evidence>
+report_data public key binding OK
+local policy OK
 ```
 
-The key-manager quote binds the service public key by setting SGX `report_data`
-to `public_key || 32 zero bytes`. Serving enclave transfer quotes bind their
-ephemeral transfer public keys the same way. The host carries quotes and
-ciphertexts, but the policy decision is made in enclave code. For key sharing,
-the host fetches DCAP collateral for each peer quote and passes the raw quote
-plus collateral to the verifier enclave. The verifier enclave checks the DCAP
-result, collateral freshness, peer identity policy, debug policy, advisory
-policy, and `report_data` public-key binding before using the attested HPKE key.
+Logs are written under:
 
-Example:
-
-```bash
-. /etc/set-environment
-
-AESM_PROXY=127.0.0.1:5555 \
-STAR_ENCLAVE_SGXS=/path/to/enclave.sgxs \
-cargo run --manifest-path app/Cargo.toml --release --bin star_app \
-  > /tmp/star-app-attest.log 2>&1
+```sh
+integration/logs/
 ```
 
-`AESM_PROXY` must point to an AESM TCP proxy reachable from inside the enclave.
-The local AESM service itself uses `/run/aesmd/aesm.socket`.
+## Troubleshooting
 
-## Run The Local End-To-End Example
+If OpenSSL headers or `gcc` are missing, enter the documented `nix-shell`.
+Typical errors include missing `opensslconf.h`, missing `pkg-config`, or
+`failed to find tool "gcc"`.
 
-Use this path to exercise the whole local flow: key-manager enclave, serving
-enclaves, STAR TLS proxy, example HTTP content server, client proxy, and one
-request through the client proxy.
+If AESM cannot be reached, check:
 
-Run from `system/serv` on an SGX machine with `aesmd.service` running:
-
-```bash
-. /etc/set-environment
-
-# Optional, but useful on a fresh checkout because the deploy script gives the
-# client proxy 120 seconds to return its first smoke response.
-CARGO_TARGET_DIR=$PWD/target \
-  cargo build --manifest-path ../client/Cargo.toml --release
-
-export STAR_KEY_MANAGER_SEALED_KEYS=/tmp/star-key-manager-e2e-$(date +%s).keys.sealed
-./app/examples/deploy.sh --rebuild
+```sh
+systemctl status aesmd.service
 ```
 
-`--rebuild` matters for the first run after changing attestation policy. The
-development defaults in `app/examples/deploy.sh` are embedded into the `.sgxs`
-files at build time:
+If the key-manager fails while unsealing a previous key bundle, use a fresh
+sealed-key path:
 
-```bash
-STAR_ALLOW_DEBUG_ENCLAVES=1
-STAR_ALLOW_ADVISORY_ENCLAVES=1
-STAR_TRUST_SAME_SIGNER_ENCLAVES=1
+```sh
+export STAR_KEY_MANAGER_SEALED_KEYS=/tmp/star-key-manager-$(date +%s).keys.sealed
 ```
 
-The temporary `STAR_KEY_MANAGER_SEALED_KEYS` path avoids stale local sealed blobs
-while doing a smoke test. Omit it when you intentionally want to reuse the
-default `app/examples/key-manager.keys.sealed` file.
+If a port is already in use, stop the previous demo run or edit the port values
+in `integration/readme-env.sh`.
 
-The script starts a TCP AESM proxy at `127.0.0.1:5555`, starts the key-manager
-service, starts the STAR example, starts the client proxy, then waits for one
-request through the client proxy. A successful smoke test prints:
-
-```text
-smoke response: <head>
-  <meta charset="utf-8">
-  <title>tiny_http HTML</title>
-</head>
-<body>
-  <h1>Hello from tiny_http</h1>
-  <p>This response is HTML.</p>
-</body>
-```
-
-After that, the demo stays running and prints the demo URL plus log paths. Press
-Ctrl-C to stop it. For later runs with the same `.sgxs` files and sealed key
-path, use:
-
-```bash
-./app/examples/deploy.sh --no-build
-```
-
-If you see `unseal key bundle: ChaCha20-Poly1305 encryption/decryption failed`,
-the key-manager is trying to open a stale sealed key blob. Use a fresh sealed
-key path for local development:
-
-```bash
-export STAR_KEY_MANAGER_SEALED_KEYS=/tmp/star-key-manager-e2e-$(date +%s).keys.sealed
-./app/examples/deploy.sh --rebuild
-```
-
-If the STAR example fails with `HTTP 400: export error: enclave remote error:
-status 2`, rebuild the `.sgxs` files so the development trust policy is embedded:
-
-```bash
-./app/examples/deploy.sh --rebuild
-```
-
-If attestation fails with `connect to AESM proxy: connection refused`, leave
-`AESM_PROXY` at the local demo default `127.0.0.1:5555` and confirm
-`aesmd.service` is running. The example script starts the TCP proxy, but the
-system AESM service must already be available on `/run/aesmd/aesm.socket`.
-
-### Run Key-Manager Separately
-
-The default `star_app` path still starts the key-manager enclave in the same
-process. To put `manage-key` on another process or another SGX machine, start
-the key-manager HTTP service on the key-manager host:
-
-```bash
-. /etc/set-environment
-
-AESM_PROXY=127.0.0.1:5555 \
-STAR_KEY_MANAGER_ADDR=0.0.0.0:8090 \
-cargo run --manifest-path app/Cargo.toml --release --bin star_key_manager
-```
-
-Then point the serving host at that service:
-
-```bash
-. /etc/set-environment
-
-AESM_PROXY=127.0.0.1:5555 \
-STAR_KEY_MANAGER_URL=http://<key-manager-host>:8090 \
-STAR_ENCLAVE_SGXS=/path/to/enclave.sgxs \
-cargo run --manifest-path app/Cargo.toml --release --bin star_app
-```
-
-The service exposes:
-
-```text
-GET  /star/key-manager/public_key
-GET  /star/key-manager/attestation
-POST /star/key-manager/export
-```
-
-`POST /star/key-manager/export` accepts a base64 serving-enclave transfer quote
-and returns a base64 payload containing the key-manager quote, the DCAP evidence
-for the serving enclave, and the encrypted key envelope. The serving host then
-generates DCAP evidence for the key-manager quote and
-installs the envelope locally.
-
-For a remote key-manager, same-platform SGX local-report fallback is not used.
-Both hosts must have their own AESM/DCAP setup, and production builds should
-pin the trusted peer `MRENCLAVE` or `MRSIGNER` before building the `.sgxs` files.
-Keep `key-manager.keys.sealed` on the key-manager host; it is sealed with SGX
-`MRENCLAVE` policy and is not a portable backup format.
-
-## Inspect A Quote
-
-The verifier reads a raw quote, a base64 quote, or a startup log from stdin:
-
-```bash
-cargo run --manifest-path tools/verifier/Cargo.toml --release -- inspect \
-  < /tmp/star-app-attest.log
-```
-
-This prints quote size, attested public key, `MRENCLAVE`, `MRSIGNER`, and the
-debug flag.
-
-## Verify A Quote
-
-Use measurements from `inspect`:
-
-```bash
-. /etc/set-environment
-
-cargo run --manifest-path tools/verifier/Cargo.toml --release -- verify \
-  --mrsigner <32-byte hex MRSIGNER> \
-  --mrenclave <32-byte hex MRENCLAVE> \
-  --public-key <32-byte hex public key> \
-  --allow-debug \
-  --pccs-url <PCCS URL> \
-  < /tmp/star-app-attest.log
-```
-
-For development enclaves, `--allow-debug` is required when the quote debug flag
-is true. If DCAP verification returns an advisory TCB status such as `OutOfDate`,
-verification fails by default; pass `--allow-advisory` only when that is accepted
-by the local policy.
-
-The verifier uses the pure Rust `dcap-qvl` crate and fetches collateral from
-`--pccs-url`, `PCCS_URL`, or the crate's default PCCS URL. Startup key sharing
-uses the same raw quote plus DCAP collateral evidence format inside SGX.
