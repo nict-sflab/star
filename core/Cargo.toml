@@ -40,6 +40,6 @@ path = "benches/enclave.rs"
 harness = false
 
 [[bench]]
-name = "users"
+name = "user"
 path = "benches/users.rs"
 harness = false
