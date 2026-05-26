@@ -298,10 +298,6 @@ start_key_manager
 run "README Test" cargo test --release
 
 run "README Reproduce SGX Benchmarks" cargo bench
-run "README Benchmark extension" cargo bench -p star_app --bench extension
-run "README Benchmark filter" cargo bench -p star_app --bench filter
-run "README Benchmark storage" cargo bench -p star_app --bench storage
-run "README Benchmark tls" cargo bench -p star_app --bench tls
 
 start_star_app
 
