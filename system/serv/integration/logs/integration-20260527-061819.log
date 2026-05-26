@@ -1,0 +1,17 @@
+
+== Environment ==
+env file: /home/akama/star/system/serv/integration/env.sh
+main log: /home/akama/star/system/serv/integration/logs/integration-20260527-061819.log
+app log: /home/akama/star/system/serv/integration/logs/star-app-attest-20260527-061819.log
+key-manager log: /home/akama/star/system/serv/integration/logs/key-manager-20260527-061819.log
+inspect log: /home/akama/star/system/serv/integration/logs/inspect-20260527-061819.log
+verify log: /home/akama/star/system/serv/integration/logs/verify-20260527-061819.log
+AR=ar
+CC=gcc
+LD_LIBRARY_PATH=/nix/store/by19gg2pqp2b1gqphdf6bwk2g3hgak79-openssl-3.6.2/lib:/run/current-system/sw/lib
+NO_PROXY=127.0.0.1,localhost
+PATH=/nix/store/lfbzxs5wyqd2122mpbj5azkxhxspw9cd-bash-interactive-5.3p3/bin:/nix/store/5mrhn7sj5hmx1sqqj1568sya450yarvx-patchelf-0.15.2/bin:/nix/store/8v97ngkcpfzgghwnnr7fsz33p2x22gy9-gcc-wrapper-14.3.0/bin:/nix/store/ipr6y28viyqkhkg58rdvy27m01q5j5nh-gcc-14.3.0/bin:/nix/store/6s5jp0cchd4jjq474xkfymj18l6i5x95-glibc-2.40-224-bin/bin:/nix/store/hqkszxk2c0cxvd04xa4gsaqs182dw8l2-coreutils-9.8/bin:/nix/store/iz5lckcsg66r223si2gck7csk2hihj0m-binutils-wrapper-2.44/bin:/nix/store/i7mdvmliqcb5lz0nqija8rq55vws6gi8-binutils-2.44/bin:/nix/store/qhr81gkafwyczvwk173ymahhwrilfv5i-pkg-config-wrapper-0.29.2/bin:/nix/store/3ffi89rlwcqww9x71pf95miyik5jhnv9-openssl-3.6.2-bin/bin:/nix/store/fnvsac4yaw2146ig4p54xnnm6b6alkjw-gnumake-4.4.1/bin:/nix/store/snsqw9v764wfyk77s7b516wayvz4nvk1-clang-wrapper-21.1.7/bin:/nix/store/9k73m9j7cxldplpn2ch43a79sk9qm5b7-clang-21.1.7/bin:/nix/store/scgppvjiva995wvgbsc86n0kviy9qb30-binutils-wrapper-2.44/bin:/nix/store/3lim3czb4yp4fns1airldsrp985l8dl2-compiler-rt-libc-21.1.7/bin:/nix/store/hqkszxk2c0cxvd04xa4gsaqs182dw8l2-coreutils-9.8/bin:/nix/store/8xhaz2ysixijy8sgzmwmhlialqqind1p-findutils-4.10.0/bin:/nix/store/cw3a3yz8vrfsz53ypjw8hspy5hzzx2py-diffutils-3.12/bin:/nix/store/4zi0y6cmpjnbhmgrx7vfgqkyv5z1z4z0-gnused-4.9/bin:/nix/store/k3wiv3qqa4y0im5v1iq2jy4h9cm32dfc-gnugrep-3.12/bin:/nix/store/88d79vz87a5g3wsclabrgqd93jqh5yv8-gawk-5.3.2/bin:/nix/store/xl6pd2spjajwcpq09fnmnjv5psqmlmma-gnutar-1.35/bin:/nix/store/rhp8ph1q699irvmacp27x3sw84slk32i-gzip-1.14/bin:/nix/store/g36v1ss2ywkqp751wlkhnd8n9zaqkg2w-bzip2-1.0.8-bin/bin:/nix/store/djjc508wnfdwmkv5xrxxqx5r2v09yxfp-gnumake-4.4.1/bin:/nix/store/3hgg7pr65imdrifqqh3flg3arvkc2r22-bash-5.3p3/bin:/nix/store/wgnxx41q3d2cx6j5wk2s5bkjyzrr3ggn-patch-2.8/bin:/nix/store/3x3p3mhwn18q7qplxn34i13rdmswi0qm-xz-5.8.3-bin/bin:/nix/store/018l43lbsqbrsasrfdcxxb5s4s161fkr-file-5.45/bin:/run/wrappers/bin:/home/akama/.nix-profile/bin:/nix/profile/bin:/home/akama/.local/state/nix/profile/bin:/etc/profiles/per-user/akama/bin:/nix/var/nix/profiles/default/bin:/run/current-system/sw/bin
+RANLIB=ranlib
+
+== Build SGX Artifacts ==
+building /home/akama/star/system/serv/target/x86_64-fortanix-unknown-sgx/release/key-manager.sgxs
