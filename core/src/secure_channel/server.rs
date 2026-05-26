@@ -65,24 +65,17 @@ impl SecureChannelServer {
     where
         R: RngCore,
     {
-        const AAD_LEN: usize = 32;
-        const INFO_LEN: usize = 32;
-        const ENC_LEN: usize = 32;
-
-        let min_len = AAD_LEN + INFO_LEN + ENC_LEN;
-        assert!(cipher.len() >= min_len, "HPKE envelope too short");
-
-        let aad = &cipher[..AAD_LEN];
-        let info = &cipher[AAD_LEN..AAD_LEN + INFO_LEN];
-        let enc = &cipher[AAD_LEN + INFO_LEN..AAD_LEN + INFO_LEN + ENC_LEN];
-        let ciphertext = &cipher[AAD_LEN + INFO_LEN + ENC_LEN..];
+        let Some((aad, info, enc, ciphertext)) = split_hpke_envelope(cipher) else {
+            return Vec::new();
+        };
 
         #[cfg(feature = "timecop")]
         timecop::poison(ciphertext);
 
-        let key = self
-            .receive_hpke(enc, info, aad, ciphertext)
-            .expect("decryption failed");
+        let key = match self.receive_hpke(enc, info, aad, ciphertext) {
+            Ok(key) => key,
+            Err(_) => return Vec::new(),
+        };
 
         #[cfg(feature = "timecop")]
         timecop::poison(key.as_slice());
@@ -91,9 +84,14 @@ impl SecureChannelServer {
         rng.fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
 
-        let aead =
-            ChaCha20Poly1305::new_from_slice(&key).expect("HPKE response key must be 32 bytes");
-        let ciphertext = aead.encrypt(nonce, response).expect("encryption failure!");
+        let aead = match ChaCha20Poly1305::new_from_slice(&key) {
+            Ok(aead) => aead,
+            Err(_) => return Vec::new(),
+        };
+        let ciphertext = match aead.encrypt(nonce, response) {
+            Ok(ciphertext) => ciphertext,
+            Err(_) => return Vec::new(),
+        };
 
         let mut result = Vec::with_capacity(nonce_bytes.len() + ciphertext.len());
         result.extend_from_slice(&nonce_bytes);
@@ -101,4 +99,22 @@ impl SecureChannelServer {
 
         result
     }
+}
+
+pub(crate) fn split_hpke_envelope(cipher: &[u8]) -> Option<(&[u8], &[u8], &[u8], &[u8])> {
+    const AAD_LEN: usize = 32;
+    const INFO_LEN: usize = 32;
+    const ENC_LEN: usize = 32;
+
+    let min_len = AAD_LEN + INFO_LEN + ENC_LEN;
+    if cipher.len() < min_len {
+        return None;
+    }
+
+    let aad = &cipher[..AAD_LEN];
+    let info = &cipher[AAD_LEN..AAD_LEN + INFO_LEN];
+    let enc = &cipher[AAD_LEN + INFO_LEN..AAD_LEN + INFO_LEN + ENC_LEN];
+    let ciphertext = &cipher[AAD_LEN + INFO_LEN + ENC_LEN..];
+
+    Some((aad, info, enc, ciphertext))
 }

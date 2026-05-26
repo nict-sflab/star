@@ -178,6 +178,9 @@ impl EnclaveApp {
 
         let mut rng = OsRng;
         let cred = enclave.issue_cred(payload, &mut rng);
+        if cred.is_empty() {
+            return (STATUS_BAD_REQUEST, b"issue_cred failed".to_vec());
+        }
         (STATUS_OK, cred)
     }
 
@@ -196,7 +199,7 @@ impl EnclaveApp {
 
         match enclave.issue_token(cipher, current_period) {
             Ok(token) => (STATUS_OK, token),
-            Err(_) => (STATUS_PANIC, b"issue_token panicked".to_vec()),
+            Err(_) => (STATUS_BAD_REQUEST, b"issue_token failed".to_vec()),
         }
     }
 

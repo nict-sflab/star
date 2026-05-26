@@ -1,4 +1,4 @@
-use crate::secure_channel::server::SecureChannelServer;
+use crate::secure_channel::server::{split_hpke_envelope, SecureChannelServer};
 use crate::serv::core::bytes::{Long, Short};
 use crate::serv::core::cred::Credential;
 use crate::serv::core::token::Token;
@@ -50,25 +50,11 @@ impl Enclave {
     }
 
     pub fn issue_token(&self, cipher: &[u8], current_period: Short) -> Result<Vec<u8>, u8> {
-        const AAD_LEN: usize = 32;
-        const INFO_LEN: usize = 32;
-        const ENC_LEN: usize = 32;
-
-        let min_len = AAD_LEN + INFO_LEN + ENC_LEN;
-        assert!(cipher.len() >= min_len, "HPKE envelope too short");
-
-        let aad = &cipher[..AAD_LEN];
-        let info = &cipher[AAD_LEN..AAD_LEN + INFO_LEN];
-        let enc = &cipher[AAD_LEN + INFO_LEN..AAD_LEN + INFO_LEN + ENC_LEN];
-        let ciphertext = &cipher[AAD_LEN + INFO_LEN + ENC_LEN..];
-
-        let plain = match self
+        let (aad, info, enc, ciphertext) = split_hpke_envelope(cipher).ok_or(1)?;
+        let plain = self
             .cipher_receiver
             .receive_hpke(enc, info, aad, ciphertext)
-        {
-            Ok(p) => p,
-            Err(_) => panic!("decryption failed"),
-        };
+            .map_err(|_| 1)?;
 
         let result = self.issue_token_plain(&plain, current_period);
 
@@ -105,7 +91,7 @@ impl Enclave {
 
         #[cfg(feature = "timecop")]
         timecop::poison(cred.as_slice());
-        
+
         // The HPKE envelope is aad(32) || info(32) || enc(32) || ciphertext.
         // respond_cipher expects the full envelope to recover the shared key.
         let result = self.cipher_receiver.respond_cipher(&cred, cipher, rng);

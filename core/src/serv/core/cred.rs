@@ -57,19 +57,19 @@ impl Credential {
         use hmac::{Hmac, Mac};
         use sha2::Sha256;
 
-        let is_current = period == current_period;
-        let is_count_valid = constant_time_utils::cmp::ct_lt(&count, &max_count);
+        let is_current = constant_time_utils::cmp::ct_eq(&period, &current_period) as u8;
+        let is_count_valid = constant_time_utils::cmp::ct_lt(&count, &max_count) as u8;
         // panic!("hello: {:?}\n{:?}\n{:?}", is_count_valid, count, max_count);
 
         // Recalculate code and compare
         let mut mac = Hmac::<Sha256>::new_from_slice(&sk).expect("HMAC can take key of any size");
         mac.update(&self.uid);
         let recalculated_code: Long = mac.finalize().into_bytes().into();
-        let is_code_valid = recalculated_code == self.code;
+        let is_code_valid = constant_time_utils::cmp::ct_eq(&recalculated_code, &self.code) as u8;
 
         // panic!("hello: {}: {}: {}", is_current, is_count_valid, is_code_valid);
 
-        is_current && is_count_valid && is_code_valid
+        (is_current & is_count_valid & is_code_valid) == 1
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {

@@ -44,8 +44,14 @@ fn main() {
         .request_auth(COUNTER, PERIOD, &mut rng)
         .expect("failed to build auth request");
 
-    println!("credential issuance request bytes: {}", credential_request.len());
-    println!("credential issuance response bytes: {}", credential_response.len());
+    println!(
+        "credential issuance request bytes: {}",
+        credential_request.len()
+    );
+    println!(
+        "credential issuance response bytes: {}",
+        credential_response.len()
+    );
 
     println!("auth plaintext bytes: {}", plain_auth_request.len());
     println!("auth sent bytes: {}", encrypted_auth_request.len());

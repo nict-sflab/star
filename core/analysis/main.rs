@@ -75,8 +75,7 @@ fn fail1() {
 
     let info = b"ct-test";
 
-    let res =
-        hpke::setup_receiver::<Aead, Kdf, Kem>(&OpModeR::Base, &sk, &bad_encapped_key, info);
+    let res = hpke::setup_receiver::<Aead, Kdf, Kem>(&OpModeR::Base, &sk, &bad_encapped_key, info);
     assert!(matches!(res, Err(HpkeError::DecapError)));
 }
 
