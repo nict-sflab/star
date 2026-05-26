@@ -7,7 +7,7 @@ use dashmap::DashMap;
 
 use constant_time_utils::bytes::Long;
 
-const ENTRY_COUNTS: &[usize] = &[0, 360_000];
+const ENTRY_COUNTS: &[usize] = &[21_100];
 const STORAGE_TABLE_TITLE: &str = "DashMap<[u8; 32], ()> live allocated bytes";
 
 struct CountingAllocator;
