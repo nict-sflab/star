@@ -35,7 +35,7 @@ name = "comm"
 path = "./benches/comm.rs"
 
 [[bench]]
-name = "issue_token"
+name = "enclave"
 path = "benches/enclave.rs"
 harness = false
 
