@@ -1,6 +1,6 @@
 use std::{env, fs, path::PathBuf};
 
-const DEFAULT_MAX_COUNT: u32 = 10;
+const DEFAULT_MAX_COUNT: u32 = 100;
 const STAR_MAX_COUNT: &str = "STAR_MAX_COUNT";
 
 fn main() {
