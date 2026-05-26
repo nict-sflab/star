@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 build = "build.rs"
 
+[features]
+default = []
+bench-max-count = []
+
 [dependencies]
 rand = { version = "0.8", default-features = false, features = ["getrandom", "std", "std_rng"] }
 star-core = { path = "../../../core" }

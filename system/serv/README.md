@@ -38,8 +38,7 @@ The machine must provide:
 - PCCS/DCAP collateral access. The checked-in README environment uses
   `https://pccs.phala.network` by default.
 
-Dependencies observed from `/etc/nixos/configuration.nix` and required by the
-project:
+Following dependencies are required by this project:
 
 - Rust with `rustup`
 - Rust target `x86_64-fortanix-unknown-sgx`

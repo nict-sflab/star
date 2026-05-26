@@ -18,6 +18,7 @@ cd "$ROOT"
 # shellcheck source=integration/env.sh
 . "$ENV_FILE"
 
+export STAR_ENCLAVE_SGXS="$CARGO_TARGET_DIR/$SGX_TARGET/release/enclave-bench-max-count.sgxs"
 export STAR_KEY_MANAGER_SEALED_KEYS="$LOG_DIR/key-manager-$RUN_ID.keys.sealed"
 
 exec > >(tee -a "$LOG_FILE") 2>&1
@@ -87,13 +88,18 @@ build_sgxs() {
     local heap_size="$4"
     local stack_size="$5"
     local threads="$6"
+    local features="${7:-}"
 
     command -v ftxsgx-elf2sgxs >/dev/null 2>&1 || {
         echo "required command not found: ftxsgx-elf2sgxs" >&2
         exit 1
     }
 
-    cargo build --quiet --release --target "$SGX_TARGET" --manifest-path "$manifest_path"
+    if [ -n "$features" ]; then
+        cargo build --quiet --release --target "$SGX_TARGET" --manifest-path "$manifest_path" --features "$features"
+    else
+        cargo build --quiet --release --target "$SGX_TARGET" --manifest-path "$manifest_path"
+    fi
 
     local elf_path="$CARGO_TARGET_DIR/$SGX_TARGET/release/$binary_name"
     if [ ! -f "$elf_path" ]; then
@@ -134,7 +140,8 @@ ensure_sgxs() {
             "$STAR_ENCLAVE_SGXS" \
             "${STAR_ENCLAVE_HEAP_SIZE:-33554432}" \
             "${STAR_ENCLAVE_STACK_SIZE:-131072}" \
-            "${STAR_ENCLAVE_THREADS:-$(default_parallelism)}"
+            "${STAR_ENCLAVE_THREADS:-$(default_parallelism)}" \
+            bench-max-count
     else
         echo "using $STAR_ENCLAVE_SGXS"
     fi

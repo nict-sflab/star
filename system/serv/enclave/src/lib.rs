@@ -23,10 +23,12 @@ use std::sync::{OnceLock, RwLock};
 
 const PERIOD_LEN: usize = 8;
 // This policy value must be embedded in the enclave image so that changing the
-// per-credential request limit changes MRENCLAVE. build.rs generates it from
-// STAR_MAX_COUNT at enclave build time; runtime environment variables are
-// intentionally not used here.
+// per-credential request limit changes MRENCLAVE. Normal builds use the
+// generated config; benchmark builds use an explicit cargo feature.
+#[cfg(not(feature = "bench-max-count"))]
 include!(concat!(env!("OUT_DIR"), "/max_count.rs"));
+#[cfg(feature = "bench-max-count")]
+const MAX_COUNT: u32 = 1_000_000;
 #[used]
 static MEASURED_MAX_COUNT_BE: [u8; 4] = MAX_COUNT.to_be_bytes();
 const MAX_PAYLOAD_LEN: usize = 16 * 1024 * 1024;
