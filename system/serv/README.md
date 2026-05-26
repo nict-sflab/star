@@ -149,7 +149,6 @@ Use `integration/run-all.sh` to exercise the full README verification path:
 - start the key-manager service
 - run release tests
 - run Criterion benchmarks
-- run individual extension/filter/storage/TLS benchmarks
 - start `star_app` for attestation
 - inspect the generated quote
 - verify the quote with the DCAP verifier
