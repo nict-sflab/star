@@ -1,8 +1,0 @@
-
-== README Inspect A Quote ==
-+ cargo run --manifest-path tools/verifier/Cargo.toml --release -- inspect < /home/akama/star/system/serv/integration/logs/star-app-attest-20260527-061841.log
-quote size: 4600 bytes
-public key: 44742c9f0bc0e4d63ec54e8eab99c18cd9322070f9ec0a5b864f4c71459c6c64
-mrenclave: d85d625aa5e44955d34131236583457e366e52451f7bac9acfde297552ec324a
-mrsigner : 9affcfae47b848ec2caf1c49b4b283531e1cc425f93582b36806e52a43d78d1a
-debug    : true
