@@ -108,8 +108,12 @@ build_sgxs() {
     fi
 
     mkdir -p "$(dirname "$output_path")"
+    local enclave_mode=()
+    if [ "$binary_name" != "key-manager" ]; then
+        enclave_mode+=(--library)
+    fi
     ftxsgx-elf2sgxs "$elf_path" \
-        --library \
+        "${enclave_mode[@]}" \
         --heap-size "$heap_size" \
         --stack-size "$stack_size" \
         --threads "$threads" \
