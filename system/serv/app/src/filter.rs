@@ -4,10 +4,10 @@ use star_core::serv::core::token::Token;
 use crate::enclave::EnclaveRuntimes;
 
 pub struct StarFilter<T: FilterBox + Send + Sync> {
-    pub filter: T,
-    pub prefix_max: u32,
-    pub prefixes: Vec<u32>,
-    pub enclaves: EnclaveRuntimes,
+    filter: T,
+    prefixes: Vec<u32>,
+    prefix_max: u32,
+    enclaves: EnclaveRuntimes,
 }
 
 #[derive(Debug)]
@@ -16,17 +16,6 @@ pub enum StarFilterErrorStatus {
     InvalidRoute,
     DuplicatedToken,
     Internal,
-}
-
-impl StarFilterErrorStatus {
-    pub fn status_code(&self) -> u16 {
-        match self {
-            Self::InvalidToken => 401,
-            Self::InvalidRoute => 421,
-            Self::DuplicatedToken => 429,
-            Self::Internal => 500,
-        }
-    }
 }
 
 impl<T: FilterBox + Send + Sync> StarFilter<T> {
@@ -39,66 +28,46 @@ impl<T: FilterBox + Send + Sync> StarFilter<T> {
         }
     }
 
-    pub async fn filter(&self, request: &[u8]) -> Result<(), StarFilterErrorStatus> {
-        let (token, route) = self.issue_token_and_route(request).await?;
-        self.check_duplication(&token, route)?;
-
-        Ok(())
-    }
-
     pub fn filter_client_hello(&self, request: &[u8]) -> Result<(), StarFilterErrorStatus> {
         let (token, route) = self.issue_token_and_route_sync(request)?;
-        self.check_duplication(&token, route)?;
-        Ok(())
+        self.check_duplication(&token, route)
     }
 
     pub async fn issue_token_and_route(
         &self,
         request: &[u8],
     ) -> Result<(Entry, u32), StarFilterErrorStatus> {
-        let current_period = constant_time_utils::time::current_period();
-
         let enclave = self
             .enclaves
             .pick()
             .await
             .ok_or(StarFilterErrorStatus::Internal)?;
-
-        let token_bytes = enclave
-            .issue_token(request, current_period)
+        let token = enclave
+            .issue_token(request, constant_time_utils::time::current_period())
             .map_err(|_| StarFilterErrorStatus::Internal)?;
 
-        self.token_and_route(&token_bytes)
+        self.token_and_route(&token)
     }
 
     pub fn issue_token_and_route_sync(
         &self,
         request: &[u8],
     ) -> Result<(Entry, u32), StarFilterErrorStatus> {
-        let current_period = constant_time_utils::time::current_period();
+        let enclave = self
+            .enclaves
+            .pick_blocking()
+            .ok_or(StarFilterErrorStatus::Internal)?;
+        let token = enclave
+            .issue_token(request, constant_time_utils::time::current_period())
+            .map_err(|_| StarFilterErrorStatus::Internal)?;
 
-        let result = (|| {
-            let enclave = self
-                .enclaves
-                .pick_blocking()
-                .ok_or(StarFilterErrorStatus::Internal)?;
-
-            let token_bytes = enclave
-                .issue_token(request, current_period)
-                .map_err(|_| StarFilterErrorStatus::Internal)?;
-
-            self.token_and_route(&token_bytes)
-        })();
-
-        result
+        self.token_and_route(&token)
     }
 
     fn token_and_route(&self, token_bytes: &[u8]) -> Result<(Entry, u32), StarFilterErrorStatus> {
-        if token_bytes.len() < 32 {
-            return Err(StarFilterErrorStatus::InvalidToken);
-        }
-
-        let token_entry: Entry = token_bytes[..32]
+        let token_entry: Entry = token_bytes
+            .get(..32)
+            .ok_or(StarFilterErrorStatus::InvalidToken)?
             .try_into()
             .map_err(|_| StarFilterErrorStatus::InvalidToken)?;
         let token = Token::new(token_entry);
@@ -115,12 +84,11 @@ impl<T: FilterBox + Send + Sync> StarFilter<T> {
             return Err(StarFilterErrorStatus::InvalidRoute);
         }
 
-        let is_new = self
+        if self
             .filter
             .test_and_insert(token)
-            .map_err(|_| StarFilterErrorStatus::Internal)?;
-
-        if is_new {
+            .map_err(|_| StarFilterErrorStatus::Internal)?
+        {
             Ok(())
         } else {
             Err(StarFilterErrorStatus::DuplicatedToken)
