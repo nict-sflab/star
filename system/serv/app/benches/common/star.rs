@@ -10,7 +10,7 @@ use star_core::{client::User, secure_channel::client::SecureChannelClient};
 
 use super::aesm_proxy::AesmProxyGuard;
 
-pub type BenchFilter = StarFilter<DashMapFilterBox>;
+pub type BenchFilter = StarFilter<HashMapFilterBox>;
 pub const MAX_COUNT_PER_CREDENTIAL: u64 = 1_000_000;
 
 pub struct KeyedEnclaves {

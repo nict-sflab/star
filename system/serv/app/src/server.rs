@@ -1,12 +1,13 @@
 use pingora::{listeners::tls::TlsSettings, server::Server};
 use pingora_proxy::http_proxy_service;
 use pingora_web::App as WebApp;
+use simple_filter_box::hashmap::HashMapFilterBox;
 use std::error::Error;
 use std::sync::Arc;
 
 use crate::api::{IssueApi, PublicKeyApi, DEFAULT_PUBLIC_KEY_API, DEFAULT_REGISTER_API};
 use crate::env_or_default;
-use crate::filter::{HashMapFilterBox, StarFilter};
+use crate::filter::StarFilter;
 use crate::provisioning::ProvisionedEnclaves;
 use crate::proxy::UpstreamProxy;
 use crate::tls::configure_tls_token_extension;
