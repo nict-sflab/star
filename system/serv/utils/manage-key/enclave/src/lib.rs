@@ -1,5 +1,3 @@
-#[cfg(target_env = "sgx")]
-mod entry;
 mod key_bundle;
 mod policy;
 mod seal;
@@ -51,6 +49,3 @@ impl KeyManager {
 #[path = "lib_test.rs"]
 #[cfg(test)]
 mod tests;
-
-// Referenced by the binary so the SGX library entry is linked.
-pub fn run() {}

@@ -45,7 +45,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn export_round_trip_and_rejects_malformed_payloads() {
+    fn export_encoding() {
         let export = KeyManagerExport {
             key_manager_quote: vec![1, 2],
             recipient_evidence: vec![3],

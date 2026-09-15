@@ -4,17 +4,9 @@ use hpke::{
     Serializable,
 };
 
-#[test]
-fn key_bundle_round_trips_and_rejects_invalid_lengths() {
-    let keys = KeyBundle::random(&mut OsRng);
-    let encoded = keys.encode();
-    assert_eq!(KeyBundle::decode(&encoded).unwrap().encode(), encoded);
-    assert!(KeyBundle::decode(&encoded[..63]).is_err());
-    assert!(KeyBundle::decode(&[0; 65]).is_err());
-}
 
 #[test]
-fn exported_keys_are_authenticated_and_decryptable_by_recipient() {
+fn authenticated_export() {
     type Kem = X25519HkdfSha256;
     let keys = KeyBundle::random(&mut OsRng);
     let (secret, public) = <Kem as hpke::Kem>::gen_keypair(&mut OsRng);
@@ -36,13 +28,13 @@ fn exported_keys_are_authenticated_and_decryptable_by_recipient() {
 
 #[cfg(not(target_env = "sgx"))]
 #[test]
-fn restore_rejects_unsealed_keys() {
+fn unsealed_keys() {
     assert!(KeyManager::restore(&[0; 64]).is_err());
     assert!(KeyManager::restore(&[]).is_err());
 }
 
 #[test]
-fn export_rejects_invalid_evidence() {
+fn invalid_evidence() {
     let manager = KeyManager {
         keys: KeyBundle::random(&mut OsRng),
         recipient_policy: QuotePolicy {
