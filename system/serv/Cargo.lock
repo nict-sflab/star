@@ -654,7 +654,7 @@ checksum = "4ea181bf566f71cb9a5d17a59e1871af638180a18fb0035c92ae62b705207123"
 dependencies = [
  "atty",
  "bitflags 1.3.2",
- "clap_derive",
+ "clap_derive 3.2.25",
  "clap_lex 0.2.4",
  "indexmap 1.9.3",
  "once_cell",
@@ -670,6 +670,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b193af5b67834b676abd72466a96c1024e6a6ad978a1f484bd90b85c94041351"
 dependencies = [
  "clap_builder",
+ "clap_derive 4.6.0",
 ]
 
 [[package]]
@@ -678,8 +679,10 @@ version = "4.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "714a53001bf66416adb0e2ef5ac857140e7dc3a0c48fb28b2f10762fc4b5069f"
 dependencies = [
+ "anstream",
  "anstyle",
  "clap_lex 1.1.0",
+ "strsim 0.11.1",
 ]
 
 [[package]]
@@ -693,6 +696,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "clap_derive"
+version = "4.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1110bd8a634a1ab8cb04345d8d878267d57c3cf1b38d91b71af6686408bbca6a"
+dependencies = [
+ "heck 0.5.0",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -1083,7 +1098,6 @@ dependencies = [
  "parity-scale-codec",
  "pem",
  "reqwest 0.13.3",
- "ring",
  "rustls-pki-types",
  "scale-info",
  "serde",
@@ -1324,14 +1338,10 @@ dependencies = [
 name = "enclave"
 version = "0.1.0"
 dependencies = [
- "aesm-client",
- "bincode",
- "hpke",
+ "key-manager",
  "rand 0.8.6",
- "sgx-isa",
  "star-core",
  "star_attestation",
- "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -2379,7 +2389,6 @@ dependencies = [
 name = "key-manager"
 version = "0.1.0"
 dependencies = [
- "aesm-client",
  "bincode",
  "chacha20poly1305",
  "hkdf",
@@ -2388,7 +2397,6 @@ dependencies = [
  "serde",
  "sgx-isa",
  "sha2",
- "star-core",
  "star_attestation",
  "thiserror 1.0.69",
 ]
@@ -2407,14 +2415,10 @@ dependencies = [
 name = "key-manager-service"
 version = "0.1.0"
 dependencies = [
- "aesm-client",
  "axum",
  "base64 0.22.1",
- "enclave-runner",
- "enclave-runner-sgx",
  "key-manager-client",
  "reqwest 0.12.28",
- "sgxs-loaders",
  "star_attestation",
  "thiserror 1.0.69",
  "tokio",
@@ -4523,7 +4527,6 @@ dependencies = [
  "rand 0.9.4",
  "sgx-isa",
  "sha2",
- "tokio",
 ]
 
 [[package]]
@@ -4531,8 +4534,11 @@ name = "star_tools"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "clap 4.6.0",
  "dcap-qvl",
+ "hex",
  "parity-scale-codec",
+ "star_attestation",
  "tokio",
 ]
 
