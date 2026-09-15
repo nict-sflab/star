@@ -73,7 +73,49 @@ impl LibraryRuntime {
         initial_capacity: usize,
     ) -> Result<Vec<u8>, EnclaveError> {
         std::thread::scope(|scope| {
-            let handle = scope.spawn(|| call_library(&self.library, op, payload, initial_capacity));
+            let handle = scope.spawn(|| {
+                let mut output = vec![0u8; initial_capacity];
+
+                loop {
+                    let (status, len) = unsafe {
+                        self.library.call(
+                            op,
+                            payload.as_ptr() as u64,
+                            payload.len() as u64,
+                            output.as_mut_ptr() as u64,
+                            output.len() as u64,
+                        )
+                    }
+                    .map_err(|err| EnclaveError::Library(err.to_string()))?;
+
+                    let len = usize::try_from(len)
+                        .map_err(|_| EnclaveError::ResponseTooLarge { len: usize::MAX })?;
+
+                    if status == STATUS_BUFFER_TOO_SMALL {
+                        if len > MAX_PAYLOAD_LEN {
+                            return Err(EnclaveError::ResponseTooLarge { len });
+                        }
+
+                        output.resize(len, 0);
+                        continue;
+                    }
+
+                    if len > output.len() {
+                        return Err(EnclaveError::ResponseTooLarge { len });
+                    }
+
+                    output.truncate(len);
+
+                    if status == STATUS_OK {
+                        return Ok(output);
+                    }
+
+                    return Err(EnclaveError::Remote {
+                        status,
+                        payload: output,
+                    });
+                }
+            });
             match handle.join() {
                 Ok(result) => result,
                 Err(panic) => std::panic::resume_unwind(panic),
@@ -108,7 +150,20 @@ pub(crate) fn build_sgxs(
             .arg(manifest_path),
     )?;
 
-    let target_dir = release_target_dir(manifest_dir, binary_name)?;
+    let mut candidates = Vec::new();
+    if let Some(target_dir) = std::env::var_os("CARGO_TARGET_DIR") {
+        candidates.push(PathBuf::from(target_dir));
+    }
+    candidates.extend(manifest_dir.ancestors().map(|path| path.join("target")));
+    let target_dir = candidates
+        .into_iter()
+        .map(|path| path.join(SGX_TARGET).join("release"))
+        .find(|path| path.join(binary_name).is_file())
+        .ok_or_else(|| {
+            EnclaveError::BuildFailed(format!(
+                "cargo built {binary_name}, but the SGX ELF was not found"
+            ))
+        })?;
     let elf_path = target_dir.join(binary_name);
     let sgxs_path = target_dir.join(format!("{binary_name}.sgxs"));
 
@@ -130,31 +185,6 @@ pub(crate) fn build_sgxs(
     Ok(sgxs_path)
 }
 
-fn release_target_dir(manifest_dir: &Path, binary_name: &str) -> Result<PathBuf, EnclaveError> {
-    let mut candidates = Vec::new();
-
-    if let Some(target_dir) = std::env::var_os("CARGO_TARGET_DIR") {
-        candidates.push(PathBuf::from(target_dir));
-    }
-
-    let mut current = Some(manifest_dir);
-    while let Some(path) = current {
-        candidates.push(path.join("target"));
-        current = path.parent();
-    }
-
-    for candidate in candidates {
-        let target_dir = candidate.join(SGX_TARGET).join("release");
-        if target_dir.join(binary_name).is_file() {
-            return Ok(target_dir);
-        }
-    }
-
-    Err(EnclaveError::BuildFailed(format!(
-        "cargo built {binary_name}, but the SGX ELF was not found"
-    )))
-}
-
 fn run_command(command: &mut Command) -> Result<(), EnclaveError> {
     let output = command.output().map_err(EnclaveError::Build)?;
 
@@ -169,53 +199,4 @@ fn run_command(command: &mut Command) -> Result<(), EnclaveError> {
         "{}\nstdout:\n{}\nstderr:\n{}",
         output.status, stdout, stderr
     )))
-}
-
-fn call_library(
-    library: &Library,
-    op: u64,
-    payload: &[u8],
-    initial_capacity: usize,
-) -> Result<Vec<u8>, EnclaveError> {
-    let mut output = vec![0u8; initial_capacity];
-
-    loop {
-        let (status, len) = unsafe {
-            library.call(
-                op,
-                payload.as_ptr() as u64,
-                payload.len() as u64,
-                output.as_mut_ptr() as u64,
-                output.len() as u64,
-            )
-        }
-        .map_err(|err| EnclaveError::Library(err.to_string()))?;
-
-        let len =
-            usize::try_from(len).map_err(|_| EnclaveError::ResponseTooLarge { len: usize::MAX })?;
-
-        if status == STATUS_BUFFER_TOO_SMALL {
-            if len > MAX_PAYLOAD_LEN {
-                return Err(EnclaveError::ResponseTooLarge { len });
-            }
-
-            output.resize(len, 0);
-            continue;
-        }
-
-        if len > output.len() {
-            return Err(EnclaveError::ResponseTooLarge { len });
-        }
-
-        output.truncate(len);
-
-        if status == STATUS_OK {
-            return Ok(output);
-        }
-
-        return Err(EnclaveError::Remote {
-            status,
-            payload: output,
-        });
-    }
 }

@@ -1,10 +1,10 @@
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use key_manager_client::ENCLAVE_PUBLIC_KEY_LEN;
 
-use crate::sgx::{build_sgxs, EnclaveError, LibraryRuntime};
+use crate::sgx::{EnclaveError, LibraryRuntime, build_sgxs};
 
 const STAR_KEY_MANAGER_SGXS: &str = "STAR_KEY_MANAGER_SGXS";
 const STAR_KEY_MANAGER_HEAP_SIZE: &str = "STAR_KEY_MANAGER_HEAP_SIZE";
@@ -21,11 +21,6 @@ const OP_PUBLIC_KEY: u64 = 1;
 const OP_ATTEST: u64 = 4;
 const OP_EXPORT_KEYS: u64 = 5;
 
-const PUBLIC_KEY_RESPONSE_CAPACITY: usize = 32;
-const ATTEST_RESPONSE_CAPACITY: usize = 32;
-const EXPORT_KEYS_RESPONSE_CAPACITY: usize = 256;
-const INIT_RESPONSE_CAPACITY: usize = 1024;
-
 pub struct KeyManagerRuntime {
     library: LibraryRuntime,
     sealed_keys: Vec<u8>,
@@ -35,16 +30,27 @@ impl KeyManagerRuntime {
     pub fn from_env() -> Result<Self, EnclaveError> {
         let sgxs = default_key_manager_sgxs()?;
         let library = LibraryRuntime::load(&sgxs)?;
-        let sealed_keys_path = sealed_keys_path();
-        let init_payload = read_optional_sealed_keys(&sealed_keys_path)?;
-        let sealed_keys = library.call(
-            OP_INIT,
-            init_payload.as_deref().unwrap_or(&[]),
-            initial_response_capacity(OP_INIT),
-        )?;
+        let sealed_keys_path = std::env::var_os(STAR_KEY_MANAGER_SEALED_KEYS)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_KEY_MANAGER_SEALED_KEYS));
+        let init_payload = match fs::read(&sealed_keys_path) {
+            Ok(keys) => Some(keys),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => None,
+            Err(err) => return Err(EnclaveError::Library(format!("read sealed keys: {err}"))),
+        };
+        let sealed_keys = library.call(OP_INIT, init_payload.as_deref().unwrap_or(&[]), 1024)?;
 
         if init_payload.as_deref() != Some(sealed_keys.as_slice()) {
-            write_sealed_keys(&sealed_keys_path, &sealed_keys)?;
+            if let Some(parent) = sealed_keys_path
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent).map_err(|err| {
+                    EnclaveError::Library(format!("create sealed keys dir: {err}"))
+                })?;
+            }
+            fs::write(&sealed_keys_path, &sealed_keys)
+                .map_err(|err| EnclaveError::Library(format!("write sealed keys: {err}")))?;
         }
 
         Ok(KeyManagerRuntime {
@@ -56,7 +62,7 @@ impl KeyManagerRuntime {
     pub fn from_env_with_sealed_keys(sealed_keys: &[u8]) -> Result<Self, EnclaveError> {
         let sgxs = default_key_manager_sgxs()?;
         let library = LibraryRuntime::load(&sgxs)?;
-        let sealed_keys = library.call(OP_INIT, sealed_keys, initial_response_capacity(OP_INIT))?;
+        let sealed_keys = library.call(OP_INIT, sealed_keys, 1024)?;
 
         Ok(KeyManagerRuntime {
             library,
@@ -69,7 +75,7 @@ impl KeyManagerRuntime {
     }
 
     pub fn public_key(&self) -> Result<[u8; ENCLAVE_PUBLIC_KEY_LEN], EnclaveError> {
-        let response = self.call(OP_PUBLIC_KEY, &[])?;
+        let response = self.library.call(OP_PUBLIC_KEY, &[], 32)?;
         let len = response.len();
 
         response
@@ -79,52 +85,12 @@ impl KeyManagerRuntime {
     }
 
     pub fn public_key_attestation(&self) -> Result<Vec<u8>, EnclaveError> {
-        self.call(OP_ATTEST, &[])
+        self.library.call(OP_ATTEST, &[], 8192)
     }
 
     pub fn export_keys(&self, recipient_evidence: &[u8]) -> Result<Vec<u8>, EnclaveError> {
-        self.call(OP_EXPORT_KEYS, recipient_evidence)
+        self.library.call(OP_EXPORT_KEYS, recipient_evidence, 256)
     }
-
-    fn call(&self, op: u64, payload: &[u8]) -> Result<Vec<u8>, EnclaveError> {
-        self.library
-            .call(op, payload, initial_response_capacity(op))
-    }
-}
-
-fn initial_response_capacity(op: u64) -> usize {
-    match op {
-        OP_INIT => INIT_RESPONSE_CAPACITY,
-        OP_PUBLIC_KEY => PUBLIC_KEY_RESPONSE_CAPACITY,
-        OP_ATTEST => ATTEST_RESPONSE_CAPACITY,
-        OP_EXPORT_KEYS => EXPORT_KEYS_RESPONSE_CAPACITY,
-        _ => 1024,
-    }
-}
-
-fn sealed_keys_path() -> PathBuf {
-    std::env::var_os(STAR_KEY_MANAGER_SEALED_KEYS)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_KEY_MANAGER_SEALED_KEYS))
-}
-
-fn read_optional_sealed_keys(path: &Path) -> Result<Option<Vec<u8>>, EnclaveError> {
-    match fs::read(path) {
-        Ok(sealed_keys) => Ok(Some(sealed_keys)),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(err) => Err(EnclaveError::Library(format!("read sealed keys: {err}"))),
-    }
-}
-
-fn write_sealed_keys(path: &Path, sealed_keys: &[u8]) -> Result<(), EnclaveError> {
-    if let Some(parent) = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        fs::create_dir_all(parent).map_err(|err| EnclaveError::Library(format!("create sealed keys dir: {err}")))?;
-    }
-
-    fs::write(path, sealed_keys).map_err(|err| EnclaveError::Library(format!("write sealed keys: {err}")))
 }
 
 fn default_key_manager_sgxs() -> Result<PathBuf, EnclaveError> {
@@ -132,31 +98,17 @@ fn default_key_manager_sgxs() -> Result<PathBuf, EnclaveError> {
         return Ok(PathBuf::from(path));
     }
 
-    let manifest_dir = match option_env!("CARGO_MANIFEST_DIR") {
-        Some(dir) => dir,
-        None => ".",
-    };
+    let manifest_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../enclave/Cargo.toml");
 
-    let key_manager_dir = PathBuf::from(manifest_dir).join("../../manage-key/enclave");
-    let manifest_path = key_manager_dir.join("Cargo.toml");
-
-    build_key_manager_sgxs(&manifest_path)
+    build_sgxs(
+        &manifest_path,
+        "key-manager",
+        env_or_default(STAR_KEY_MANAGER_HEAP_SIZE, DEFAULT_KEY_MANAGER_HEAP_SIZE),
+        env_or_default(STAR_KEY_MANAGER_STACK_SIZE, DEFAULT_KEY_MANAGER_STACK_SIZE),
+        env_or_default(STAR_KEY_MANAGER_THREADS, "1"),
+    )
 }
 
 fn env_or_default(name: &str, default: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| default.to_string())
-}
-
-fn build_key_manager_sgxs(manifest_path: &Path) -> Result<PathBuf, EnclaveError> {
-    build_sgxs(
-        manifest_path,
-        "key-manager",
-        env_or_default(STAR_KEY_MANAGER_HEAP_SIZE, DEFAULT_KEY_MANAGER_HEAP_SIZE),
-        env_or_default(STAR_KEY_MANAGER_STACK_SIZE, DEFAULT_KEY_MANAGER_STACK_SIZE),
-        default_key_manager_threads(),
-    )
-}
-
-fn default_key_manager_threads() -> String {
-    std::env::var(STAR_KEY_MANAGER_THREADS).unwrap_or_else(|_| "1".to_string())
 }

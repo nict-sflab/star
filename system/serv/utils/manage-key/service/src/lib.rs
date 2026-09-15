@@ -1,4 +1,5 @@
-pub mod key_manager;
-pub mod sgx;
+mod key_manager;
+mod sgx;
 
-pub use crate::key_manager::KeyManagerRuntime;
+pub use key_manager::KeyManagerRuntime;
+pub use sgx::EnclaveError;

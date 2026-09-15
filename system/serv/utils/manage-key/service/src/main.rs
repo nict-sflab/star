@@ -7,16 +7,13 @@ use axum::{
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use key_manager_client::{
     DEFAULT_KEY_MANAGER_ATTESTATION_API, DEFAULT_KEY_MANAGER_EXPORT_API,
-    DEFAULT_KEY_MANAGER_PUBLIC_KEY_API, KeyManagerExport, encode_key_manager_export_response,
+    DEFAULT_KEY_MANAGER_PUBLIC_KEY_API, KeyManagerExport,
 };
-use star_attestation::dcap;
+use star_attestation::Evidence;
 use std::sync::{Arc, Mutex};
 use tracing::{error, info};
 
-pub mod key_manager;
-pub mod sgx;
-
-use key_manager::KeyManagerRuntime;
+use key_manager_service::KeyManagerRuntime;
 
 type SharedKeyManager = Arc<Mutex<KeyManagerRuntime>>;
 
@@ -47,39 +44,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn handle_public_key(
     State(key_manager): State<SharedKeyManager>,
 ) -> Result<String, (StatusCode, String)> {
-    let key_manager = key_manager.lock().map_err(|_| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "lock poisoned".to_string(),
-        )
-    })?;
+    let key_manager = key_manager.lock().unwrap();
 
-    match key_manager.public_key() {
-        Ok(key) => Ok(URL_SAFE.encode(key)),
-        Err(err) => {
-            error!("Failed to get public key: {}", err);
-            Err((StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))
-        }
-    }
+    key_manager
+        .public_key()
+        .map(|key| URL_SAFE.encode(key))
+        .map_err(internal_error)
 }
 
 async fn handle_attestation(
     State(key_manager): State<SharedKeyManager>,
 ) -> Result<String, (StatusCode, String)> {
-    let key_manager = key_manager.lock().map_err(|_| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "lock poisoned".to_string(),
-        )
-    })?;
+    let key_manager = key_manager.lock().unwrap();
 
-    match key_manager.public_key_attestation() {
-        Ok(quote) => Ok(URL_SAFE.encode(quote)),
-        Err(err) => {
-            error!("Failed to get attestation: {}", err);
-            Err((StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))
-        }
-    }
+    key_manager
+        .public_key_attestation()
+        .map(|quote| URL_SAFE.encode(quote))
+        .map_err(internal_error)
 }
 
 async fn handle_export(
@@ -91,12 +72,7 @@ async fn handle_export(
         .map_err(|err| (StatusCode::BAD_REQUEST, format!("invalid base64: {}", err)))?;
 
     let key_manager_quote = {
-        let key_manager = key_manager.lock().map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "lock poisoned".to_string(),
-            )
-        })?;
+        let key_manager = key_manager.lock().unwrap();
 
         key_manager.public_key_attestation().map_err(|err| {
             (
@@ -106,7 +82,7 @@ async fn handle_export(
         })?
     };
 
-    let recipient_evidence = dcap::raw_evidence_for_verifier_async(&recipient_quote)
+    let recipient_evidence = Evidence::encode_for_verifier(&recipient_quote)
         .await
         .map_err(|err| {
             (
@@ -116,12 +92,7 @@ async fn handle_export(
         })?;
 
     let envelope = {
-        let key_manager = key_manager.lock().map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "lock poisoned".to_string(),
-            )
-        })?;
+        let key_manager = key_manager.lock().unwrap();
 
         key_manager
             .export_keys(&recipient_evidence)
@@ -134,5 +105,10 @@ async fn handle_export(
         envelope,
     };
 
-    Ok(URL_SAFE.encode(encode_key_manager_export_response(&export)))
+    Ok(URL_SAFE.encode(export.encode()))
+}
+
+fn internal_error(err: impl std::fmt::Display) -> (StatusCode, String) {
+    error!("{err}");
+    (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
 }
