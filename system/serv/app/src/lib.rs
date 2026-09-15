@@ -13,7 +13,7 @@ pub use key_manager_service::KeyManagerRuntime;
 pub use provisioning::{
     benchmark_key_bundle, install_key_manager_keys_for_enclave, install_key_manager_keys_for_pool,
 };
-pub use server::{all_prefix, build_server};
+pub use server::{build_server, Shard};
 
 #[cfg(test)]
 pub(crate) use server::build_server_without_startup_attestation;

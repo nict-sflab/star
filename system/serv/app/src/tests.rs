@@ -1,6 +1,6 @@
 use crate::api::{DEFAULT_PUBLIC_KEY_API, DEFAULT_REGISTER_API};
 use crate::KeyManagerRuntime;
-use crate::{all_prefix, build_server_without_startup_attestation};
+use crate::{build_server_without_startup_attestation, Shard};
 
 use crate::tls::STAR_TLS_EXTENSION_TYPE;
 use async_trait::async_trait;
@@ -375,8 +375,7 @@ fn test_all() {
             &api_bind_addr,
             &proxy_bind_addr,
             &upstream_addr,
-            all_prefix(1),
-            1,
+            Shard::new(0, 1),
         )
         .expect("build test server");
         let shutdown = TestShutdown {
