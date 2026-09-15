@@ -1,96 +1,83 @@
-use base64::{Engine as _, engine::general_purpose::URL_SAFE};
+use std::sync::{Arc, Mutex};
+
+use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 use rand::rngs::OsRng;
 use star_core::{client::User, secure_channel::client::SecureChannelClient};
-use std::sync::{Arc, Mutex};
-use crate::{BoxError, utils::{current_period, http_get_text, http_post_text, io_error, io_other}};
+
+use crate::BoxError;
 
 #[derive(Clone)]
-pub struct StarAuthenticator {
-    api_base: String,
-    max_count: u64,
-    inner: Arc<Mutex<StarAuthState>>,
+pub(crate) struct StarClient {
+    session: Arc<Mutex<CredentialSession>>,
 }
 
-struct StarAuthState {
+struct CredentialSession {
     user: User,
-    counter: u64,
     period: u64,
+    next_counter: u64,
 }
 
-impl StarAuthenticator {
-    pub fn register(api_base: String, max_count: u64) -> Result<Self, BoxError> {
-        let public_key = http_get_text(&format!(
-            "{}/star/public_key",
-            api_base.trim_end_matches('/')
-        ))?;
-
+impl StarClient {
+    pub(crate) fn register(api_base: &str, max_requests_per_period: u64) -> Result<Self, BoxError> {
+        let api_base = api_base.trim_end_matches('/');
+        let public_key = ureq::get(&format!("{api_base}/star/public_key"))
+            .call()?
+            .into_string()?;
         let public_key = URL_SAFE.decode(public_key.trim())?;
         let public_key: [u8; 32] = public_key
-            .as_slice()
             .try_into()
-            .map_err(|_| "public key must be 32 bytes")?;
+            .map_err(|_| "STAR public key must be 32 bytes")?;
 
-        let client = SecureChannelClient::new(public_key)
-            .map_err(|e| format!("failed to initialize secure channel: {e:?}"))?;
-
-        let mut user = User::new(max_count, client);
+        let channel = SecureChannelClient::new(public_key)
+            .map_err(|error| format!("failed to initialize secure channel: {error:?}"))?;
+        let mut user = User::new(max_requests_per_period, channel);
         let mut rng = OsRng;
-
         let (request, shared_key) = user.request_credential(&mut rng);
         let request = URL_SAFE.encode(request);
 
-        let credential_cipher = http_post_text(
-            &format!("{}/star/register", api_base.trim_end_matches('/')),
-            request.as_bytes(),
-        )?;
-
-        let credential_cipher = URL_SAFE.decode(credential_cipher.trim())?;
-
-        user.receive_credential(&credential_cipher, &shared_key)
-            .ok_or("failed to receive credential")?;
+        let credential = ureq::post(&format!("{api_base}/star/register"))
+            .send_bytes(request.as_bytes())?
+            .into_string()?;
+        let credential = URL_SAFE.decode(credential.trim())?;
+        user.receive_credential(&credential, &shared_key)
+            .ok_or("failed to receive STAR credential")?;
 
         Ok(Self {
-            api_base,
-            max_count,
-            inner: Arc::new(Mutex::new(StarAuthState {
+            session: Arc::new(Mutex::new(CredentialSession {
                 user,
-                counter: 0,
                 period: current_period(),
+                next_counter: 0,
             })),
         })
     }
 
-    pub fn token_request(&self) -> Result<Vec<u8>, BoxError> {
-        let mut state = self.inner.lock().map_err(|_| "STAR auth mutex poisoned")?;
+    pub(crate) fn token_request(&self) -> Result<Vec<u8>, BoxError> {
+        let mut session = self.session.lock().unwrap();
         let period = current_period();
 
-        if state.period != period {
-            state.period = period;
-            state.counter = 0;
+        if session.period != period {
+            session.period = period;
+            session.next_counter = 0;
         }
 
-        if state.counter >= self.max_count {
+        let counter = session.next_counter;
+        if counter >= session.user.max {
             return Err(format!(
-                "exceeded {max} STAR token requests for period {period}; wait for the next minute",
-                max = self.max_count
+                "exceeded {} STAR token requests for period {period}",
+                session.user.max
             )
             .into());
         }
-
-        let counter = state.counter;
-        state.counter += 1;
+        session.next_counter += 1;
 
         let mut rng = OsRng;
-
-        state
+        session
             .user
             .request_auth(counter, period, &mut rng)
-            .map_err(|e| {
-                format!(
-                    "failed to build STAR token request via {}: {e:?}",
-                    self.api_base
-                )
-                .into()
-            })
+            .map_err(|error| format!("failed to build STAR token request: {error:?}").into())
     }
+}
+
+fn current_period() -> u64 {
+    u64::from_be_bytes(constant_time_utils::time::current_period())
 }
