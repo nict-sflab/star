@@ -1,8 +1,10 @@
 mod key_bundle;
+mod key_receiver;
 mod policy;
 mod seal;
 
-use key_bundle::KeyBundle;
+pub use key_bundle::KeyBundle;
+pub use key_receiver::KeyReceiver;
 use rand::rngs::OsRng;
 use star_attestation::{Evidence, Quote, QuotePolicy, PUBLIC_KEY_LEN};
 

@@ -12,6 +12,16 @@ Key generation, unsealing, recipient verification, and key export stay inside
 SGX. The host only handles sealed keys, public attestation data, and encrypted
 exports. `KeyManagerRuntime` remains available to callers and benchmarks.
 
+## Enclave library
+
+The `key-manager` crate in `enclave/` provides both `KeyManager` and `KeyReceiver`.
+`KeyReceiver` owns the recipient's transfer key and decrypts authenticated exports
+into the same `KeyBundle` type used by the manager. `KeyReceiver::receive_attested`
+verifies the manager's evidence against the embedded key-manager policy before
+decrypting its envelope. The receiving enclave supplies the evidence and envelope,
+then initializes its application with the received keys. `KeyReceiver::receive`
+also accepts a sender public key that the caller has already verified.
+
 ## Running
 
 With the SGX toolchain, device and AESM proxy configured, and `ftxsgx-runner`

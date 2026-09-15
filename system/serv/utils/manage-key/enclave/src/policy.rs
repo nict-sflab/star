@@ -5,6 +5,56 @@ use star_attestation::Measurement;
 use star_attestation::QuotePolicy;
 
 #[cfg(target_env = "sgx")]
+pub(crate) fn key_manager_policy() -> Result<QuotePolicy, String> {
+    let self_report = Report::for_self();
+    let expected_mrenclave = option_env!("STAR_TRUSTED_KEY_MANAGER_MRENCLAVE")
+        .map(|value| {
+            Measurement::parse_measurement_hex(value, "STAR_TRUSTED_KEY_MANAGER_MRENCLAVE")
+        })
+        .transpose()?;
+    let mut expected_mrsigner = option_env!("STAR_TRUSTED_KEY_MANAGER_MRSIGNER")
+        .map(|value| Measurement::parse_measurement_hex(value, "STAR_TRUSTED_KEY_MANAGER_MRSIGNER"))
+        .transpose()?;
+    if expected_mrenclave.is_none()
+        && expected_mrsigner.is_none()
+        && embedded_bool(
+            option_env!("STAR_TRUST_SAME_SIGNER_KEY_MANAGER")
+                .or(option_env!("STAR_TRUST_SAME_SIGNER_ENCLAVES")),
+            false,
+        )?
+    {
+        expected_mrsigner = Some(self_report.mrsigner.into());
+    }
+    if expected_mrenclave.is_none() && expected_mrsigner.is_none() {
+        return Err(
+            "a trusted key-manager measurement or same-signer policy must be embedded".into(),
+        );
+    }
+    Ok(QuotePolicy {
+        expected_mrenclave,
+        expected_mrsigner,
+        allow_debug: embedded_bool(
+            option_env!("STAR_ALLOW_DEBUG_KEY_MANAGER")
+                .or(option_env!("STAR_ALLOW_DEBUG_ENCLAVES")),
+            self_report
+                .attributes
+                .flags
+                .contains(AttributesFlags::DEBUG),
+        )?,
+        allow_advisory: embedded_bool(
+            option_env!("STAR_ALLOW_ADVISORY_KEY_MANAGER")
+                .or(option_env!("STAR_ALLOW_ADVISORY_ENCLAVES")),
+            false,
+        )?,
+    })
+}
+
+#[cfg(not(target_env = "sgx"))]
+pub(crate) fn key_manager_policy() -> Result<QuotePolicy, String> {
+    Err("key-manager policy is only available inside SGX".into())
+}
+
+#[cfg(target_env = "sgx")]
 pub(crate) fn recipient_policy() -> Result<QuotePolicy, String> {
     let self_report = Report::for_self();
     let expected_mrenclave = option_env!("STAR_TRUSTED_ENCLAVE_MRENCLAVE")

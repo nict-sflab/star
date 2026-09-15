@@ -1,29 +1,28 @@
 use super::*;
-use hpke::{
-    aead::ChaCha20Poly1305, kdf::HkdfSha256, kem::X25519HkdfSha256, Deserializable, OpModeR,
-    Serializable,
-};
-
 
 #[test]
-fn authenticated_export() {
-    type Kem = X25519HkdfSha256;
+fn authenticated_key_transfer() {
     let keys = KeyBundle::random(&mut OsRng);
-    let (secret, public) = <Kem as hpke::Kem>::gen_keypair(&mut OsRng);
-    let envelope = keys.export(public.to_bytes().into(), &mut OsRng).unwrap();
-    let sender = <Kem as hpke::Kem>::PublicKey::from_bytes(&keys.public_key()).unwrap();
-    let enc = <Kem as hpke::Kem>::EncappedKey::from_bytes(&envelope[64..96]).unwrap();
-    let mut receiver = hpke::setup_receiver::<ChaCha20Poly1305, HkdfSha256, Kem>(
-        &OpModeR::Auth(sender),
-        &secret,
-        &enc,
-        &envelope[32..64],
-    )
-    .unwrap();
-    assert_eq!(
-        receiver.open(&envelope[96..], &envelope[..32]).unwrap(),
-        keys.encode()
-    );
+    let receiver = KeyReceiver::random(&mut OsRng);
+    let envelope = keys.export(receiver.public_key(), &mut OsRng).unwrap();
+    let received = receiver.receive(&envelope, keys.public_key()).unwrap();
+    assert_eq!(received.enc_key, keys.enc_key);
+    assert_eq!(received.hpke_receiver_key, keys.hpke_receiver_key);
+}
+
+#[test]
+fn rejects_invalid_key_transfers() {
+    let keys = KeyBundle::random(&mut OsRng);
+    let receiver = KeyReceiver::random(&mut OsRng);
+    let other = KeyReceiver::random(&mut OsRng);
+    let mut envelope = keys.export(receiver.public_key(), &mut OsRng).unwrap();
+    assert!(receiver.receive(&envelope, other.public_key()).is_err());
+    assert!(other.receive(&envelope, keys.public_key()).is_err());
+    assert!(receiver
+        .receive(&envelope[..95], keys.public_key())
+        .is_err());
+    *envelope.last_mut().unwrap() ^= 1;
+    assert!(receiver.receive(&envelope, keys.public_key()).is_err());
 }
 
 #[cfg(not(target_env = "sgx"))]
@@ -45,4 +44,16 @@ fn invalid_evidence() {
         },
     };
     assert!(manager.export(&[]).is_err());
+    let receiver = KeyReceiver::random(&mut OsRng);
+    let envelope = manager
+        .keys
+        .export(receiver.public_key(), &mut OsRng)
+        .unwrap();
+    assert!(receiver.receive_attested(&[], &envelope).is_err());
+    let evidence = Evidence {
+        quote: &[],
+        collateral: &[],
+    }
+    .encode();
+    assert!(receiver.receive_attested(&evidence, &envelope).is_err());
 }

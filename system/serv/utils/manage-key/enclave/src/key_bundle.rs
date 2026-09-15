@@ -8,9 +8,9 @@ use hpke::{
 use rand::{rngs::OsRng, RngCore};
 use star_attestation::PUBLIC_KEY_LEN;
 const KEY_BUNDLE_SEAL_LABEL: [u8; 16] = *b"key-bundle      ";
-pub(crate) struct KeyBundle {
-    enc_key: [u8; 32],
-    hpke_receiver_key: [u8; 32],
+pub struct KeyBundle {
+    pub enc_key: [u8; 32],
+    pub hpke_receiver_key: [u8; 32],
 }
 
 impl KeyBundle {
