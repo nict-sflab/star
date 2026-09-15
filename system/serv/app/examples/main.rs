@@ -1,4 +1,4 @@
-use star_app::{all_prefix, build_server};
+use star_app::{build_server, Shard};
 use std::env;
 use std::thread;
 use tiny_http::{Header, Response, Server as TinyServer};
@@ -49,7 +49,11 @@ fn main() {
     );
 
     let (content_addr, _content_handle) = spawn_content_server(&content_bind_addr);
-    let server = build_server(&api_addr, &proxy_addr, &content_addr, all_prefix(1), 1);
+    let shard = Shard::new(
+        env_or_default("STAR_SHARD_INDEX", "0").parse().unwrap(),
+        env_or_default("STAR_SHARD_COUNT", "1").parse().unwrap(),
+    );
+    let server = build_server(&api_addr, &proxy_addr, &content_addr, shard);
     server.unwrap().run_forever();
 }
 

@@ -1,5 +1,5 @@
 use rand_core::OsRng;
-use simple_filter_box::dashmap::DashMapFilterBox;
+use simple_filter_box::hashmap::HashMapFilterBox;
 use star_app::{
     KeyManagerRuntime,
     enclave::{EnclaveRuntime, EnclaveRuntimes},
@@ -10,7 +10,7 @@ use star_core::{client::User, secure_channel::client::SecureChannelClient};
 
 use super::aesm_proxy::AesmProxyGuard;
 
-pub type BenchFilter = StarFilter<DashMapFilterBox>;
+pub type BenchFilter = StarFilter<HashMapFilterBox>;
 pub const MAX_COUNT_PER_CREDENTIAL: u64 = 1_000_000;
 
 pub struct KeyedEnclaves {
@@ -39,7 +39,7 @@ impl KeyedEnclaves {
         prefix_max: u32,
     ) -> (BenchFilter, EnclaveRuntime) {
         (
-            StarFilter::new(DashMapFilterBox::new(), prefixes, prefix_max, self.filter),
+            StarFilter::new(HashMapFilterBox::new(), prefixes, prefix_max, self.filter),
             self.issue,
         )
     }

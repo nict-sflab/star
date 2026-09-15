@@ -1,8 +1,7 @@
 use pingora::{listeners::tls::TlsSettings, server::Server};
 use pingora_proxy::http_proxy_service;
 use pingora_web::App as WebApp;
-use simple_filter_box::dashmap::DashMapFilterBox;
-use std::env;
+use simple_filter_box::hashmap::HashMapFilterBox;
 use std::error::Error;
 use std::sync::Arc;
 
@@ -13,23 +12,29 @@ use crate::provisioning::ProvisionedEnclaves;
 use crate::proxy::UpstreamProxy;
 use crate::tls::configure_tls_token_extension;
 
-pub fn all_prefix(max: u32) -> Vec<u32> {
-    (0..max).collect()
+pub struct Shard {
+    index: u32,
+    count: u32,
+}
+
+impl Shard {
+    pub fn new(index: u32, count: u32) -> Self {
+        assert!(count > 0 && index < count, "invalid shard: {index}/{count}");
+        Self { index, count }
+    }
 }
 
 pub fn build_server(
     api_addr: &str,
     proxy_addr: &str,
     upstream_addr: &str,
-    prefixes: Vec<u32>,
-    max_prefix: u32,
+    shard: Shard,
 ) -> Result<Server, Box<dyn Error>> {
     build_server_with_startup_attestation(
         api_addr,
         proxy_addr,
         upstream_addr,
-        prefixes,
-        max_prefix,
+        shard,
         true,
     )
 }
@@ -39,15 +44,13 @@ pub(crate) fn build_server_without_startup_attestation(
     api_addr: &str,
     proxy_addr: &str,
     upstream_addr: &str,
-    prefixes: Vec<u32>,
-    max_prefix: u32,
+    shard: Shard,
 ) -> Result<Server, Box<dyn Error>> {
     build_server_with_startup_attestation(
         api_addr,
         proxy_addr,
         upstream_addr,
-        prefixes,
-        max_prefix,
+        shard,
         false,
     )
 }
@@ -56,8 +59,7 @@ fn build_server_with_startup_attestation(
     api_addr: &str,
     proxy_addr: &str,
     upstream_addr: &str,
-    prefixes: Vec<u32>,
-    max_prefix: u32,
+    shard: Shard,
     emit_startup_attestation: bool,
 ) -> Result<Server, Box<dyn Error>> {
     let installed = ProvisionedEnclaves::provision()?;
@@ -66,9 +68,9 @@ fn build_server_with_startup_attestation(
     }
 
     let filter = Arc::new(StarFilter::new(
-        DashMapFilterBox::new(),
-        prefixes,
-        max_prefix,
+        HashMapFilterBox::default(),
+        vec![shard.index],
+        shard.count,
         installed.filter_enclave,
     ));
 
@@ -86,7 +88,7 @@ fn build_server_with_startup_attestation(
     );
 
     let mut api_service = api_app.to_service("api");
-    api_service.threads = env_usize("STAR_API_THREADS");
+    api_service.threads = Some(1);
     api_service.add_tcp(api_addr);
     server.add_service(api_service);
 
@@ -94,7 +96,7 @@ fn build_server_with_startup_attestation(
         &server.configuration,
         UpstreamProxy::new(upstream_addr),
     );
-    proxy_service.threads = env_usize("STAR_PROXY_THREADS");
+    proxy_service.threads = Some(1);
 
     let tls_cert_path = env_or_default("TLS_CERT_PATH", "./examples/certs/server.crt");
     let tls_key_path = env_or_default("TLS_KEY_PATH", "./examples/certs/server.key");
@@ -111,8 +113,4 @@ fn build_server_with_startup_attestation(
 
     server.add_service(proxy_service);
     Ok(server)
-}
-
-fn env_usize(name: &str) -> Option<usize> {
-    env::var(name).ok()?.parse().ok()
 }
