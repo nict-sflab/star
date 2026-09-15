@@ -1,4 +1,4 @@
-use star_client_proxy::{config::ProxyConfig, proxy::build_server};
+use star_client_proxy::{build_server, ProxyConfig};
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     env_logger::init();

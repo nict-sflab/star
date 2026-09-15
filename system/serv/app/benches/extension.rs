@@ -8,6 +8,7 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use common::star::{KeyedEnclaves, MAX_COUNT_PER_CREDENTIAL, register_user};
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 use foreign_types::ForeignTypeRef;
 use openssl::error::ErrorStack;
@@ -16,24 +17,14 @@ use openssl::ssl::{
     SslConnector, SslFiletype, SslMethod, SslRef, SslVerifyMode,
 };
 use rand_core::OsRng;
-use simple_filter_box::{core::Entry, dashmap::DashMapFilterBox};
-use star_app::enclave::{EnclaveRuntime, EnclaveRuntimes};
-use star_app::filter::{StarFilter, StarFilterErrorStatus};
-use star_app::{
-    KeyManagerRuntime, install_key_manager_keys_for_enclave, install_key_manager_keys_for_pool,
-};
+use star_app::filter::StarFilterErrorStatus;
 use star_app::tls::STAR_TLS_EXTENSION_TYPE;
-use star_core::{client::User, secure_channel::client::SecureChannelClient};
 
 const TLS_CERT_RELATIVE_PATH: &str = "examples/certs/server.crt";
 const TLS_KEY_RELATIVE_PATH: &str = "examples/certs/server.key";
-const MAX_COUNT_PER_CREDENTIAL: u64 = 1_000_000;
-const FILTER_ENCLAVE_POOL_SIZE: u8 = 10;
-const PARALLEL_WORKERS: usize = 2;
-const PARALLEL_OPS_PER_WORKER: u64 = 64;
-const PARALLEL_BATCH_OPS: u64 = PARALLEL_WORKERS as u64 * PARALLEL_OPS_PER_WORKER;
-
-type BenchFilter = StarFilter<DashMapFilterBox>;
+const FILTER_ENCLAVES_PER_SERVER: u8 = 1;
+const SCALE_OUT_SERVER_COUNTS: &[u32] = &[1, 2, 4];
+const SCALE_OUT_OPS_PER_SERVER: u64 = 64;
 
 unsafe extern "C" {
     fn SSL_client_hello_get0_ext(
@@ -47,12 +38,6 @@ unsafe extern "C" {
 #[derive(Debug)]
 struct ClientHelloRecorder {
     output: Vec<u8>,
-}
-
-impl ClientHelloRecorder {
-    fn new() -> Self {
-        Self { output: Vec::new() }
-    }
 }
 
 impl Read for ClientHelloRecorder {
@@ -72,31 +57,21 @@ impl Write for ClientHelloRecorder {
     }
 }
 
-#[derive(Debug)]
 struct ClientHelloInput<'a> {
     input: &'a [u8],
-    read_offset: usize,
-}
-
-impl<'a> ClientHelloInput<'a> {
-    fn new(input: &'a [u8]) -> Self {
-        Self {
-            input,
-            read_offset: 0,
-        }
-    }
+    offset: usize,
 }
 
 impl Read for ClientHelloInput<'_> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        if self.read_offset >= self.input.len() {
+        if self.offset == self.input.len() {
             return Err(io::Error::from(io::ErrorKind::WouldBlock));
         }
 
-        let remaining = &self.input[self.read_offset..];
-        let len = remaining.len().min(buf.len());
-        buf[..len].copy_from_slice(&remaining[..len]);
-        self.read_offset += len;
+        let input = &self.input[self.offset..];
+        let len = input.len().min(buf.len());
+        buf[..len].copy_from_slice(&input[..len]);
+        self.offset += len;
         Ok(len)
     }
 }
@@ -111,373 +86,241 @@ impl Write for ClientHelloInput<'_> {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ClientHelloOutcome {
-    PendingMoreInput,
-    Rejected,
+#[derive(Clone, Copy)]
+enum RejectCase {
+    MissingExtension,
+    ReplayedToken,
+    InvalidCredential,
 }
 
-// This is for benchmarking the case with without STAR extension in ClientHello
-struct OpenSslRejectHarness {
+struct RejectHarness {
     acceptor: SslAcceptor,
     client_hello: Vec<u8>,
 }
 
-// This is for benchmarking the case with STAR extension in ClientHello but rejected by filter (e.g. replayed token, invalid credential)
-struct StarFilterRejectHarness {
-    acceptor: SslAcceptor,
-    filter: Arc<BenchFilter>,
-    token_request: Vec<u8>,
-    client_hello: Vec<u8>,
-    duplicate_token: Option<Entry>,
-    duplicate_route: u32,
-}
-
-impl OpenSslRejectHarness {
-    fn missing_extension() -> Self {
-        let mut builder = base_acceptor_builder();
-
-        builder.set_client_hello_callback(move |ssl, alert| {
-            if star_extension_from_client_hello(ssl).is_none() {
-                return reject_client_hello(alert, SslAlert::DECODE_ERROR);
-            }
-
-            Ok(ClientHelloResponse::SUCCESS)
-        });
-
-        let connector = connector_with_star_extension(None);
-
-        Self {
-            acceptor: builder.build(),
-            client_hello: record_client_hello(&connector),
-        }
-    }
-
-    fn timed_rejections(&self, iters: u64) -> Duration {
-        let mut total = Duration::ZERO;
-
-        for _ in 0..iters {
-            let start = Instant::now();
-            let outcome =
-                process_client_hello(&self.acceptor, black_box(self.client_hello.as_slice()));
-            total += start.elapsed();
-            assert_eq!(outcome, ClientHelloOutcome::Rejected);
-        }
-
-        total
-    }
-
-    fn timed_parallel_rejections(&self, iters: u64) -> Duration {
-        timed_parallel_batch(iters, || {
-            let outcome =
-                process_client_hello(&self.acceptor, black_box(self.client_hello.as_slice()));
-            assert_eq!(outcome, ClientHelloOutcome::Rejected);
-        })
-    }
-}
-
-impl StarFilterRejectHarness {
-    // Initilize the benchmark with a replayed token.
-    fn replayed_token() -> Self {
-        let (filter, token_request) = build_keyed_filter_and_token_request();
-        let (duplicate_token, duplicate_route) = filter
-            .issue_token_and_route_sync(&token_request)
-            .expect("issue duplicate token");
-        filter
-            .check_duplication(&duplicate_token, duplicate_route)
-            .expect("seed duplicate token");
-        let harness = Self::new(
-            filter,
-            token_request,
-            Some(duplicate_token),
-            duplicate_route,
-        );
-
-        let outcome = process_client_hello(&harness.acceptor, harness.client_hello.as_slice());
-        assert_eq!(outcome, ClientHelloOutcome::Rejected);
-
-        harness
-    }
-
-
-    // Initialize the benchmark with an invalid credential (e.g. corrupted token).
-    fn invalid_credential() -> Self {
-        let (filter, token_request) = build_keyed_filter_and_invalid_credential_request();
-        let harness = Self::new(filter, token_request, None, 0);
-
-        assert_eq!(
-            process_client_hello(&harness.acceptor, harness.client_hello.as_slice()),
-            ClientHelloOutcome::Rejected
-        );
-        assert!(matches!(
-            harness
-                .filter
-                .filter_client_hello(harness.token_request.as_slice()),
-            Err(StarFilterErrorStatus::InvalidToken)
-        ));
-
-        harness
-    }
-
-    fn new(
-        filter: Arc<BenchFilter>,
-        token_request: Vec<u8>,
-        duplicate_token: Option<Entry>,
-        duplicate_route: u32,
-    ) -> Self {
-        let connector = connector_with_star_extension(Some(token_request.clone()));
-        let client_hello = record_client_hello(&connector);
-        let mut builder = base_acceptor_builder();
-        let token_index = Ssl::new_ex_index::<Vec<u8>>().expect("TLS token ex_data index");
-        let callback_filter = Arc::clone(&filter);
-
-        builder.set_client_hello_callback(move |ssl, alert| {
-            let Some(ext_data) = star_extension_from_client_hello(ssl) else {
-                return reject_client_hello(alert, SslAlert::DECODE_ERROR);
-            };
-
-            if ext_data.is_empty() {
-                return reject_client_hello(alert, SslAlert::DECODE_ERROR);
-            }
-
-            Ok(ClientHelloResponse::SUCCESS)
-        });
-
-
-        // This callback is for measuring the combined cost of OpenSSL parsing the ClientHello and the filter rejecting it. 
-        // It simulates the real flow where the filter checks the token during the ClientHello callback and rejects it if invalid (e.g. replayed or invalid credential).
-        builder
-            .add_custom_ext(
-                STAR_TLS_EXTENSION_TYPE,
-                ExtensionContext::CLIENT_HELLO,
-                |_ssl, _context, _cert| Ok(None::<Vec<u8>>),
-                move |ssl, _context, ext_data, _cert| {
-                    if ext_data.is_empty() {
-                        return Err(SslAlert::DECODE_ERROR);
-                    }
-
-                    if let Some(existing) = ssl.ex_data(token_index) {
-                        if existing.as_slice() == ext_data {
-                            return Ok(());
-                        }
-
-                        return Err(SslAlert::ILLEGAL_PARAMETER);
-                    }
-
-                    if let Err(filter_err) = callback_filter.filter_client_hello(ext_data) {
-                        return Err(alert_for_filter_error(&filter_err));
-                    }
-
-                    ssl.set_ex_data(token_index, ext_data.to_vec());
-                    Ok(())
-                },
+impl RejectHarness {
+    fn new(case: RejectCase, shard_index: u32, shard_count: u32) -> Self {
+        let mut acceptor =
+            SslAcceptor::mozilla_intermediate_v5(SslMethod::tls()).expect("build TLS acceptor");
+        acceptor
+            .set_certificate_file(
+                common::manifest_path(TLS_CERT_RELATIVE_PATH),
+                SslFiletype::PEM,
             )
-            .expect("configure STAR TLS extension");
+            .expect("set TLS certificate");
+        acceptor
+            .set_private_key_file(
+                common::manifest_path(TLS_KEY_RELATIVE_PATH),
+                SslFiletype::PEM,
+            )
+            .expect("set TLS private key");
+        acceptor.check_private_key().expect("check TLS private key");
+        acceptor.set_groups_list("X25519").expect("set TLS groups");
 
-        Self {
-            acceptor: builder.build(),
-            filter,
-            token_request,
+        let extension = match case {
+            RejectCase::MissingExtension => {
+                acceptor.set_client_hello_callback(|ssl, alert| {
+                    if star_extension_from_client_hello(ssl).is_none() {
+                        return reject_client_hello(alert, SslAlert::DECODE_ERROR);
+                    }
+                    Ok(ClientHelloResponse::SUCCESS)
+                });
+                None
+            }
+            RejectCase::ReplayedToken | RejectCase::InvalidCredential => {
+                let invalid_credential = matches!(case, RejectCase::InvalidCredential);
+                let (filter, issue_enclave) = KeyedEnclaves::new(FILTER_ENCLAVES_PER_SERVER)
+                    .into_filter(vec![shard_index], shard_count);
+                let filter = Arc::new(filter);
+                let mut rng = OsRng;
+                let mut user = register_user(
+                    &issue_enclave,
+                    MAX_COUNT_PER_CREDENTIAL,
+                    &mut rng,
+                );
+                let period = u64::from_be_bytes(constant_time_utils::time::current_period());
+                let (counter, request, token) = (0..MAX_COUNT_PER_CREDENTIAL)
+                    .find_map(|counter| {
+                        let request = user
+                            .request_auth(counter, period, &mut rng)
+                            .expect("token request");
+                        let (token, route) = filter
+                            .issue_token_and_route_sync(&request)
+                            .expect("issue token and route");
+                        (route == shard_index).then_some((counter, request, token))
+                    })
+                    .expect("request routed to shard");
+
+                let request = if invalid_credential {
+                    user.credential.as_mut().expect("credential").code[0] ^= 0x01;
+                    let request = user
+                        .request_auth(counter, period, &mut rng)
+                        .expect("invalid credential request");
+                    assert!(matches!(
+                        filter.filter_client_hello(&request),
+                        Err(StarFilterErrorStatus::InvalidToken)
+                    ));
+                    request
+                } else {
+                    filter
+                        .check_duplication(&token, shard_index)
+                        .expect("seed duplicate token");
+                    assert!(matches!(
+                        filter.check_duplication(&token, shard_index),
+                        Err(StarFilterErrorStatus::DuplicatedToken)
+                    ));
+                    request
+                };
+
+                acceptor.set_client_hello_callback(|ssl, alert| {
+                    match star_extension_from_client_hello(ssl) {
+                        Some(data) if !data.is_empty() => Ok(ClientHelloResponse::SUCCESS),
+                        _ => reject_client_hello(alert, SslAlert::DECODE_ERROR),
+                    }
+                });
+
+                let token_index =
+                    Ssl::new_ex_index::<Vec<u8>>().expect("TLS token ex_data index");
+                acceptor
+                    .add_custom_ext(
+                        STAR_TLS_EXTENSION_TYPE,
+                        ExtensionContext::CLIENT_HELLO,
+                        |_ssl, _context, _cert| Ok(None::<Vec<u8>>),
+                        move |ssl, _context, ext_data, _cert| {
+                            if ext_data.is_empty() {
+                                return Err(SslAlert::DECODE_ERROR);
+                            }
+
+                            if let Some(existing) = ssl.ex_data(token_index) {
+                                return if existing.as_slice() == ext_data {
+                                    Ok(())
+                                } else {
+                                    Err(SslAlert::ILLEGAL_PARAMETER)
+                                };
+                            }
+
+                            filter
+                                .filter_client_hello(ext_data)
+                                .map_err(|error| match error {
+                                    StarFilterErrorStatus::InvalidToken
+                                    | StarFilterErrorStatus::Internal => SslAlert::DECODE_ERROR,
+                                    StarFilterErrorStatus::InvalidRoute
+                                    | StarFilterErrorStatus::DuplicatedToken => {
+                                        SslAlert::ILLEGAL_PARAMETER
+                                    }
+                                })?;
+                            ssl.set_ex_data(token_index, ext_data.to_vec());
+                            Ok(())
+                        },
+                    )
+                    .expect("configure STAR extension");
+
+                Some(request)
+            }
+        };
+
+        let mut connector =
+            SslConnector::builder(SslMethod::tls()).expect("build TLS connector");
+        connector.set_verify(SslVerifyMode::NONE);
+        connector.set_groups_list("X25519").expect("set TLS groups");
+        if let Some(extension) = extension {
+            connector
+                .add_custom_ext(
+                    STAR_TLS_EXTENSION_TYPE,
+                    ExtensionContext::CLIENT_HELLO,
+                    move |_ssl, _context, _cert| Ok(Some(extension.clone())),
+                    |_ssl, _context, _ext_data, _cert| Ok(()),
+                )
+                .expect("configure client STAR extension");
+        }
+
+        let recorder = ClientHelloRecorder { output: Vec::new() };
+        let client_hello = match connector.build().connect("localhost", recorder) {
+            Ok(_) => panic!("client handshake unexpectedly completed without server input"),
+            Err(HandshakeError::WouldBlock(handshake))
+            | Err(HandshakeError::Failure(handshake)) => handshake.get_ref().output.clone(),
+            Err(HandshakeError::SetupFailure(error)) => {
+                panic!("TLS client setup failed: {error}")
+            }
+        };
+        assert!(!client_hello.is_empty(), "recorded ClientHello is empty");
+
+        let harness = Self {
+            acceptor: acceptor.build(),
             client_hello,
-            duplicate_token,
-            duplicate_route,
+        };
+        assert!(harness.is_rejected());
+        harness
+    }
+
+    fn is_rejected(&self) -> bool {
+        match self.acceptor.accept(ClientHelloInput {
+            input: black_box(self.client_hello.as_slice()),
+            offset: 0,
+        }) {
+            Err(HandshakeError::Failure(_)) => true,
+            Ok(_) | Err(HandshakeError::WouldBlock(_)) => false,
+            Err(HandshakeError::SetupFailure(error)) => {
+                panic!("TLS server setup failed: {error}")
+            }
         }
     }
 
-    fn timed_openssl_and_filter_rejections(&self, iters: u64) -> Duration {
+    fn measure(&self, iters: u64) -> Duration {
         let mut total = Duration::ZERO;
-
         for _ in 0..iters {
             let start = Instant::now();
-            let outcome =
-                process_client_hello(&self.acceptor, black_box(self.client_hello.as_slice()));
+            let rejected = self.is_rejected();
             total += start.elapsed();
-            assert_eq!(outcome, ClientHelloOutcome::Rejected);
+            assert!(rejected);
         }
-
         total
     }
 
-    fn timed_parallel_openssl_and_filter_rejections(&self, iters: u64) -> Duration {
-        timed_parallel_batch(iters, || {
-            let outcome =
-                process_client_hello(&self.acceptor, black_box(self.client_hello.as_slice()));
-            assert_eq!(outcome, ClientHelloOutcome::Rejected);
+}
+
+struct ShardedServers {
+    servers: Vec<RejectHarness>,
+}
+
+impl ShardedServers {
+    fn new(case: RejectCase, server_count: u32) -> Self {
+        let servers = (0..server_count)
+            .map(|shard_index| RejectHarness::new(case, shard_index, server_count))
+            .collect();
+        Self { servers }
+    }
+
+    fn measure(&self, batches: u64) -> Duration {
+        let operations = batches
+            .checked_mul(SCALE_OUT_OPS_PER_SERVER)
+            .expect("scale-out benchmark operation count overflow");
+        let ready = Barrier::new(self.servers.len() + 1);
+        let start = Barrier::new(self.servers.len() + 1);
+
+        thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(self.servers.len());
+            for server in &self.servers {
+                let ready = &ready;
+                let start = &start;
+                handles.push(scope.spawn(move || {
+                    ready.wait();
+                    start.wait();
+                    for _ in 0..operations {
+                        assert!(server.is_rejected());
+                    }
+                }));
+            }
+
+            ready.wait();
+            let timer = Instant::now();
+            start.wait();
+            for handle in handles {
+                handle.join().expect("scale-out benchmark server");
+            }
+            timer.elapsed()
         })
     }
-}
-
-fn timed_parallel_batch(operation_batches: u64, operation: impl Fn() + Sync) -> Duration {
-    let total_ops = operation_batches
-        .checked_mul(PARALLEL_BATCH_OPS)
-        .expect("parallel benchmark operation count overflow");
-    let ready_barrier = Barrier::new(PARALLEL_WORKERS + 1);
-    let start_barrier = Barrier::new(PARALLEL_WORKERS + 1);
-
-    thread::scope(|scope| {
-        let operation = &operation;
-        let ready_barrier = &ready_barrier;
-        let start_barrier = &start_barrier;
-        let mut handles = Vec::with_capacity(PARALLEL_WORKERS);
-
-        for worker_index in 0..PARALLEL_WORKERS {
-            let worker_ops = worker_operation_count(total_ops, worker_index);
-            handles.push(scope.spawn(move || {
-                ready_barrier.wait();
-                start_barrier.wait();
-
-                for _ in 0..worker_ops {
-                    operation();
-                }
-            }));
-        }
-
-        ready_barrier.wait();
-        let start = Instant::now();
-        start_barrier.wait();
-
-        for handle in handles {
-            handle.join().expect("parallel benchmark worker");
-        }
-
-        start.elapsed()
-    })
-}
-
-fn worker_operation_count(total_ops: u64, worker_index: usize) -> u64 {
-    let workers = PARALLEL_WORKERS as u64;
-    let base = total_ops / workers;
-    let remainder = total_ops % workers;
-
-    base + u64::from((worker_index as u64) < remainder)
-}
-
-// This runs OpenSSL, processing the ClientHello.
-fn process_client_hello(acceptor: &SslAcceptor, client_hello: &[u8]) -> ClientHelloOutcome {
-    match acceptor.accept(ClientHelloInput::new(client_hello)) {
-        Ok(_) => ClientHelloOutcome::PendingMoreInput,
-        Err(HandshakeError::WouldBlock(_)) => ClientHelloOutcome::PendingMoreInput,
-        Err(HandshakeError::Failure(_)) => ClientHelloOutcome::Rejected,
-        Err(HandshakeError::SetupFailure(err)) => panic!("TLS server setup failed: {err}"),
-    }
-}
-
-fn record_client_hello(connector: &SslConnector) -> Vec<u8> {
-    let recorder = ClientHelloRecorder::new();
-
-    let client_hello = match connector.connect("localhost", recorder) {
-        Ok(_) => panic!("client handshake unexpectedly completed without server input"),
-        Err(HandshakeError::WouldBlock(mid)) | Err(HandshakeError::Failure(mid)) => {
-            mid.get_ref().output.clone()
-        }
-        Err(HandshakeError::SetupFailure(err)) => panic!("TLS client setup failed: {err}"),
-    };
-
-    assert!(!client_hello.is_empty(), "recorded ClientHello is empty");
-    client_hello
-}
-
-fn build_keyed_filter_and_token_request() -> (Arc<BenchFilter>, Vec<u8>) {
-    build_keyed_filter_and_request(build_token_request)
-}
-
-fn build_keyed_filter_and_invalid_credential_request() -> (Arc<BenchFilter>, Vec<u8>) {
-    build_keyed_filter_and_request(build_invalid_credential_token_request)
-}
-
-fn build_keyed_filter_and_request(
-    build_request: impl FnOnce(&EnclaveRuntime) -> Vec<u8>,
-) -> (Arc<BenchFilter>, Vec<u8>) {
-    let _aesm_proxy = common::aesm_proxy::AesmProxyGuard::start();
-    let key_manager = KeyManagerRuntime::from_env_with_sealed_keys(&[]).expect("key manager");
-    let filter_enclave =
-        EnclaveRuntimes::from_env(FILTER_ENCLAVE_POOL_SIZE).expect("filter enclave pool");
-    let issue_enclave = EnclaveRuntime::from_env().expect("issue enclave");
-
-    install_key_manager_keys_for_pool(&key_manager, &filter_enclave)
-        .expect("install filter enclave benchmark keys");
-    install_key_manager_keys_for_enclave(&key_manager, &issue_enclave)
-        .expect("install issue enclave benchmark keys");
-
-    let filter = Arc::new(BenchFilter::new(
-        DashMapFilterBox::new(),
-        vec![0],
-        1,
-        filter_enclave,
-    ));
-    let token_request = build_request(&issue_enclave);
-
-    (filter, token_request)
-}
-
-fn build_token_request(issue_enclave: &EnclaveRuntime) -> Vec<u8> {
-    let sender =
-        SecureChannelClient::new(issue_enclave.public_key().expect("public key")).expect("sender");
-    let mut user = User::new(MAX_COUNT_PER_CREDENTIAL, sender);
-    let mut rng = OsRng;
-
-    let (cred_request, shared_key) = user.request_credential(&mut rng);
-    let cred_cipher = issue_enclave
-        .issue_cred(&cred_request)
-        .expect("issue credential");
-    user.receive_credential(&cred_cipher, &shared_key);
-
-    let period = u64::from_be_bytes(constant_time_utils::time::current_period());
-    user.request_auth(0, period, &mut rng)
-        .expect("token request")
-}
-
-fn build_invalid_credential_token_request(issue_enclave: &EnclaveRuntime) -> Vec<u8> {
-    let sender =
-        SecureChannelClient::new(issue_enclave.public_key().expect("public key")).expect("sender");
-    let mut user = User::new(MAX_COUNT_PER_CREDENTIAL, sender);
-    let mut rng = OsRng;
-
-    let (cred_request, shared_key) = user.request_credential(&mut rng);
-    let cred_cipher = issue_enclave
-        .issue_cred(&cred_request)
-        .expect("issue credential");
-    user.receive_credential(&cred_cipher, &shared_key);
-
-    let credential = user.credential.as_mut().expect("credential");
-    credential.code[0] ^= 0x01;
-
-    let period = u64::from_be_bytes(constant_time_utils::time::current_period());
-    user.request_auth(0, period, &mut rng)
-        .expect("token request")
-}
-
-fn base_acceptor_builder() -> openssl::ssl::SslAcceptorBuilder {
-    let mut builder =
-        SslAcceptor::mozilla_intermediate_v5(SslMethod::tls()).expect("build TLS acceptor");
-    builder
-        .set_certificate_file(manifest_path(TLS_CERT_RELATIVE_PATH), SslFiletype::PEM)
-        .expect("set TLS certificate");
-    builder
-        .set_private_key_file(manifest_path(TLS_KEY_RELATIVE_PATH), SslFiletype::PEM)
-        .expect("set TLS private key");
-    builder.check_private_key().expect("check TLS private key");
-    builder.set_groups_list("X25519").expect("set TLS groups");
-    builder
-}
-
-fn connector_with_star_extension(ext: Option<Vec<u8>>) -> SslConnector {
-    let mut builder = SslConnector::builder(SslMethod::tls()).expect("build TLS connector");
-    builder.set_verify(SslVerifyMode::NONE);
-    builder.set_groups_list("X25519").expect("set TLS groups");
-
-    if let Some(ext) = ext {
-        builder
-            .add_custom_ext(
-                STAR_TLS_EXTENSION_TYPE,
-                ExtensionContext::CLIENT_HELLO,
-                move |_ssl, _context, _cert| Ok(Some(ext.clone())),
-                |_ssl, _context, _ext_data, _cert| Ok(()),
-            )
-            .expect("configure client STAR extension");
-    }
-
-    builder.build()
 }
 
 fn reject_client_hello(
@@ -491,7 +334,6 @@ fn reject_client_hello(
 fn star_extension_from_client_hello<'a>(ssl: &'a SslRef) -> Option<&'a [u8]> {
     let mut out = ptr::null();
     let mut out_len = 0usize;
-
     let found = unsafe {
         SSL_client_hello_get0_ext(
             ssl.as_ptr(),
@@ -501,121 +343,64 @@ fn star_extension_from_client_hello<'a>(ssl: &'a SslRef) -> Option<&'a [u8]> {
         )
     };
 
-    if found != 1 {
+    if found != 1 || (out.is_null() && out_len != 0) {
         return None;
     }
-
     if out_len == 0 {
         return Some(&[]);
     }
-
-    if out.is_null() {
-        return None;
-    }
-
-    Some(unsafe { slice::from_raw_parts(out as *const u8, out_len) })
+    Some(unsafe { slice::from_raw_parts(out, out_len) })
 }
 
-fn alert_for_filter_error(status: &StarFilterErrorStatus) -> SslAlert {
-    match status {
-        StarFilterErrorStatus::InvalidToken => SslAlert::DECODE_ERROR,
-        StarFilterErrorStatus::InvalidRoute => SslAlert::ILLEGAL_PARAMETER,
-        StarFilterErrorStatus::DuplicatedToken => SslAlert::ILLEGAL_PARAMETER,
-        StarFilterErrorStatus::Internal => SslAlert::DECODE_ERROR,
-    }
-}
+fn bench_client_hello_reject(c: &mut Criterion) {
+    let missing_extension = RejectHarness::new(RejectCase::MissingExtension, 0, 1);
+    let replayed_token = RejectHarness::new(RejectCase::ReplayedToken, 0, 1);
+    let invalid_credential = RejectHarness::new(RejectCase::InvalidCredential, 0, 1);
 
-fn manifest_path(relative_path: &str) -> String {
-    format!("{}/{}", env!("CARGO_MANIFEST_DIR"), relative_path)
-}
-
-fn configure_group(group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>) {
+    let mut group = c.benchmark_group("client_hello_reject");
     group.sample_size(20);
     group.warm_up_time(Duration::from_secs(1));
     group.measurement_time(Duration::from_secs(4));
     group.throughput(Throughput::Elements(1));
-}
 
-fn configure_parallel_group(
-    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-) {
+    group.bench_function("openssl_missing_extension", |b| {
+        b.iter_custom(|iters| missing_extension.measure(iters));
+    });
+    group.bench_function("star_filter_invalid_credential_openssl_parse", |b| {
+        b.iter_custom(|iters| invalid_credential.measure(iters));
+    });
+    group.bench_function("star_filter_replayed_token_openssl_parse", |b| {
+        b.iter_custom(|iters| replayed_token.measure(iters));
+    });
+    group.finish();
+
+    let cases = [
+        (RejectCase::MissingExtension, "openssl_missing_extension"),
+        (
+            RejectCase::ReplayedToken,
+            "star_filter_replayed_token_openssl_parse",
+        ),
+        (
+            RejectCase::InvalidCredential,
+            "star_filter_invalid_credential_openssl_parse",
+        ),
+    ];
+    let mut group = c.benchmark_group("client_hello_reject_scale_out_throughput");
     group.sample_size(20);
     group.warm_up_time(Duration::from_secs(1));
     group.measurement_time(Duration::from_secs(4));
-    group.throughput(Throughput::Elements(PARALLEL_BATCH_OPS));
-}
 
-fn bench_client_hello_reject(c: &mut Criterion) {
-    let openssl = OpenSslRejectHarness::missing_extension();
-    let star_filter = StarFilterRejectHarness::replayed_token();
-    let invalid_credential = StarFilterRejectHarness::invalid_credential();
-
-    assert_eq!(
-        process_client_hello(&openssl.acceptor, openssl.client_hello.as_slice()),
-        ClientHelloOutcome::Rejected
-    );
-    assert_eq!(
-        process_client_hello(&star_filter.acceptor, star_filter.client_hello.as_slice()),
-        ClientHelloOutcome::Rejected
-    );
-    let duplicate_token = star_filter
-        .duplicate_token
-        .as_ref()
-        .expect("duplicate token");
-    assert!(matches!(
-        star_filter
-            .filter
-            .check_duplication(duplicate_token, star_filter.duplicate_route),
-        Err(StarFilterErrorStatus::DuplicatedToken)
-    ));
-    assert_eq!(
-        process_client_hello(
-            &invalid_credential.acceptor,
-            invalid_credential.client_hello.as_slice()
-        ),
-        ClientHelloOutcome::Rejected
-    );
-    assert!(matches!(
-        invalid_credential
-            .filter
-            .filter_client_hello(invalid_credential.token_request.as_slice()),
-        Err(StarFilterErrorStatus::InvalidToken)
-    ));
-
-    let mut group = c.benchmark_group("client_hello_reject");
-    configure_group(&mut group);
-
-    group.bench_function("openssl_missing_extension", |b| {
-        b.iter_custom(|iters| openssl.timed_rejections(iters));
-    });
-
-    group.bench_function("star_filter_invalid_credential_openssl_parse", |b| {
-        b.iter_custom(|iters| invalid_credential.timed_openssl_and_filter_rejections(iters));
-    });
-
-    group.bench_function("star_filter_replayed_token_openssl_parse", |b| {
-        b.iter_custom(|iters| star_filter.timed_openssl_and_filter_rejections(iters));
-    });
-
-    group.finish();
-
-    let mut group = c.benchmark_group("client_hello_reject_parallel_throughput");
-    configure_parallel_group(&mut group);
-
-    group.bench_function("openssl_missing_extension", |b| {
-        b.iter_custom(|iters| openssl.timed_parallel_rejections(iters));
-    });
-
-    group.bench_function("star_filter_replayed_token_openssl_parse", |b| {
-        b.iter_custom(|iters| star_filter.timed_parallel_openssl_and_filter_rejections(iters));
-    });
-
-    group.bench_function("star_filter_invalid_credential_openssl_parse", |b| {
-        b.iter_custom(|iters| {
-            invalid_credential.timed_parallel_openssl_and_filter_rejections(iters)
-        });
-    });
-
+    for &server_count in SCALE_OUT_SERVER_COUNTS {
+        for &(case, name) in &cases {
+            let servers = ShardedServers::new(case, server_count);
+            group.throughput(Throughput::Elements(
+                u64::from(server_count) * SCALE_OUT_OPS_PER_SERVER,
+            ));
+            group.bench_function(format!("{name}_{server_count}_servers"), |b| {
+                b.iter_custom(|batches| servers.measure(batches));
+            });
+        }
+    }
     group.finish();
 }
 

@@ -18,7 +18,7 @@ env_logger = "0.11"
 log = "0.4"
 
 constant-time-utils = { path = "../../../../constant-time-utils", default-features = false }
-simple-filter-box = { path = "../../../../simple-filter-box", default-features = false, features = ["dashmap"] }
+simple-filter-box = { path = "../../../../simple-filter-box", default-features = false, features = ["hashmap"] }
 star-core = { path = "../../../core" }
 star_attestation = { path = "../utils/attest", features = ["host-dcap"] }
 aesm-client = { version = "0.6.2", features = ["sgxs"] }

@@ -1,183 +1,83 @@
-use std::env;
 use std::io::{self, Read};
 
-use star_tools::{
-    DcapVerification, MEASUREMENT_LEN, PUBLIC_KEY_LEN, ParsedQuote, QuoteVerificationPolicy,
-    VerifiedQuote, dcap_status_is_ok, dcap_status_name, decode_quote_input, hex, parse_hex_array,
-    parse_quote, public_key_from_report_data, verify_quote,
-};
+use clap::Parser;
+use hex::FromHex;
+use star_attestation::{Measurement, PUBLIC_KEY_LEN, Quote, QuotePolicy};
+use star_tools::{Verifier, decode_quote_input};
 
-fn main() {
-    if let Err(err) = run() {
-        eprintln!("error: {err}");
-        std::process::exit(1);
-    }
+#[derive(Debug, Parser)]
+#[command(
+    name = "star_tools",
+    about = "Inspect and verify SGX attestation quotes from stdin"
+)]
+enum Command {
+    /// Display measurements and the public key without verifying authenticity.
+    Inspect,
+    /// Verify DCAP evidence and the trusted enclave identity.
+    Verify {
+        #[arg(long, required_unless_present = "mrenclave", value_parser = |value: &str| Measurement::parse_measurement_hex(value, "MRSIGNER"))]
+        mrsigner: Option<Measurement>,
+        #[arg(long, value_parser = |value: &str| Measurement::parse_measurement_hex(value, "MRENCLAVE"))]
+        mrenclave: Option<Measurement>,
+        #[arg(long, value_parser = |value: &str| <[u8; PUBLIC_KEY_LEN]>::from_hex(value))]
+        public_key: Option<[u8; PUBLIC_KEY_LEN]>,
+        /// Accept development enclaves with the debug attribute set.
+        #[arg(long)]
+        allow_debug: bool,
+        /// Accept advisory TCB statuses. Revoked quotes are always rejected.
+        #[arg(long)]
+        allow_advisory: bool,
+        /// Override PCCS_URL and the default PCCS endpoint.
+        #[arg(long)]
+        pccs_url: Option<String>,
+    },
 }
 
-fn run() -> Result<(), String> {
-    let mut args: Vec<String> = env::args().skip(1).collect();
-    if args.is_empty() {
-        print_usage();
-        return Err("missing command".to_string());
-    }
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let command = Command::parse();
+    let verifying = matches!(command, Command::Verify { .. });
+    let mut input = Vec::new();
+    io::stdin().read_to_end(&mut input)?;
+    let bytes = decode_quote_input(&input)?;
 
-    let command = args.remove(0);
-    match command.as_str() {
-        "verify" => command_verify(args),
-        "inspect" => command_inspect(args),
-        "help" | "--help" | "-h" => {
-            print_usage();
-            Ok(())
-        }
-        _ => {
-            print_usage();
-            Err(format!("unknown command {command:?}"))
-        }
-    }
-}
-
-fn command_verify(mut args: Vec<String>) -> Result<(), String> {
-    let expected_mrsigner = required_hex::<MEASUREMENT_LEN>(&mut args, "--mrsigner", "MRSIGNER")?;
-    let expected_mrenclave =
-        optional_hex::<MEASUREMENT_LEN>(&mut args, "--mrenclave", "MRENCLAVE")?;
-    let expected_public_key =
-        optional_hex::<PUBLIC_KEY_LEN>(&mut args, "--public-key", "public key")?;
-    let allow_debug = take_flag(&mut args, "--allow-debug");
-    let allow_advisory = take_flag(&mut args, "--allow-advisory");
-    let pccs_url = take_value(&mut args, "--pccs-url")?;
-    reject_extra(&args)?;
-
-    let quote = read_stdin_quote()?;
-    let policy = QuoteVerificationPolicy {
-        expected_mrsigner: &expected_mrsigner,
-        expected_mrenclave: expected_mrenclave.as_ref(),
-        expected_public_key: expected_public_key.as_ref(),
+    let quote = Quote::parse(&bytes)?;
+    let public_key = quote.public_key()?;
+    if let Command::Verify {
+        mrsigner,
+        mrenclave,
+        public_key: expected_public_key,
         allow_debug,
         allow_advisory,
-        pccs_url: pccs_url.as_deref(),
-    };
-    let verified = verify_quote(&quote, &policy)?;
-    print_verified_quote_summary(&quote, &verified);
-    print_dcap_status(&verified.dcap);
-    println!("report_data public key binding OK");
-    println!("local policy OK");
-    Ok(())
-}
-
-fn command_inspect(args: Vec<String>) -> Result<(), String> {
-    reject_extra(&args)?;
-
-    let quote = read_stdin_quote()?;
-    print_quote_summary(&quote)?;
-    Ok(())
-}
-
-fn print_dcap_status(dcap: &DcapVerification) {
-    if dcap_status_is_ok(dcap.status) {
-        println!(
-            "DCAP quote verification OK: {}",
-            dcap_status_name(dcap.status)
-        );
-    } else {
-        println!(
-            "DCAP quote verification advisory accepted: {}",
-            dcap_status_name(dcap.status)
-        );
-    }
-    if !dcap.advisory_ids.is_empty() {
-        println!("advisory IDs: {}", dcap.advisory_ids.join(","));
-    }
-}
-
-fn print_quote_summary(quote: &[u8]) -> Result<ParsedQuote, String> {
-    let parsed = parse_quote(quote)?;
-    let public_key = public_key_from_report_data(&parsed)?;
-    print_summary_fields(quote.len(), &parsed, &public_key);
-    Ok(parsed)
-}
-
-fn print_verified_quote_summary(quote: &[u8], verified: &VerifiedQuote) {
-    print_summary_fields(quote.len(), &verified.parsed, &verified.public_key);
-}
-
-fn print_summary_fields(quote_len: usize, parsed: &ParsedQuote, public_key: &[u8; PUBLIC_KEY_LEN]) {
-    println!("quote size: {quote_len} bytes");
-    println!("public key: {}", hex(public_key));
-    println!("mrenclave: {}", hex(&parsed.mrenclave));
-    println!("mrsigner : {}", hex(&parsed.mrsigner));
-    println!("debug    : {}", parsed.debug);
-}
-
-fn read_stdin_quote() -> Result<Vec<u8>, String> {
-    let mut input = Vec::new();
-    io::stdin()
-        .read_to_end(&mut input)
-        .map_err(|err| format!("read quote from stdin: {err}"))?;
-    decode_quote_input(&input)
-}
-
-fn required_hex<const N: usize>(
-    args: &mut Vec<String>,
-    flag: &str,
-    name: &str,
-) -> Result<[u8; N], String> {
-    let value = required_value(args, flag)?;
-    parse_hex_array(&value, name)
-}
-
-fn optional_hex<const N: usize>(
-    args: &mut Vec<String>,
-    flag: &str,
-    name: &str,
-) -> Result<Option<[u8; N]>, String> {
-    take_value(args, flag)?
-        .map(|value| parse_hex_array(&value, name))
-        .transpose()
-}
-
-fn required_value(args: &mut Vec<String>, flag: &str) -> Result<String, String> {
-    take_value(args, flag)?.ok_or_else(|| format!("missing required {flag}"))
-}
-
-fn take_value(args: &mut Vec<String>, flag: &str) -> Result<Option<String>, String> {
-    if let Some(index) = args.iter().position(|arg| arg == flag) {
-        args.remove(index);
-        if index >= args.len() {
-            return Err(format!("{flag} needs a value"));
+        pccs_url,
+    } = command
+    {
+        if let Some(expected) = expected_public_key
+            && public_key != expected
+        {
+            return Err("attested public key does not match expected public key".into());
         }
-        return Ok(Some(args.remove(index)));
+        let policy = QuotePolicy {
+            expected_mrsigner: mrsigner,
+            expected_mrenclave: mrenclave,
+            allow_debug,
+            allow_advisory,
+        };
+        Verifier::new(pccs_url.as_deref())?
+            .verify(&bytes, &policy)
+            .await?;
     }
-
-    let prefix = format!("{flag}=");
-    if let Some(index) = args.iter().position(|arg| arg.starts_with(&prefix)) {
-        let value = args.remove(index)[prefix.len()..].to_string();
-        return Ok(Some(value));
+    println!("quote size: {} bytes", bytes.len());
+    println!("public key: {}", hex::encode(public_key));
+    println!("mrenclave: {}", hex::encode(quote.mrenclave));
+    println!("mrsigner : {}", hex::encode(quote.mrsigner));
+    println!("debug    : {}", quote.debug);
+    if verifying {
+        println!("DCAP verification, enclave policy, and public key binding OK");
     }
-
-    Ok(None)
+    Ok(())
 }
 
-fn take_flag(args: &mut Vec<String>, flag: &str) -> bool {
-    if let Some(index) = args.iter().position(|arg| arg == flag) {
-        args.remove(index);
-        true
-    } else {
-        false
-    }
-}
-
-fn reject_extra(args: &[String]) -> Result<(), String> {
-    if args.is_empty() {
-        Ok(())
-    } else {
-        Err(format!("unexpected arguments: {}", args.join(" ")))
-    }
-}
-
-fn print_usage() {
-    eprintln!(
-        "Usage:
-  star_tools inspect < quote_or_startup_log.txt
-  star_tools verify --mrsigner HEX [--mrenclave HEX] [--public-key HEX] [--allow-debug] [--allow-advisory] [--pccs-url URL] < quote_or_startup_log.txt"
-    );
-}
+#[path = "main_test.rs"]
+#[cfg(test)]
+mod tests;

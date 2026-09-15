@@ -6,10 +6,6 @@ edition = "2024"
 [dependencies]
 key-manager-client = { path = "../client" }
 star_attestation = { path = "../../attest", features = ["host-dcap"] }
-enclave-runner = "0.8"
-enclave-runner-sgx = "0.1"
-sgxs-loaders = "0.5"
-aesm-client = { version = "0.6.2", features = ["sgxs"] }
 tokio = { version = "1", features = ["full"] }
 axum = "0.7"
 base64 = "0.22.1"
