@@ -22,10 +22,9 @@ use star_app::tls::STAR_TLS_EXTENSION_TYPE;
 
 const TLS_CERT_RELATIVE_PATH: &str = "examples/certs/server.crt";
 const TLS_KEY_RELATIVE_PATH: &str = "examples/certs/server.key";
-const FILTER_ENCLAVE_POOL_SIZE: u8 = 10;
-const PARALLEL_WORKERS: usize = 2;
-const PARALLEL_OPS_PER_WORKER: u64 = 64;
-const PARALLEL_BATCH_OPS: u64 = PARALLEL_WORKERS as u64 * PARALLEL_OPS_PER_WORKER;
+const FILTER_ENCLAVES_PER_SERVER: u8 = 1;
+const SCALE_OUT_SERVER_COUNTS: &[u32] = &[1, 2, 4];
+const SCALE_OUT_OPS_PER_SERVER: u64 = 64;
 
 unsafe extern "C" {
     fn SSL_client_hello_get0_ext(
@@ -100,7 +99,7 @@ struct RejectHarness {
 }
 
 impl RejectHarness {
-    fn new(case: RejectCase) -> Self {
+    fn new(case: RejectCase, shard_index: u32, shard_count: u32) -> Self {
         let mut acceptor =
             SslAcceptor::mozilla_intermediate_v5(SslMethod::tls()).expect("build TLS acceptor");
         acceptor
@@ -130,8 +129,8 @@ impl RejectHarness {
             }
             RejectCase::ReplayedToken | RejectCase::InvalidCredential => {
                 let invalid_credential = matches!(case, RejectCase::InvalidCredential);
-                let (filter, issue_enclave) = KeyedEnclaves::new(FILTER_ENCLAVE_POOL_SIZE)
-                    .into_filter(vec![0], 1);
+                let (filter, issue_enclave) = KeyedEnclaves::new(FILTER_ENCLAVES_PER_SERVER)
+                    .into_filter(vec![shard_index], shard_count);
                 let filter = Arc::new(filter);
                 let mut rng = OsRng;
                 let mut user = register_user(
@@ -139,36 +138,39 @@ impl RejectHarness {
                     MAX_COUNT_PER_CREDENTIAL,
                     &mut rng,
                 );
+                let period = u64::from_be_bytes(constant_time_utils::time::current_period());
+                let (counter, request, token) = (0..MAX_COUNT_PER_CREDENTIAL)
+                    .find_map(|counter| {
+                        let request = user
+                            .request_auth(counter, period, &mut rng)
+                            .expect("token request");
+                        let (token, route) = filter
+                            .issue_token_and_route_sync(&request)
+                            .expect("issue token and route");
+                        (route == shard_index).then_some((counter, request, token))
+                    })
+                    .expect("request routed to shard");
 
-                if invalid_credential {
+                let request = if invalid_credential {
                     user.credential.as_mut().expect("credential").code[0] ^= 0x01;
-                }
-
-                let request = user
-                    .request_auth(
-                        0,
-                        u64::from_be_bytes(constant_time_utils::time::current_period()),
-                        &mut rng,
-                    )
-                    .expect("token request");
-
-                if invalid_credential {
+                    let request = user
+                        .request_auth(counter, period, &mut rng)
+                        .expect("invalid credential request");
                     assert!(matches!(
                         filter.filter_client_hello(&request),
                         Err(StarFilterErrorStatus::InvalidToken)
                     ));
+                    request
                 } else {
-                    let (token, route) = filter
-                        .issue_token_and_route_sync(&request)
-                        .expect("issue duplicate token");
                     filter
-                        .check_duplication(&token, route)
+                        .check_duplication(&token, shard_index)
                         .expect("seed duplicate token");
                     assert!(matches!(
-                        filter.check_duplication(&token, route),
+                        filter.check_duplication(&token, shard_index),
                         Err(StarFilterErrorStatus::DuplicatedToken)
                     ));
-                }
+                    request
+                };
 
                 acceptor.set_client_hello_callback(|ssl, alert| {
                     match star_extension_from_client_hello(ssl) {
@@ -275,26 +277,37 @@ impl RejectHarness {
         total
     }
 
-    fn measure_parallel(&self, batches: u64) -> Duration {
-        let total_ops = batches
-            .checked_mul(PARALLEL_BATCH_OPS)
-            .expect("parallel benchmark operation count overflow");
-        let ready = Barrier::new(PARALLEL_WORKERS + 1);
-        let start = Barrier::new(PARALLEL_WORKERS + 1);
+}
+
+struct ShardedServers {
+    servers: Vec<RejectHarness>,
+}
+
+impl ShardedServers {
+    fn new(case: RejectCase, server_count: u32) -> Self {
+        let servers = (0..server_count)
+            .map(|shard_index| RejectHarness::new(case, shard_index, server_count))
+            .collect();
+        Self { servers }
+    }
+
+    fn measure(&self, batches: u64) -> Duration {
+        let operations = batches
+            .checked_mul(SCALE_OUT_OPS_PER_SERVER)
+            .expect("scale-out benchmark operation count overflow");
+        let ready = Barrier::new(self.servers.len() + 1);
+        let start = Barrier::new(self.servers.len() + 1);
 
         thread::scope(|scope| {
-            let mut handles = Vec::with_capacity(PARALLEL_WORKERS);
-            for worker in 0..PARALLEL_WORKERS {
-                let base = total_ops / PARALLEL_WORKERS as u64;
-                let remainder = total_ops % PARALLEL_WORKERS as u64;
-                let operations = base + u64::from((worker as u64) < remainder);
+            let mut handles = Vec::with_capacity(self.servers.len());
+            for server in &self.servers {
                 let ready = &ready;
                 let start = &start;
                 handles.push(scope.spawn(move || {
                     ready.wait();
                     start.wait();
                     for _ in 0..operations {
-                        assert!(self.is_rejected());
+                        assert!(server.is_rejected());
                     }
                 }));
             }
@@ -303,7 +316,7 @@ impl RejectHarness {
             let timer = Instant::now();
             start.wait();
             for handle in handles {
-                handle.join().expect("parallel benchmark worker");
+                handle.join().expect("scale-out benchmark server");
             }
             timer.elapsed()
         })
@@ -340,9 +353,9 @@ fn star_extension_from_client_hello<'a>(ssl: &'a SslRef) -> Option<&'a [u8]> {
 }
 
 fn bench_client_hello_reject(c: &mut Criterion) {
-    let missing_extension = RejectHarness::new(RejectCase::MissingExtension);
-    let replayed_token = RejectHarness::new(RejectCase::ReplayedToken);
-    let invalid_credential = RejectHarness::new(RejectCase::InvalidCredential);
+    let missing_extension = RejectHarness::new(RejectCase::MissingExtension, 0, 1);
+    let replayed_token = RejectHarness::new(RejectCase::ReplayedToken, 0, 1);
+    let invalid_credential = RejectHarness::new(RejectCase::InvalidCredential, 0, 1);
 
     let mut group = c.benchmark_group("client_hello_reject");
     group.sample_size(20);
@@ -361,21 +374,33 @@ fn bench_client_hello_reject(c: &mut Criterion) {
     });
     group.finish();
 
-    let mut group = c.benchmark_group("client_hello_reject_parallel_throughput");
+    let cases = [
+        (RejectCase::MissingExtension, "openssl_missing_extension"),
+        (
+            RejectCase::ReplayedToken,
+            "star_filter_replayed_token_openssl_parse",
+        ),
+        (
+            RejectCase::InvalidCredential,
+            "star_filter_invalid_credential_openssl_parse",
+        ),
+    ];
+    let mut group = c.benchmark_group("client_hello_reject_scale_out_throughput");
     group.sample_size(20);
     group.warm_up_time(Duration::from_secs(1));
     group.measurement_time(Duration::from_secs(4));
-    group.throughput(Throughput::Elements(PARALLEL_BATCH_OPS));
 
-    group.bench_function("openssl_missing_extension", |b| {
-        b.iter_custom(|iters| missing_extension.measure_parallel(iters));
-    });
-    group.bench_function("star_filter_replayed_token_openssl_parse", |b| {
-        b.iter_custom(|iters| replayed_token.measure_parallel(iters));
-    });
-    group.bench_function("star_filter_invalid_credential_openssl_parse", |b| {
-        b.iter_custom(|iters| invalid_credential.measure_parallel(iters));
-    });
+    for &server_count in SCALE_OUT_SERVER_COUNTS {
+        for &(case, name) in &cases {
+            let servers = ShardedServers::new(case, server_count);
+            group.throughput(Throughput::Elements(
+                u64::from(server_count) * SCALE_OUT_OPS_PER_SERVER,
+            ));
+            group.bench_function(format!("{name}_{server_count}_servers"), |b| {
+                b.iter_custom(|batches| servers.measure(batches));
+            });
+        }
+    }
     group.finish();
 }
 
