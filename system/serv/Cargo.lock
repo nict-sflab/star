@@ -4523,7 +4523,6 @@ dependencies = [
  "rand 0.9.4",
  "sgx-isa",
  "sha2",
- "tokio",
 ]
 
 [[package]]
