@@ -23,6 +23,8 @@ pkgs.mkShell {
     libclangPkg
     curl
     unzip
+
+    xonsh
   ];
 
   shellHook = ''
