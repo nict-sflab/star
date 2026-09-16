@@ -10,102 +10,102 @@ Disassembly of section .text:
    18587:	00 40 0f             	add    %al,0xf(%rax)
    1858a:	94                   	xchg   %eax,%esp
    1858b:	c7                   	(bad)
-   1858c:	ff 15 3e 31 07 00    	call   *0x7313e(%rip)        # 8b6d0 <_GLOBAL_OFFSET_TABLE_+0x188>
+   1858c:	ff 15 36 31 07 00    	call   *0x73136(%rip)        # 8b6c8 <_GLOBAL_OFFSET_TABLE_+0x180>
    18592:	88 45 c8             	mov    %al,-0x38(%rbp)
    18595:	31 ff                	xor    %edi,%edi
    18597:	80 7d ab 00          	cmpb   $0x0,-0x55(%rbp)
    1859b:	40 0f 94 c7          	sete   %dil
-   1859f:	ff 15 2b 31 07 00    	call   *0x7312b(%rip)        # 8b6d0 <_GLOBAL_OFFSET_TABLE_+0x188>
+   1859f:	ff 15 23 31 07 00    	call   *0x73123(%rip)        # 8b6c8 <_GLOBAL_OFFSET_TABLE_+0x180>
    185a5:	88 45 c9             	mov    %al,-0x37(%rbp)
    185a8:	31 ff                	xor    %edi,%edi
    185aa:	80 7d ac 00          	cmpb   $0x0,-0x54(%rbp)
    185ae:	40 0f 94 c7          	sete   %dil
-   185b2:	ff 15 18 31 07 00    	call   *0x73118(%rip)        # 8b6d0 <_GLOBAL_OFFSET_TABLE_+0x188>
+   185b2:	ff 15 10 31 07 00    	call   *0x73110(%rip)        # 8b6c8 <_GLOBAL_OFFSET_TABLE_+0x180>
    185b8:	88 45 ca             	mov    %al,-0x36(%rbp)
    185bb:	31 ff                	xor    %edi,%edi
    185bd:	80 7d ad 00          	cmpb   $0x0,-0x53(%rbp)
    185c1:	40 0f 94 c7          	sete   %dil
-   185c5:	ff 15 05 31 07 00    	call   *0x73105(%rip)        # 8b6d0 <_GLOBAL_OFFSET_TABLE_+0x188>
+   185c5:	ff 15 fd 30 07 00    	call   *0x730fd(%rip)        # 8b6c8 <_GLOBAL_OFFSET_TABLE_+0x180>
    185cb:	88 45 cb             	mov    %al,-0x35(%rbp)
    185ce:	31 ff                	xor    %edi,%edi
    185d0:	80 7d ae 00          	cmpb   $0x0,-0x52(%rbp)
    185d4:	40 0f 94 c7          	sete   %dil
-   185d8:	ff 15 f2 30 07 00    	call   *0x730f2(%rip)        # 8b6d0 <_GLOBAL_OFFSET_TABLE_+0x188>
+   185d8:	ff 15 ea 30 07 00    	call   *0x730ea(%rip)        # 8b6c8 <_GLOBAL_OFFSET_TABLE_+0x180>
    185de:	41 89 c6             	mov    %eax,%r14d
    185e1:	31 ff                	xor    %edi,%edi
    185e3:	80 7d af 00          	cmpb   $0x0,-0x51(%rbp)
    185e7:	40 0f 94 c7          	sete   %dil
-   185eb:	ff 15 df 30 07 00    	call   *0x730df(%rip)        # 8b6d0 <_GLOBAL_OFFSET_TABLE_+0x188>
+   185eb:	ff 15 d7 30 07 00    	call   *0x730d7(%rip)        # 8b6c8 <_GLOBAL_OFFSET_TABLE_+0x180>
    185f1:	88 45 cc             	mov    %al,-0x34(%rbp)
    185f4:	31 ff                	xor    %edi,%edi
    185f6:	80 7d b0 00          	cmpb   $0x0,-0x50(%rbp)
    185fa:	40 0f 94 c7          	sete   %dil
-   185fe:	ff 15 cc 30 07 00    	call   *0x730cc(%rip)        # 8b6d0 <_GLOBAL_OFFSET_TABLE_+0x188>
+   185fe:	ff 15 c4 30 07 00    	call   *0x730c4(%rip)        # 8b6c8 <_GLOBAL_OFFSET_TABLE_+0x180>
    18604:	88 45 cd             	mov    %al,-0x33(%rbp)
    18607:	31 ff                	xor    %edi,%edi
    18609:	80 7d b1 00          	cmpb   $0x0,-0x4f(%rbp)
    1860d:	40 0f 94 c7          	sete   %dil
-   18611:	ff 15 b9 30 07 00    	call   *0x730b9(%rip)        # 8b6d0 <_GLOBAL_OFFSET_TABLE_+0x188>
+   18611:	ff 15 b1 30 07 00    	call   *0x730b1(%rip)        # 8b6c8 <_GLOBAL_OFFSET_TABLE_+0x180>
    18617:	88 45 ce             	mov    %al,-0x32(%rbp)
    1861a:	31 ff                	xor    %edi,%edi
    1861c:	80 7d b2 00          	cmpb   $0x0,-0x4e(%rbp)
    18620:	40 0f 94 c7          	sete   %dil
-   18624:	ff 15 a6 30 07 00    	call   *0x730a6(%rip)        # 8b6d0 <_GLOBAL_OFFSET_TABLE_+0x188>
+   18624:	ff 15 9e 30 07 00    	call   *0x7309e(%rip)        # 8b6c8 <_GLOBAL_OFFSET_TABLE_+0x180>
    1862a:	88 45 cf             	mov    %al,-0x31(%rbp)
    1862d:	31 ff                	xor    %edi,%edi
    1862f:	80 7d b3 00          	cmpb   $0x0,-0x4d(%rbp)
    18633:	40 0f 94 c7          	sete   %dil
-   18637:	ff 15 93 30 07 00    	call   *0x73093(%rip)        # 8b6d0 <_GLOBAL_OFFSET_TABLE_+0x188>
+   18637:	ff 15 8b 30 07 00    	call   *0x7308b(%rip)        # 8b6c8 <_GLOBAL_OFFSET_TABLE_+0x180>
    1863d:	88 45 d0             	mov    %al,-0x30(%rbp)
    18640:	31 ff                	xor    %edi,%edi
    18642:	80 7d b4 00          	cmpb   $0x0,-0x4c(%rbp)
    18646:	40 0f 94 c7          	sete   %dil
-   1864a:	ff 15 80 30 07 00    	call   *0x73080(%rip)        # 8b6d0 <_GLOBAL_OFFSET_TABLE_+0x188>
+   1864a:	ff 15 78 30 07 00    	call   *0x73078(%rip)        # 8b6c8 <_GLOBAL_OFFSET_TABLE_+0x180>
    18650:	41 89 c4             	mov    %eax,%r12d
    18653:	31 ff                	xor    %edi,%edi
    18655:	80 7d b5 00          	cmpb   $0x0,-0x4b(%rbp)
    18659:	40 0f 94 c7          	sete   %dil
-   1865d:	ff 15 6d 30 07 00    	call   *0x7306d(%rip)        # 8b6d0 <_GLOBAL_OFFSET_TABLE_+0x188>
+   1865d:	ff 15 65 30 07 00    	call   *0x73065(%rip)        # 8b6c8 <_GLOBAL_OFFSET_TABLE_+0x180>
    18663:	88 45 d1             	mov    %al,-0x2f(%rbp)
    18666:	31 ff                	xor    %edi,%edi
    18668:	80 7d b6 00          	cmpb   $0x0,-0x4a(%rbp)
    1866c:	40 0f 94 c7          	sete   %dil
-   18670:	ff 15 5a 30 07 00    	call   *0x7305a(%rip)        # 8b6d0 <_GLOBAL_OFFSET_TABLE_+0x188>
+   18670:	ff 15 52 30 07 00    	call   *0x73052(%rip)        # 8b6c8 <_GLOBAL_OFFSET_TABLE_+0x180>
    18676:	88 45 d2             	mov    %al,-0x2e(%rbp)
    18679:	31 ff                	xor    %edi,%edi
    1867b:	80 7d b7 00          	cmpb   $0x0,-0x49(%rbp)
    1867f:	40 0f 94 c7          	sete   %dil
-   18683:	ff 15 47 30 07 00    	call   *0x73047(%rip)        # 8b6d0 <_GLOBAL_OFFSET_TABLE_+0x188>
+   18683:	ff 15 3f 30 07 00    	call   *0x7303f(%rip)        # 8b6c8 <_GLOBAL_OFFSET_TABLE_+0x180>
    18689:	88 45 d3             	mov    %al,-0x2d(%rbp)
    1868c:	31 ff                	xor    %edi,%edi
    1868e:	80 7d b8 00          	cmpb   $0x0,-0x48(%rbp)
    18692:	40 0f 94 c7          	sete   %dil
-   18696:	ff 15 34 30 07 00    	call   *0x73034(%rip)        # 8b6d0 <_GLOBAL_OFFSET_TABLE_+0x188>
+   18696:	ff 15 2c 30 07 00    	call   *0x7302c(%rip)        # 8b6c8 <_GLOBAL_OFFSET_TABLE_+0x180>
    1869c:	88 45 d4             	mov    %al,-0x2c(%rbp)
    1869f:	31 ff                	xor    %edi,%edi
    186a1:	80 7d b9 00          	cmpb   $0x0,-0x47(%rbp)
    186a5:	40 0f 94 c7          	sete   %dil
-   186a9:	ff 15 21 30 07 00    	call   *0x73021(%rip)        # 8b6d0 <_GLOBAL_OFFSET_TABLE_+0x188>
+   186a9:	ff 15 19 30 07 00    	call   *0x73019(%rip)        # 8b6c8 <_GLOBAL_OFFSET_TABLE_+0x180>
    186af:	88 45 d5             	mov    %al,-0x2b(%rbp)
    186b2:	31 ff                	xor    %edi,%edi
    186b4:	80 7d ba 00          	cmpb   $0x0,-0x46(%rbp)
    186b8:	40 0f 94 c7          	sete   %dil
-   186bc:	ff 15 0e 30 07 00    	call   *0x7300e(%rip)        # 8b6d0 <_GLOBAL_OFFSET_TABLE_+0x188>
+   186bc:	ff 15 06 30 07 00    	call   *0x73006(%rip)        # 8b6c8 <_GLOBAL_OFFSET_TABLE_+0x180>
    186c2:	88 45 d6             	mov    %al,-0x2a(%rbp)
    186c5:	31 ff                	xor    %edi,%edi
    186c7:	80 7d bb 00          	cmpb   $0x0,-0x45(%rbp)
    186cb:	40 0f 94 c7          	sete   %dil
-   186cf:	ff 15 fb 2f 07 00    	call   *0x72ffb(%rip)        # 8b6d0 <_GLOBAL_OFFSET_TABLE_+0x188>
+   186cf:	ff 15 f3 2f 07 00    	call   *0x72ff3(%rip)        # 8b6c8 <_GLOBAL_OFFSET_TABLE_+0x180>
    186d5:	41 89 c5             	mov    %eax,%r13d
    186d8:	31 ff                	xor    %edi,%edi
    186da:	80 7d bc 00          	cmpb   $0x0,-0x44(%rbp)
    186de:	40 0f 94 c7          	sete   %dil
-   186e2:	ff 15 e8 2f 07 00    	call   *0x72fe8(%rip)        # 8b6d0 <_GLOBAL_OFFSET_TABLE_+0x188>
+   186e2:	ff 15 e0 2f 07 00    	call   *0x72fe0(%rip)        # 8b6c8 <_GLOBAL_OFFSET_TABLE_+0x180>
    186e8:	88 45 d7             	mov    %al,-0x29(%rbp)
    186eb:	31 ff                	xor    %edi,%edi
    186ed:	80 7d bd 00          	cmpb   $0x0,-0x43(%rbp)
    186f1:	40 0f 94 c7          	sete   %dil
-   186f5:	ff 15 d5 2f 07 00    	call   *0x72fd5(%rip)        # 8b6d0 <_GLOBAL_OFFSET_TABLE_+0x188>
+   186f5:	ff 15 cd 2f 07 00    	call   *0x72fcd(%rip)        # 8b6c8 <_GLOBAL_OFFSET_TABLE_+0x180>
    186fb:	0f b6 4d be          	movzbl -0x42(%rbp),%ecx
    186ff:	22 4d bf             	and    -0x41(%rbp),%cl
    18702:	0f b6 55 c0          	movzbl -0x40(%rbp),%edx
@@ -142,13 +142,13 @@ Disassembly of section .text:
    1876e:	45 20 e5             	and    %r12b,%r13b
    18771:	41 80 e5 01          	and    $0x1,%r13b
    18775:	41 0f b6 fd          	movzbl %r13b,%edi
-   18779:	ff 15 51 2f 07 00    	call   *0x72f51(%rip)        # 8b6d0 <_GLOBAL_OFFSET_TABLE_+0x188>
+   18779:	ff 15 49 2f 07 00    	call   *0x72f49(%rip)        # 8b6c8 <_GLOBAL_OFFSET_TABLE_+0x180>
    1877f:	84 c0                	test   %al,%al
    18781:	48 8b 5d 90          	mov    -0x70(%rbp),%rbx
    18785:	74 0f                	je     18796 <<hpke::dhkex::x25519::X25519 as hpke::dhkex::DhKeyExchange>::dh+0x316>
    18787:	c6 03 01             	movb   $0x1,(%rbx)
    1878a:	48 8d 7d 9e          	lea    -0x62(%rbp),%rdi
-   1878e:	ff 15 0c 37 07 00    	call   *0x7370c(%rip)        # 8bea0 <_GLOBAL_OFFSET_TABLE_+0x958>
+   1878e:	ff 15 1c 37 07 00    	call   *0x7371c(%rip)        # 8beb0 <_GLOBAL_OFFSET_TABLE_+0x968>
    18794:	eb 13                	jmp    187a9 <<hpke::dhkex::x25519::X25519 as hpke::dhkex::DhKeyExchange>::dh+0x329>
    18796:	0f 10 45 9e          	movups -0x62(%rbp),%xmm0
    1879a:	0f 10 4d ae          	movups -0x52(%rbp),%xmm1
@@ -167,10 +167,10 @@ Disassembly of section .text:
    187bb:	eb 00                	jmp    187bd <<hpke::dhkex::x25519::X25519 as hpke::dhkex::DhKeyExchange>::dh+0x33d>
    187bd:	48 89 c3             	mov    %rax,%rbx
    187c0:	48 8d 7d 9e          	lea    -0x62(%rbp),%rdi
-   187c4:	ff 15 d6 36 07 00    	call   *0x736d6(%rip)        # 8bea0 <_GLOBAL_OFFSET_TABLE_+0x958>
+   187c4:	ff 15 e6 36 07 00    	call   *0x736e6(%rip)        # 8beb0 <_GLOBAL_OFFSET_TABLE_+0x968>
    187ca:	48 89 df             	mov    %rbx,%rdi
    187cd:	e8 7e d8 fe ff       	call   6050 <_Unwind_Resume@plt>
-   187d2:	ff 15 30 32 07 00    	call   *0x73230(%rip)        # 8ba08 <_GLOBAL_OFFSET_TABLE_+0x4c0>
+   187d2:	ff 15 38 32 07 00    	call   *0x73238(%rip)        # 8ba10 <_GLOBAL_OFFSET_TABLE_+0x4c8>
    187d8:	0f 1f 84 00 00 00 00 	nopl   0x0(%rax,%rax,1)
    187df:	00 
 
@@ -295,97 +295,97 @@ Disassembly of section .text:
    15eb6:	31 ff                	xor    %edi,%edi
    15eb8:	41 3a 45 00          	cmp    0x0(%r13),%al
    15ebc:	40 0f 94 c7          	sete   %dil
-   15ec0:	ff 15 42 5e 07 00    	call   *0x75e42(%rip)        # 8bd08 <_GLOBAL_OFFSET_TABLE_+0x7c0>
+   15ec0:	ff 15 32 60 07 00    	call   *0x76032(%rip)        # 8bef8 <_GLOBAL_OFFSET_TABLE_+0x9b0>
    15ec6:	88 44 24 10          	mov    %al,0x10(%rsp)
    15eca:	0f b6 44 24 19       	movzbl 0x19(%rsp),%eax
    15ecf:	31 ff                	xor    %edi,%edi
    15ed1:	41 3a 45 01          	cmp    0x1(%r13),%al
    15ed5:	40 0f 94 c7          	sete   %dil
-   15ed9:	ff 15 29 5e 07 00    	call   *0x75e29(%rip)        # 8bd08 <_GLOBAL_OFFSET_TABLE_+0x7c0>
+   15ed9:	ff 15 19 60 07 00    	call   *0x76019(%rip)        # 8bef8 <_GLOBAL_OFFSET_TABLE_+0x9b0>
    15edf:	88 44 24 38          	mov    %al,0x38(%rsp)
    15ee3:	0f b6 44 24 1a       	movzbl 0x1a(%rsp),%eax
    15ee8:	31 ff                	xor    %edi,%edi
    15eea:	41 3a 45 02          	cmp    0x2(%r13),%al
    15eee:	40 0f 94 c7          	sete   %dil
-   15ef2:	ff 15 10 5e 07 00    	call   *0x75e10(%rip)        # 8bd08 <_GLOBAL_OFFSET_TABLE_+0x7c0>
+   15ef2:	ff 15 00 60 07 00    	call   *0x76000(%rip)        # 8bef8 <_GLOBAL_OFFSET_TABLE_+0x9b0>
    15ef8:	88 44 24 0f          	mov    %al,0xf(%rsp)
    15efc:	0f b6 44 24 1b       	movzbl 0x1b(%rsp),%eax
    15f01:	31 ff                	xor    %edi,%edi
    15f03:	41 3a 45 03          	cmp    0x3(%r13),%al
    15f07:	40 0f 94 c7          	sete   %dil
-   15f0b:	ff 15 f7 5d 07 00    	call   *0x75df7(%rip)        # 8bd08 <_GLOBAL_OFFSET_TABLE_+0x7c0>
+   15f0b:	ff 15 e7 5f 07 00    	call   *0x75fe7(%rip)        # 8bef8 <_GLOBAL_OFFSET_TABLE_+0x9b0>
    15f11:	88 44 24 0e          	mov    %al,0xe(%rsp)
    15f15:	0f b6 44 24 1c       	movzbl 0x1c(%rsp),%eax
    15f1a:	31 ff                	xor    %edi,%edi
    15f1c:	41 3a 45 04          	cmp    0x4(%r13),%al
    15f20:	40 0f 94 c7          	sete   %dil
-   15f24:	ff 15 de 5d 07 00    	call   *0x75dde(%rip)        # 8bd08 <_GLOBAL_OFFSET_TABLE_+0x7c0>
+   15f24:	ff 15 ce 5f 07 00    	call   *0x75fce(%rip)        # 8bef8 <_GLOBAL_OFFSET_TABLE_+0x9b0>
    15f2a:	41 89 c7             	mov    %eax,%r15d
    15f2d:	0f b6 44 24 1d       	movzbl 0x1d(%rsp),%eax
    15f32:	31 ff                	xor    %edi,%edi
    15f34:	41 3a 45 05          	cmp    0x5(%r13),%al
    15f38:	40 0f 94 c7          	sete   %dil
-   15f3c:	ff 15 c6 5d 07 00    	call   *0x75dc6(%rip)        # 8bd08 <_GLOBAL_OFFSET_TABLE_+0x7c0>
+   15f3c:	ff 15 b6 5f 07 00    	call   *0x75fb6(%rip)        # 8bef8 <_GLOBAL_OFFSET_TABLE_+0x9b0>
    15f42:	88 44 24 0d          	mov    %al,0xd(%rsp)
    15f46:	0f b6 44 24 1e       	movzbl 0x1e(%rsp),%eax
    15f4b:	31 ff                	xor    %edi,%edi
    15f4d:	41 3a 45 06          	cmp    0x6(%r13),%al
    15f51:	40 0f 94 c7          	sete   %dil
-   15f55:	ff 15 ad 5d 07 00    	call   *0x75dad(%rip)        # 8bd08 <_GLOBAL_OFFSET_TABLE_+0x7c0>
+   15f55:	ff 15 9d 5f 07 00    	call   *0x75f9d(%rip)        # 8bef8 <_GLOBAL_OFFSET_TABLE_+0x9b0>
    15f5b:	88 44 24 0c          	mov    %al,0xc(%rsp)
    15f5f:	0f b6 44 24 1f       	movzbl 0x1f(%rsp),%eax
    15f64:	31 ff                	xor    %edi,%edi
    15f66:	41 3a 45 07          	cmp    0x7(%r13),%al
    15f6a:	40 0f 94 c7          	sete   %dil
-   15f6e:	ff 15 94 5d 07 00    	call   *0x75d94(%rip)        # 8bd08 <_GLOBAL_OFFSET_TABLE_+0x7c0>
+   15f6e:	ff 15 84 5f 07 00    	call   *0x75f84(%rip)        # 8bef8 <_GLOBAL_OFFSET_TABLE_+0x9b0>
    15f74:	41 89 c6             	mov    %eax,%r14d
    15f77:	0f b6 44 24 20       	movzbl 0x20(%rsp),%eax
    15f7c:	31 ff                	xor    %edi,%edi
    15f7e:	41 3a 45 08          	cmp    0x8(%r13),%al
    15f82:	40 0f 94 c7          	sete   %dil
-   15f86:	ff 15 7c 5d 07 00    	call   *0x75d7c(%rip)        # 8bd08 <_GLOBAL_OFFSET_TABLE_+0x7c0>
+   15f86:	ff 15 6c 5f 07 00    	call   *0x75f6c(%rip)        # 8bef8 <_GLOBAL_OFFSET_TABLE_+0x9b0>
    15f8c:	88 44 24 0b          	mov    %al,0xb(%rsp)
    15f90:	0f b6 44 24 21       	movzbl 0x21(%rsp),%eax
    15f95:	31 ff                	xor    %edi,%edi
    15f97:	41 3a 45 09          	cmp    0x9(%r13),%al
    15f9b:	40 0f 94 c7          	sete   %dil
-   15f9f:	ff 15 63 5d 07 00    	call   *0x75d63(%rip)        # 8bd08 <_GLOBAL_OFFSET_TABLE_+0x7c0>
+   15f9f:	ff 15 53 5f 07 00    	call   *0x75f53(%rip)        # 8bef8 <_GLOBAL_OFFSET_TABLE_+0x9b0>
    15fa5:	88 44 24 0a          	mov    %al,0xa(%rsp)
    15fa9:	0f b6 44 24 22       	movzbl 0x22(%rsp),%eax
    15fae:	31 ff                	xor    %edi,%edi
    15fb0:	41 3a 45 0a          	cmp    0xa(%r13),%al
    15fb4:	40 0f 94 c7          	sete   %dil
-   15fb8:	ff 15 4a 5d 07 00    	call   *0x75d4a(%rip)        # 8bd08 <_GLOBAL_OFFSET_TABLE_+0x7c0>
+   15fb8:	ff 15 3a 5f 07 00    	call   *0x75f3a(%rip)        # 8bef8 <_GLOBAL_OFFSET_TABLE_+0x9b0>
    15fbe:	88 44 24 09          	mov    %al,0x9(%rsp)
    15fc2:	0f b6 44 24 23       	movzbl 0x23(%rsp),%eax
    15fc7:	31 ff                	xor    %edi,%edi
    15fc9:	41 3a 45 0b          	cmp    0xb(%r13),%al
    15fcd:	40 0f 94 c7          	sete   %dil
-   15fd1:	ff 15 31 5d 07 00    	call   *0x75d31(%rip)        # 8bd08 <_GLOBAL_OFFSET_TABLE_+0x7c0>
+   15fd1:	ff 15 21 5f 07 00    	call   *0x75f21(%rip)        # 8bef8 <_GLOBAL_OFFSET_TABLE_+0x9b0>
    15fd7:	41 89 c4             	mov    %eax,%r12d
    15fda:	0f b6 44 24 24       	movzbl 0x24(%rsp),%eax
    15fdf:	31 ff                	xor    %edi,%edi
    15fe1:	41 3a 45 0c          	cmp    0xc(%r13),%al
    15fe5:	40 0f 94 c7          	sete   %dil
-   15fe9:	ff 15 19 5d 07 00    	call   *0x75d19(%rip)        # 8bd08 <_GLOBAL_OFFSET_TABLE_+0x7c0>
+   15fe9:	ff 15 09 5f 07 00    	call   *0x75f09(%rip)        # 8bef8 <_GLOBAL_OFFSET_TABLE_+0x9b0>
    15fef:	88 44 24 08          	mov    %al,0x8(%rsp)
    15ff3:	0f b6 44 24 25       	movzbl 0x25(%rsp),%eax
    15ff8:	31 ff                	xor    %edi,%edi
    15ffa:	41 3a 45 0d          	cmp    0xd(%r13),%al
    15ffe:	40 0f 94 c7          	sete   %dil
-   16002:	ff 15 00 5d 07 00    	call   *0x75d00(%rip)        # 8bd08 <_GLOBAL_OFFSET_TABLE_+0x7c0>
+   16002:	ff 15 f0 5e 07 00    	call   *0x75ef0(%rip)        # 8bef8 <_GLOBAL_OFFSET_TABLE_+0x9b0>
    16008:	88 44 24 07          	mov    %al,0x7(%rsp)
    1600c:	0f b6 44 24 26       	movzbl 0x26(%rsp),%eax
    16011:	31 ff                	xor    %edi,%edi
    16013:	41 3a 45 0e          	cmp    0xe(%r13),%al
    16017:	40 0f 94 c7          	sete   %dil
-   1601b:	ff 15 e7 5c 07 00    	call   *0x75ce7(%rip)        # 8bd08 <_GLOBAL_OFFSET_TABLE_+0x7c0>
+   1601b:	ff 15 d7 5e 07 00    	call   *0x75ed7(%rip)        # 8bef8 <_GLOBAL_OFFSET_TABLE_+0x9b0>
    16021:	88 44 24 06          	mov    %al,0x6(%rsp)
    16025:	0f b6 44 24 27       	movzbl 0x27(%rsp),%eax
    1602a:	31 ff                	xor    %edi,%edi
    1602c:	41 3a 45 0f          	cmp    0xf(%r13),%al
    16030:	40 0f 94 c7          	sete   %dil
-   16034:	ff 15 ce 5c 07 00    	call   *0x75cce(%rip)        # 8bd08 <_GLOBAL_OFFSET_TABLE_+0x7c0>
+   16034:	ff 15 be 5e 07 00    	call   *0x75ebe(%rip)        # 8bef8 <_GLOBAL_OFFSET_TABLE_+0x9b0>
    1603a:	0f b6 4c 24 10       	movzbl 0x10(%rsp),%ecx
    1603f:	22 4c 24 38          	and    0x38(%rsp),%cl
    16043:	0f b6 54 24 0f       	movzbl 0xf(%rsp),%edx
@@ -405,7 +405,7 @@ Disassembly of section .text:
    1607f:	45 20 f4             	and    %r14b,%r12b
    16082:	41 80 e4 01          	and    $0x1,%r12b
    16086:	41 0f b6 fc          	movzbl %r12b,%edi
-   1608a:	ff 15 78 5c 07 00    	call   *0x75c78(%rip)        # 8bd08 <_GLOBAL_OFFSET_TABLE_+0x7c0>
+   1608a:	ff 15 68 5e 07 00    	call   *0x75e68(%rip)        # 8bef8 <_GLOBAL_OFFSET_TABLE_+0x9b0>
    16090:	48 8b 54 24 28       	mov    0x28(%rsp),%rdx
    16095:	84 c0                	test   %al,%al
    16097:	b0 01                	mov    $0x1,%al
@@ -523,7 +523,7 @@ Disassembly of section .text:
    13f35:	50                   	push   %rax
    13f36:	48 89 fb             	mov    %rdi,%rbx
    13f39:	48 83 c6 20          	add    $0x20,%rsi
-   13f3d:	ff 15 95 7c 07 00    	call   *0x77c95(%rip)        # 8bbd8 <_GLOBAL_OFFSET_TABLE_+0x690>
+   13f3d:	ff 15 8d 7c 07 00    	call   *0x77c8d(%rip)        # 8bbd0 <_GLOBAL_OFFSET_TABLE_+0x688>
    13f43:	48 89 d8             	mov    %rbx,%rax
    13f46:	48 83 c4 08          	add    $0x8,%rsp
    13f4a:	5b                   	pop    %rbx
@@ -559,7 +559,7 @@ Disassembly of section .text:
    13f9a:	41 52                	push   %r10
    13f9c:	6a 20                	push   $0x20
    13f9e:	41 56                	push   %r14
-   13fa0:	ff 15 7a 76 07 00    	call   *0x7767a(%rip)        # 8b620 <_GLOBAL_OFFSET_TABLE_+0xd8>
+   13fa0:	ff 15 aa 7a 07 00    	call   *0x77aaa(%rip)        # 8ba50 <_GLOBAL_OFFSET_TABLE_+0x508>
    13fa6:	48 83 c4 20          	add    $0x20,%rsp
    13faa:	80 7d b8 00          	cmpb   $0x0,-0x48(%rbp)
    13fae:	74 23                	je     13fd3 <star_core::serv::enclave::Enclave::issue_token+0x83>
@@ -583,7 +583,7 @@ Disassembly of section .text:
    13fe3:	4c 89 ee             	mov    %r13,%rsi
    13fe6:	4c 89 fa             	mov    %r15,%rdx
    13fe9:	4d 89 e0             	mov    %r12,%r8
-   13fec:	ff 15 56 7d 07 00    	call   *0x77d56(%rip)        # 8bd48 <_GLOBAL_OFFSET_TABLE_+0x800>
+   13fec:	ff 15 be 78 07 00    	call   *0x778be(%rip)        # 8b8b0 <_GLOBAL_OFFSET_TABLE_+0x368>
    13ff2:	48 8b 45 b0          	mov    -0x50(%rbp),%rax
    13ff6:	48 89 43 10          	mov    %rax,0x10(%rbx)
    13ffa:	0f 10 45 a0          	movups -0x60(%rbp),%xmm0
@@ -622,7 +622,7 @@ Disassembly of section .text:
    14060:	48 89 fb             	mov    %rdi,%rbx
    14063:	48 89 d7             	mov    %rdx,%rdi
    14066:	48 89 ce             	mov    %rcx,%rsi
-   14069:	ff 15 21 79 07 00    	call   *0x77921(%rip)        # 8b990 <_GLOBAL_OFFSET_TABLE_+0x448>
+   14069:	ff 15 29 7d 07 00    	call   *0x77d29(%rip)        # 8bd98 <_GLOBAL_OFFSET_TABLE_+0x850>
    1406f:	49 83 fd 50          	cmp    $0x50,%r13
    14073:	0f 82 58 01 00 00    	jb     141d1 <star_core::serv::enclave::Enclave::issue_token_plain+0x191>
    14079:	41 0f 10 46 20       	movups 0x20(%r14),%xmm0
@@ -646,7 +646,7 @@ Disassembly of section .text:
    140e0:	4c 89 ee             	mov    %r13,%rsi
    140e3:	48 89 c2             	mov    %rax,%rdx
    140e6:	4c 89 f9             	mov    %r15,%rcx
-   140e9:	ff 15 d1 7a 07 00    	call   *0x77ad1(%rip)        # 8bbc0 <_GLOBAL_OFFSET_TABLE_+0x678>
+   140e9:	ff 15 81 7b 07 00    	call   *0x77b81(%rip)        # 8bc70 <_GLOBAL_OFFSET_TABLE_+0x728>
    140ef:	84 c0                	test   %al,%al
    140f1:	0f 84 da 00 00 00    	je     141d1 <star_core::serv::enclave::Enclave::issue_token_plain+0x191>
    140f7:	41 0f 10 06          	movups (%r14),%xmm0
@@ -655,9 +655,9 @@ Disassembly of section .text:
    14104:	0f 11 45 98          	movups %xmm0,-0x68(%rbp)
    14108:	0f 57 c0             	xorps  %xmm0,%xmm0
    1410b:	0f 11 45 b8          	movups %xmm0,-0x48(%rbp)
-   1410f:	0f 10 05 8a 9c 05 00 	movups 0x59c8a(%rip),%xmm0        # 6dda0 <anon.57f4a26d4dfa8d9678f6c3284567b9e1.27.llvm.14511878135968562817>
+   1410f:	0f 10 05 da 9b 05 00 	movups 0x59bda(%rip),%xmm0        # 6dcf0 <anon.00704b412267c1267c12de2e23d17fea.27.llvm.9555459426655653838>
    14116:	0f 29 85 60 ff ff ff 	movaps %xmm0,-0xa0(%rbp)
-   1411d:	0f 10 05 8c 9c 05 00 	movups 0x59c8c(%rip),%xmm0        # 6ddb0 <anon.57f4a26d4dfa8d9678f6c3284567b9e1.27.llvm.14511878135968562817+0x10>
+   1411d:	0f 10 05 dc 9b 05 00 	movups 0x59bdc(%rip),%xmm0        # 6dd00 <anon.00704b412267c1267c12de2e23d17fea.27.llvm.9555459426655653838+0x10>
    14124:	0f 29 85 70 ff ff ff 	movaps %xmm0,-0x90(%rbp)
    1412b:	48 c7 45 80 00 00 00 	movq   $0x0,-0x80(%rbp)
    14132:	00 
@@ -691,10 +691,10 @@ Disassembly of section .text:
    141c5:	0f 10 85 60 ff ff ff 	movups -0xa0(%rbp),%xmm0
    141cc:	0f 11 03             	movups %xmm0,(%rbx)
    141cf:	eb 31                	jmp    14202 <star_core::serv::enclave::Enclave::issue_token_plain+0x1c2>
-   141d1:	ff 15 29 7b 07 00    	call   *0x77b29(%rip)        # 8bd00 <_GLOBAL_OFFSET_TABLE_+0x7b8>
+   141d1:	ff 15 39 7b 07 00    	call   *0x77b39(%rip)        # 8bd10 <_GLOBAL_OFFSET_TABLE_+0x7c8>
    141d7:	bf 01 00 00 00       	mov    $0x1,%edi
    141dc:	be 01 00 00 00       	mov    $0x1,%esi
-   141e1:	ff 15 d1 7b 07 00    	call   *0x77bd1(%rip)        # 8bdb8 <_GLOBAL_OFFSET_TABLE_+0x870>
+   141e1:	ff 15 e1 7b 07 00    	call   *0x77be1(%rip)        # 8bdc8 <_GLOBAL_OFFSET_TABLE_+0x880>
    141e7:	48 85 c0             	test   %rax,%rax
    141ea:	74 2b                	je     14217 <star_core::serv::enclave::Enclave::issue_token_plain+0x1d7>
    141ec:	c6 00 00             	movb   $0x0,(%rax)
@@ -713,7 +713,7 @@ Disassembly of section .text:
    14216:	c3                   	ret
    14217:	bf 01 00 00 00       	mov    $0x1,%edi
    1421c:	be 01 00 00 00       	mov    $0x1,%esi
-   14221:	ff 15 41 76 07 00    	call   *0x77641(%rip)        # 8b868 <_GLOBAL_OFFSET_TABLE_+0x320>
+   14221:	ff 15 39 76 07 00    	call   *0x77639(%rip)        # 8b860 <_GLOBAL_OFFSET_TABLE_+0x318>
    14227:	48 89 c3             	mov    %rax,%rbx
    1422a:	48 8b b5 60 ff ff ff 	mov    -0xa0(%rbp),%rsi
    14231:	48 85 f6             	test   %rsi,%rsi
@@ -737,7 +737,7 @@ Disassembly of section .text:
    14269:	48 8d bd 60 ff ff ff 	lea    -0xa0(%rbp),%rdi
    14270:	ba 20 00 00 00       	mov    $0x20,%edx
    14275:	48 89 ce             	mov    %rcx,%rsi
-   14278:	ff 15 ba 7a 07 00    	call   *0x77aba(%rip)        # 8bd38 <_GLOBAL_OFFSET_TABLE_+0x7f0>
+   14278:	ff 15 c2 7a 07 00    	call   *0x77ac2(%rip)        # 8bd40 <_GLOBAL_OFFSET_TABLE_+0x7f8>
    1427e:	80 bd 60 ff ff ff 00 	cmpb   $0x0,-0xa0(%rbp)
    14285:	74 2b                	je     142b2 <star_core::serv::enclave::Enclave::new+0x62>
    14287:	48 8b 85 78 ff ff ff 	mov    -0x88(%rbp),%rax
@@ -754,7 +754,7 @@ Disassembly of section .text:
    142c4:	0f 29 4d d0          	movaps %xmm1,-0x30(%rbp)
    142c8:	48 8d bd 00 ff ff ff 	lea    -0x100(%rbp),%rdi
    142cf:	48 8d 75 c0          	lea    -0x40(%rbp),%rsi
-   142d3:	ff 15 27 79 07 00    	call   *0x77927(%rip)        # 8bc00 <_GLOBAL_OFFSET_TABLE_+0x6b8>
+   142d3:	ff 15 1f 79 07 00    	call   *0x7791f(%rip)        # 8bbf8 <_GLOBAL_OFFSET_TABLE_+0x6b0>
    142d9:	0f 28 45 c0          	movaps -0x40(%rbp),%xmm0
    142dd:	0f 28 4d d0          	movaps -0x30(%rbp),%xmm1
    142e1:	0f 29 8d 30 ff ff ff 	movaps %xmm1,-0xd0(%rbp)

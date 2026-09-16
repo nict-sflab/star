@@ -1,9 +1,7 @@
-mod key_manager;
 #[path = "../../protocol.rs"]
 mod protocol;
 mod sgx;
 
-pub use key_manager::KeyManagerRuntime;
 pub use sgx::EnclaveError;
 use std::fs;
 use std::io;
@@ -12,7 +10,7 @@ use std::path::PathBuf;
 use key_manager_client::ENCLAVE_PUBLIC_KEY_LEN;
 
 use crate::protocol::{ATTEST, EXPORT_KEYS, INIT, PUBLIC_KEY};
-use crate::sgx::{CommandRuntime, EnclaveError, build_sgxs};
+use crate::sgx::{CommandRuntime, build_sgxs};
 
 const STAR_KEY_MANAGER_SGXS: &str = "STAR_KEY_MANAGER_SGXS";
 const STAR_KEY_MANAGER_HEAP_SIZE: &str = "STAR_KEY_MANAGER_HEAP_SIZE";

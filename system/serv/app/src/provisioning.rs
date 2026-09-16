@@ -4,7 +4,7 @@ use key_manager_service::KeyManagerRuntime;
 use std::error::Error;
 
 use crate::enclave::{EnclaveError, EnclaveRuntime, EnclaveRuntimes};
-use star_attestation::dcap;
+use star_attestation::Evidence;
 
 const FILTER_ENCLAVE_POOL_SIZE: u8 = 10;
 
@@ -33,8 +33,7 @@ impl ProvisionedEnclaves {
         let issue_quote = issue_enclave.transfer_key_attestation()?;
         let filter_export = key_manager.export_keys_for_recipient_quote(&filter_quote)?;
         let issue_export = key_manager.export_keys_for_recipient_quote(&issue_quote)?;
-        let key_manager_evidence =
-            dcap::raw_evidence_for_verifier(&key_manager_quote).map_err(EnclaveError::Dcap)?;
+        let key_manager_evidence = evidence_for_verifier(&key_manager_quote)?;
 
         filter_enclave.install_keys(&key_manager_evidence, &filter_export.envelope)?;
         issue_enclave.install_keys(&key_manager_evidence, &issue_export.envelope)?;
@@ -137,10 +136,8 @@ fn install_keys_remotely(
 ) -> Result<(), Box<dyn Error>> {
     let key_manager_quote = key_manager.public_key_attestation()?;
     let recipient_quote = recipient.transfer_key_attestation()?;
-    let recipient_evidence =
-        dcap::raw_evidence_for_verifier(&recipient_quote).map_err(EnclaveError::Dcap)?;
-    let key_manager_evidence =
-        dcap::raw_evidence_for_verifier(&key_manager_quote).map_err(EnclaveError::Dcap)?;
+    let recipient_evidence = evidence_for_verifier(&recipient_quote)?;
+    let key_manager_evidence = evidence_for_verifier(&key_manager_quote)?;
     let keys = key_manager.export_keys(&recipient_evidence)?;
 
     recipient.install_keys(&key_manager_evidence, &keys)?;
@@ -150,4 +147,13 @@ fn install_keys_remotely(
 pub fn benchmark_key_bundle() -> Result<Vec<u8>, Box<dyn Error>> {
     let key_manager = KeyManagerRuntime::from_env_with_sealed_keys(&[])?;
     Ok(key_manager.sealed_keys().to_vec())
+}
+
+fn evidence_for_verifier(quote: &[u8]) -> Result<Vec<u8>, EnclaveError> {
+    let runtime = tokio::runtime::Runtime::new()
+        .map_err(|err| EnclaveError::Dcap(format!("create Tokio runtime: {err}")))?;
+
+    runtime
+        .block_on(Evidence::encode_for_verifier(quote))
+        .map_err(EnclaveError::Dcap)
 }

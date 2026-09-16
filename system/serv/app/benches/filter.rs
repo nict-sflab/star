@@ -9,7 +9,7 @@ use std::{
 use common::star::{BenchFilter, KeyedEnclaves, MAX_COUNT_PER_CREDENTIAL, register_user};
 use criterion::{BatchSize, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use rand_core::OsRng;
-use simple_filter_box::{core::Entry, dashmap::DashMapFilterBox};
+use simple_filter_box::{core::Entry, hashmap::HashMapFilterBox};
 use star_app::{
     KeyManagerRuntime,
     enclave::{EnclaveRuntime, EnclaveRuntimes},
@@ -64,7 +64,7 @@ fn filter_enclave_count() -> u8 {
 
 fn build_filter() -> BenchFilter {
     StarFilter::new(
-        DashMapFilterBox::new(),
+        HashMapFilterBox::new(),
         (0..FIXED_PREFIX_MAX).collect(),
         FIXED_PREFIX_MAX,
         EnclaveRuntimes::from_env(filter_enclave_count()).expect("filter enclave pool"),

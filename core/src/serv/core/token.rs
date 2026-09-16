@@ -1,5 +1,4 @@
 use alloc::vec::Vec;
-use hmac::digest::Update;
 use sha2::Digest;
 
 use crate::serv::core::bytes::{Long, Short};

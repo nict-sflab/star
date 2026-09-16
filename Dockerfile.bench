@@ -1,0 +1,23 @@
+FROM rust:bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    clang cmake libssl-dev openssl pkg-config protobuf-compiler socat zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+RUN rustup target add x86_64-fortanix-unknown-sgx \
+    && cargo install fortanix-sgx-tools --locked
+
+WORKDIR /workspace
+COPY star /workspace/star
+COPY constant-time-utils /workspace/constant-time-utils
+COPY timecop-rs /workspace/timecop-rs
+COPY simple-filter-box /workspace/simple-filter-box
+
+WORKDIR /workspace/star
+ENV AESM_PROXY=127.0.0.1:5555 \
+    PCCS_URL=https://pccs.phala.network \
+    STAR_ALLOW_DEBUG_ENCLAVES=1 \
+    STAR_ALLOW_ADVISORY_ENCLAVES=1 \
+    STAR_TRUST_SAME_SIGNER_ENCLAVES=1 \
+    CARGO_TARGET_X86_64_FORTANIX_UNKNOWN_SGX_RUNNER=ftxsgx-runner-cargo
+
+RUN cd system/serv/app/examples && bash ./keygen.sh
