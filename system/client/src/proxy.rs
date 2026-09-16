@@ -27,7 +27,7 @@ impl StarReverseProxy {
                 .write_all(CORS_PREFLIGHT_RESPONSE)
                 .await?;
             (&mut **downstream).flush().await?;
-            (&mut **downstream).shutdown().await?;
+            (&mut **downstream).shutdown().await;
             return Ok(());
         }
 
