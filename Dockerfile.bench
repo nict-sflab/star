@@ -13,8 +13,7 @@ COPY timecop-rs /workspace/timecop-rs
 COPY simple-filter-box /workspace/simple-filter-box
 
 WORKDIR /workspace/star
-ENV AESM_PROXY=127.0.0.1:5555 \
-    PCCS_URL=https://pccs.phala.network \
+ENV PCCS_URL=https://pccs.phala.network \
     STAR_ALLOW_DEBUG_ENCLAVES=1 \
     STAR_ALLOW_ADVISORY_ENCLAVES=1 \
     STAR_TRUST_SAME_SIGNER_ENCLAVES=1 \

@@ -25,7 +25,5 @@ services:
       STAR_UPSTREAM_SNI: localhost
       STAR_CLIENT_PROXY_LISTEN: 0.0.0.0:18082
       OPENSSL_NO_VENDOR: 1
-      HTTP_PROXY
-      HTTPS_PROXY
     ports:
       - "18082:18082"
