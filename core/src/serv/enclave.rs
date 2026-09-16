@@ -4,7 +4,7 @@ use crate::serv::core::cred::Credential;
 use crate::serv::core::token::Token;
 
 use alloc::vec::Vec;
-use hpke::HpkeError;
+use hpke_ng::HpkeError;
 use rand::RngCore;
 
 #[cfg(feature = "timecop")]
@@ -30,7 +30,7 @@ impl Enclave {
         })
     }
 
-    /// Generate a fresh receiver keypair using curve25519-dalek.
+    /// Generate a fresh receiver keypair using hpke-ng.
     pub fn default<R>(rng: &mut R) -> Self
     where
         R: RngCore,
