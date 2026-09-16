@@ -1,0 +1,14 @@
+FROM rust:bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends libssl-dev pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+COPY star /workspace/star
+COPY constant-time-utils /workspace/constant-time-utils
+COPY timecop-rs /workspace/timecop-rs
+
+WORKDIR /workspace/star/system/client
+RUN cargo build --release
+
+CMD ["./target/release/star-client-proxy"]

@@ -1,0 +1,39 @@
+services:
+  core:
+    build:
+      context: ..
+      dockerfile: star/Dockerfile.bench
+    devices:
+      - /dev/sgx_enclave:/dev/sgx_enclave
+      - /dev/sgx_provision:/dev/sgx_provision
+    volumes:
+      - /run/aesmd/aesm.socket:/run/aesmd/aesm.socket
+    command: >-
+      bash -lc 'socat TCP-LISTEN:5555,fork,reuseaddr UNIX-CONNECT:/run/aesmd/aesm.socket &
+      cargo bench --manifest-path core/Cargo.toml --bench user &&
+      cargo run --manifest-path core/Cargo.toml --bin comm --release &&
+      cargo bench --manifest-path core/Cargo.toml --bench enclave --target x86_64-fortanix-unknown-sgx'
+
+  client:
+    build:
+      context: ..
+      dockerfile: star/Dockerfile.bench
+    command: cargo bench --manifest-path system/client/Cargo.toml
+
+  serv:
+    build:
+      context: ..
+      dockerfile: star/Dockerfile.bench
+    devices:
+      - /dev/sgx_enclave:/dev/sgx_enclave
+      - /dev/sgx_provision:/dev/sgx_provision
+    volumes:
+      - /run/aesmd/aesm.socket:/run/aesmd/aesm.socket
+    command: >-
+      bash -lc 'socat TCP-LISTEN:5555,fork,reuseaddr UNIX-CONNECT:/run/aesmd/aesm.socket &
+      cargo bench --manifest-path system/serv/app/Cargo.toml'
+
+  sidechannel:
+    build:
+      context: ..
+      dockerfile: star/Dockerfile.sidechannel

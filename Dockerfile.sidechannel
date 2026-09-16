@@ -1,0 +1,14 @@
+FROM rust:bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    binutils python3-pip valgrind \
+    && pip3 install --break-system-packages xonsh \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+COPY star /workspace/star
+COPY constant-time-utils /workspace/constant-time-utils
+COPY timecop-rs /workspace/timecop-rs
+
+WORKDIR /workspace/star/core
+CMD ["xonsh", "analysis/run.xonsh"]
