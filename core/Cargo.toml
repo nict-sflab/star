@@ -43,3 +43,6 @@ harness = false
 name = "user"
 path = "benches/users.rs"
 harness = false
+
+[package.metadata.fortanix-sgx]
+threads = 2

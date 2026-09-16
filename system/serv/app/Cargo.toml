@@ -71,3 +71,6 @@ harness = false
 [[bench]]
 name = "call"
 harness = false
+
+[package.metadata.fortanix-sgx]
+threads = 2
