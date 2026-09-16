@@ -6,10 +6,10 @@ services:
     devices:
       - /dev/sgx_enclave:/dev/sgx_enclave
       - /dev/sgx_provision:/dev/sgx_provision
-      - ./bench:/workspace/star/bench
-      - ./core/target/criterion:/workspace/star/core/target/criterion
     volumes:
       - /run/aesmd/aesm.socket:/run/aesmd/aesm.socket
+      - ./bench:/workspace/star/bench
+      - ./core/target/criterion:/workspace/star/core/target/criterion
     command: >-
       bash -c 'socat TCP-LISTEN:5555,fork,reuseaddr UNIX-CONNECT:/run/aesmd/aesm.socket &
       cargo bench --manifest-path core/Cargo.toml --bench user | tee bench/user.log &&
