@@ -11,8 +11,12 @@ libloading = { version = "0.8", optional = true }
 rand = { version = "0.9", optional = true }
 dcap-qvl = { version = "0.4.1", default-features = false, features = ["std", "rustcrypto", "default-x509"], optional = true }
 parity-scale-codec = { version = "3.7", default-features = false, features = ["std"], optional = true }
+
 [features]
 default = ["std"]
 std = ["libloading", "rand"]
 dcap-verify = ["std", "dep:dcap-qvl", "dep:parity-scale-codec"]
 host-dcap = ["dcap-verify", "dcap-qvl/report"]
+
+[target.'cfg(target_env = "sgx")'.dependencies]
+aesm-client = "0.6.2"
