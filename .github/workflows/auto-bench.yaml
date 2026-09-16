@@ -56,8 +56,8 @@ jobs:
             -g "$AZURE_RESOURCE_GROUP" \
             -n "$AZURE_VM_NAME" \
             -- \
-            "cd /home/azureuser/star/star && exec sh .github/workflows/auto-bench.sh"
-
+          "sudo -n -u azureuser -H bash -lc 'cd /home/azureuser/star/star && exec bash .github/workflows/auto-bench.sh'"
+          
       - name: Stop VM
         if: always()
         run: |
