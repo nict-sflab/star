@@ -122,8 +122,8 @@ impl Error for EnclaveError {
 
 impl EnclaveRuntimes {
     pub fn from_env(num: u8) -> Result<Self, EnclaveError> {
-        let runtime = EnclaveRuntime::from_env()?;
         let total = (num as usize).min(enclave_thread_count());
+        let runtime = EnclaveRuntime::from_env_with_workers(total.max(1))?;
 
         Ok(Self {
             runtime,
@@ -172,9 +172,13 @@ pub struct EnclaveRuntime {
 
 impl EnclaveRuntime {
     pub fn from_env() -> Result<Self, EnclaveError> {
+        Self::from_env_with_workers(enclave_thread_count())
+    }
+
+    fn from_env_with_workers(worker_count: usize) -> Result<Self, EnclaveError> {
         let sgxs = default_enclave_sgxs()?;
         let runtime = Self {
-            library: LibraryRuntime::load(&sgxs)?,
+            library: LibraryRuntime::load(&sgxs, worker_count)?,
         };
         runtime.call(OP_INIT, &[])?;
         Ok(runtime)
