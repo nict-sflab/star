@@ -10,8 +10,6 @@ timecop = ["timecop/timecop"]
 [dependencies]
 constant-time-utils = { path = "../../constant-time-utils", default-features = false }
 
-x25519-dalek = { version = "2", default-features = false, features = ["alloc", "precomputed-tables", "zeroize"] }
-curve25519-dalek = { version = "4", default-features = false, features = ["alloc", "precomputed-tables", "zeroize"] }
 hpke-ng = { version = "0.2", default-features = false }
 rand = { version = "0.8", default-features = false, features = ["getrandom"]}
 rand_core = { version = "0.10", default-features = false }
