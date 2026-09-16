@@ -39,10 +39,13 @@ impl Token {
     }
 
     pub fn route(&self, max: u32) -> u32 {
-        let prefix = u32::from_be_bytes(self.token[0..4].try_into().unwrap());
-        let route = prefix % max;
+        let mut rem: u64 = 0;
 
-        route
+        for &byte in &self.token {
+            rem = (rem * 256 + byte as u64) % max as u64;
+        }
+
+        rem as u32
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
