@@ -3,6 +3,8 @@
 import re
 from pathlib import Path
 
+FILE_NAME = "/workspace/star/bench/analysis.s"
+
 cd @(Path(__file__).resolve().parent.parent)
 
 jobs = @.env.get("CARGO_BUILD_JOBS") or $(nproc).strip()
@@ -15,10 +17,11 @@ print(log, end="")
 
 addresses = dict.fromkeys(re.findall(r'at (0x[0-9A-Fa-f]+):', log))
 
-with open("objdump.s", "w") as out:
+
+with open(FILE_NAME, "w") as out:
     for a in addresses:
-        f = int(a, 16) - 0x4000000
-        out.write(f"=== A={a} F={f:#x} ===\n")
+    f = int(a, 16) - 0x4000000
+    out.write(f"=== A={a} F={f:#x} ===\n")
         out.write($(objdump -Cd --demangle ./target/release/analysis \
             @("--start-address=" + str(f - 512)) \
             @("--stop-address=" + str(f + 512))))
