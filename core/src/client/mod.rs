@@ -93,7 +93,7 @@ impl User {
         counter: u64,
         period: u64,
         rng: &mut R,
-    ) -> Result<Vec<u8>, hpke::HpkeError>
+    ) -> Result<Vec<u8>, hpke_ng::HpkeError>
     where
         R: CryptoRng + RngCore,
     {

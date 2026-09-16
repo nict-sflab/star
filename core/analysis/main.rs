@@ -1,5 +1,4 @@
 use constant_time_utils::time;
-use hpke::Serializable;
 use rand::{rngs::OsRng, RngCore};
 use star_core::client::User;
 use star_core::secure_channel::{client::SecureChannelClient, server::SecureChannelServer};
@@ -52,30 +51,25 @@ fn main() {
     println!("done");
 }
 
-use hpke::{
-    aead::ChaCha20Poly1305,
-    kdf::HkdfSha384,
-    kem::{Kem as KemTrait, X25519HkdfSha256},
-    Deserializable, HpkeError, OpModeR,
+use hpke_ng::{
+    ChaCha20Poly1305, DhKemX25519HkdfSha256, HkdfSha384, Hpke, HpkeError, Kem,
 };
 
 fn fail1() {
-    type Aead = ChaCha20Poly1305;
-    type Kdf = HkdfSha384;
-    type Kem = X25519HkdfSha256;
+    type KemType = DhKemX25519HkdfSha256;
+    type Suite = Hpke<KemType, HkdfSha384, ChaCha20Poly1305>;
 
     let sk_bytes = [0u8; 32];
     timecop::poison(sk_bytes.as_slice());
 
-    let sk = <X25519HkdfSha256 as hpke::kem::Kem>::PrivateKey::from_bytes(&sk_bytes).unwrap();
+    let sk = KemType::sk_from_bytes(&sk_bytes).unwrap();
 
     let plain = [0u8; 32];
-    let bad_encapped_key =
-        <Kem as KemTrait>::EncappedKey::from_bytes(&plain).expect("bad enc parse failed");
+    let bad_encapped_key = KemType::enc_from_bytes(&plain).expect("bad enc parse failed");
 
     let info = b"ct-test";
 
-    let res = hpke::setup_receiver::<Aead, Kdf, Kem>(&OpModeR::Base, &sk, &bad_encapped_key, info);
+    let res = Suite::setup_receiver_base(&bad_encapped_key, &sk, info);
     assert!(matches!(res, Err(HpkeError::DecapError)));
 }
 
@@ -111,5 +105,5 @@ fn fail2() {
 
     // this is target
     let decrypted_key = receiver.receive_hpke(enc, info, aad, ciphertext);
-    assert!(matches!(decrypted_key, Err(hpke::HpkeError::OpenError)));
+    assert!(matches!(decrypted_key, Err(HpkeError::OpenError)));
 }
