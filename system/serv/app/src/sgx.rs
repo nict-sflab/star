@@ -1,6 +1,8 @@
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::{Arc, Mutex, mpsc};
+use std::thread;
 
 use aesm_client::AesmClient;
 use enclave_runner::{EnclaveBuilder, Library};
@@ -15,15 +17,24 @@ const MAX_PAYLOAD_LEN: usize = 16 * 1024 * 1024;
 const STATUS_OK: u64 = 0;
 const STATUS_BUFFER_TOO_SMALL: u64 = 5;
 
-pub(crate) struct LibraryRuntime {
-    library: Library,
+struct SharedLibrary(Library);
+
+unsafe impl Send for SharedLibrary {}
+unsafe impl Sync for SharedLibrary {}
+
+struct LibraryCall {
+    op: u64,
+    payload: Vec<u8>,
+    initial_capacity: usize,
+    response: mpsc::SyncSender<Result<Vec<u8>, EnclaveError>>,
 }
 
-unsafe impl Send for LibraryRuntime {}
-unsafe impl Sync for LibraryRuntime {}
+pub(crate) struct LibraryRuntime {
+    calls: mpsc::Sender<LibraryCall>,
+}
 
 impl LibraryRuntime {
-    pub(crate) fn load(sgxs: &Path) -> Result<Self, EnclaveError> {
+    pub(crate) fn load(sgxs: &Path, worker_count: usize) -> Result<Self, EnclaveError> {
         let mut device = SgxDevice::new()
             .map_err(EnclaveError::Build)?
             .einittoken_provider(AesmClient::new())
@@ -35,7 +46,20 @@ impl LibraryRuntime {
             .build(&mut device)
             .map_err(|err| EnclaveError::Library(err.to_string()))?;
 
-        Ok(Self { library })
+        let library = Arc::new(SharedLibrary(library));
+        let (calls, receiver) = mpsc::channel::<LibraryCall>();
+        let receiver = Arc::new(Mutex::new(receiver));
+
+        for worker_id in 0..worker_count.max(1) {
+            let library = Arc::clone(&library);
+            let receiver = Arc::clone(&receiver);
+            thread::Builder::new()
+                .name(format!("star-enclave-{worker_id}"))
+                .spawn(move || library_worker(library, receiver))
+                .map_err(EnclaveError::Build)?;
+        }
+
+        Ok(Self { calls })
     }
 
     pub(crate) fn call(
@@ -44,7 +68,42 @@ impl LibraryRuntime {
         payload: &[u8],
         initial_capacity: usize,
     ) -> Result<Vec<u8>, EnclaveError> {
-        call_library(&self.library, op, payload, initial_capacity)
+        let (response, result) = mpsc::sync_channel(1);
+        self.calls
+            .send(LibraryCall {
+                op,
+                payload: payload.to_vec(),
+                initial_capacity,
+                response,
+            })
+            .map_err(|_| EnclaveError::Library("enclave worker pool stopped".to_string()))?;
+
+        result
+            .recv()
+            .map_err(|_| EnclaveError::Library("enclave worker stopped".to_string()))?
+    }
+}
+
+fn library_worker(library: Arc<SharedLibrary>, receiver: Arc<Mutex<mpsc::Receiver<LibraryCall>>>) {
+    loop {
+        let call = {
+            let receiver = match receiver.lock() {
+                Ok(receiver) => receiver,
+                Err(_) => return,
+            };
+            match receiver.recv() {
+                Ok(call) => call,
+                Err(_) => return,
+            }
+        };
+
+        let result = call_library(
+            &library.0,
+            call.op,
+            &call.payload,
+            call.initial_capacity,
+        );
+        let _ = call.response.send(result);
     }
 }
 
