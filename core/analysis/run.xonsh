@@ -22,6 +22,6 @@ with open(FILE_NAME, "w") as out:
     for a in addresses:
     f = int(a, 16) - 0x4000000
     out.write(f"=== A={a} F={f:#x} ===\n")
-        out.write($(objdump -Cd --demangle ./target/release/analysis \
+    out.write($(objdump -Cd --demangle ./target/release/analysis \
             @("--start-address=" + str(f - 512)) \
             @("--stop-address=" + str(f + 512))))
