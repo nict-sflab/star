@@ -28,7 +28,7 @@ services:
       - /run/aesmd/aesm.socket:/run/aesmd/aesm.socket
     command: >-
       bash -c 'socat TCP-LISTEN:5555,fork,reuseaddr UNIX-CONNECT:/run/aesmd/aesm.socket &
-      cargo bench --manifest-path system/serv/app/Cargo.toml -- --discard-baseline --noplot | tee bench/serv2.log'
+      cargo bench --manifest-path system/serv/app/Cargo.toml --benches -- --discard-baseline --noplot | tee bench/serv2.log'
 
   sidechannel:
     build:

@@ -1,7 +1,8 @@
 git checkout main
 
-screenfetch | tee bench/machine.txt
+rm ./bench
 git status | tee bench/durty.txt
+screenfetch | tee bench/machine.txt
 
 git pull
 
