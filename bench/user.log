@@ -1,31 +1,29 @@
 user.latency/request_auth_plain
-                        time:   [41.218 ns 41.298 ns 41.380 ns]
-                        thrpt:  [1.8005 GiB/s 1.8041 GiB/s 1.8076 GiB/s]
+                        time:   [59.661 ns 59.727 ns 59.827 ns]
+                        thrpt:  [1.2453 GiB/s 1.2474 GiB/s 1.2488 GiB/s]
                  change:
-                        time:   [-0.8629% -0.4812% -0.0695%] (p = 0.02 < 0.05)
-                        thrpt:  [+0.0696% +0.4836% +0.8704%]
+                        time:   [-2.5290% -1.4204% -0.5826%] (p = 0.00 < 0.05)
+                        thrpt:  [+0.5860% +1.4409% +2.5946%]
                         Change within noise threshold.
 Found 6 outliers among 100 measurements (6.00%)
-  1 (1.00%) low mild
-  4 (4.00%) high mild
-  1 (1.00%) high severe
-user.latency/encrypt    time:   [62.830 µs 62.848 µs 62.869 µs]
-                        thrpt:  [2.9125 MiB/s 2.9135 MiB/s 2.9143 MiB/s]
+  3 (3.00%) low mild
+  3 (3.00%) high severe
+user.latency/encrypt    time:   [87.630 µs 89.314 µs 92.212 µs]
+                        thrpt:  [1.9857 MiB/s 2.0501 MiB/s 2.0895 MiB/s]
                  change:
-                        time:   [-0.0017% +0.0389% +0.0781%] (p = 0.06 > 0.05)
-                        thrpt:  [-0.0780% -0.0389% +0.0017%]
+                        time:   [-4.4974% -1.5770% +1.0554%] (p = 0.31 > 0.05)
+                        thrpt:  [-1.0444% +1.6023% +4.7091%]
                         No change in performance detected.
-Found 13 outliers among 100 measurements (13.00%)
-  2 (2.00%) low mild
-  4 (4.00%) high mild
-  7 (7.00%) high severe
-user.latency/route      time:   [189.84 ns 189.87 ns 189.90 ns]
-                        thrpt:  [5.2660 Melem/s 5.2668 Melem/s 5.2675 Melem/s]
+Found 11 outliers among 100 measurements (11.00%)
+  3 (3.00%) high mild
+  8 (8.00%) high severe
+user.latency/route      time:   [227.35 ns 227.74 ns 228.27 ns]
+                        thrpt:  [4.3808 Melem/s 4.3909 Melem/s 4.3985 Melem/s]
                  change:
-                        time:   [-0.4194% -0.2885% -0.1978%] (p = 0.00 < 0.05)
-                        thrpt:  [+0.1982% +0.2894% +0.4212%]
-                        Change within noise threshold.
-Found 12 outliers among 100 measurements (12.00%)
-  6 (6.00%) high mild
-  6 (6.00%) high severe
+                        time:   [-0.1115% +0.8832% +1.8235%] (p = 0.09 > 0.05)
+                        thrpt:  [-1.7909% -0.8755% +0.1117%]
+                        No change in performance detected.
+Found 11 outliers among 100 measurements (11.00%)
+  2 (2.00%) high mild
+  9 (9.00%) high severe
 
