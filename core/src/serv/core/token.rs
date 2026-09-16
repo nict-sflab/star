@@ -1,4 +1,6 @@
 use alloc::vec::Vec;
+use hmac::digest::Update;
+use sha2::Digest;
 
 use crate::serv::core::bytes::{Long, Short};
 
@@ -12,14 +14,16 @@ impl Token {
     }
 
     pub fn random(uid: Long, period: Short, cnt: Short) -> Self {
-        use hmac::{Hmac, Mac};
         use sha2::Sha256;
 
-        // calc token ← PRF(cnt||t||uid, sk)
-        let mut prf = Hmac::<Sha256>::new_from_slice(&uid).expect("HMAC can take key of any size");
-        prf.update(&cnt);
-        prf.update(&period);
-        let token: Long = prf.finalize().into_bytes().into();
+        // calc token ← HASH(cnt||t||uid)
+        let mut h = Sha256::new();
+
+        Digest::update(&mut h, cnt);
+        Digest::update(&mut h, period);
+        Digest::update(&mut h, uid);
+
+        let token: Long = h.finalize().into();
 
         Self { token }
     }
