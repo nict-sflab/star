@@ -1,11 +1,12 @@
+rm ./bench/*
+
+git reset
 git checkout main
 
-rm ./bench/*
+git pull
 
 git status | tee bench/durty.txt
 screenfetch | tee bench/machine.txt
-
-git pull
 
 
 COMMIT_ID=$(git rev-parse --short HEAD)
