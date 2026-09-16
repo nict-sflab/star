@@ -1,5 +1,11 @@
 git checkout bench
+
+screenfetch | tee bench/machine.txt
+git diff | tee bench/durty1.txt
+git status | tee bench/durty2.txt
+
 git pull
+
 
 COMMIT_ID=$(git rev-parse --short HEAD)
 
