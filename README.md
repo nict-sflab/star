@@ -1,11 +1,12 @@
 # STAR
-
 STAR: Scalable Anonymous Rate-Limiting with a Server-Side TEE
 
 STAR is an experimental implementation of anonymous rate limiting using a server-side TEE.
 
 It allows a service to enforce per-user access limits without linking authentication requests to the same user. 
 STAR is designed around two security goals: rate-limiting and unlinkability. 
+
+[![Benchmark](https://github.com/nict-sflab/star/actions/workflows/auto-bench.yaml/badge.svg?branch=main)](https://github.com/nict-sflab/star/actions/workflows/auto-bench.yaml)
 
 ## What is included
 
