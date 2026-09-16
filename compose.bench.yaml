@@ -13,7 +13,7 @@ services:
     command: >-
       bash -c 'socat TCP-LISTEN:5555,fork,reuseaddr UNIX-CONNECT:/run/aesmd/aesm.socket &
       cargo bench --manifest-path core/Cargo.toml --bench user | tee bench/user.log &&
-      cargo run --manifest-path core/Cargo.toml --bin comm --release | tee bench/comm.log
+      cargo run --manifest-path core/Cargo.toml --bin comm --release | tee bench/comm.log &&
       cargo bench --manifest-path core/Cargo.toml --bench enclave --target x86_64-fortanix-unknown-sgx | tee bench/serv1.log
       '
 
