@@ -1,4 +1,4 @@
-use std::{collections::HashMap, io, sync::Mutex};
+use std::sync::Mutex;
 
 use simple_filter_box::core::{Entry, FilterBox};
 use star_core::serv::core::token::Token;
@@ -7,7 +7,7 @@ use crate::enclave::EnclaveRuntimes;
 
 
 pub struct StarFilter<T: FilterBox + Send + Sync> {
-    filter: T,
+    filter: Mutex<T>,
     prefixes: Vec<u32>,
     prefix_max: u32,
     enclaves: EnclaveRuntimes,
@@ -24,7 +24,7 @@ pub enum StarFilterErrorStatus {
 impl<T: FilterBox + Send + Sync> StarFilter<T> {
     pub fn new(filter: T, prefixes: Vec<u32>, prefix_max: u32, enclaves: EnclaveRuntimes) -> Self {
         Self {
-            filter,
+            filter: Mutex::new(filter),
             prefixes,
             prefix_max,
             enclaves,
@@ -87,8 +87,12 @@ impl<T: FilterBox + Send + Sync> StarFilter<T> {
             return Err(StarFilterErrorStatus::InvalidRoute);
         }
 
-        if self
+        let mut filter = self
             .filter
+            .lock()
+            .map_err(|_| StarFilterErrorStatus::Internal)?;
+
+        if filter
             .test_and_insert(token)
             .map_err(|_| StarFilterErrorStatus::Internal)?
         {

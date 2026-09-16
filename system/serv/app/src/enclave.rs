@@ -225,9 +225,12 @@ impl EnclaveRuntime {
         manager_evidence: &[u8],
         envelope: &[u8],
     ) -> Result<(), EnclaveError> {
-        let mut payload = Vec::new();
-        star_attestation::append_blob(&mut payload, manager_evidence);
-        star_attestation::append_blob(&mut payload, envelope);
+        let mut payload =
+            Vec::with_capacity(8 + manager_evidence.len() + envelope.len());
+        for blob in [manager_evidence, envelope] {
+            payload.extend_from_slice(&(blob.len() as u32).to_be_bytes());
+            payload.extend_from_slice(blob);
+        }
         self.call(OP_INSTALL_KEYS, &payload)?;
         Ok(())
     }
@@ -244,7 +247,7 @@ impl EnclaveRuntime {
 pub fn report_data_for_public_key(
     public_key: [u8; ENCLAVE_PUBLIC_KEY_LEN],
 ) -> [u8; ATTESTATION_REPORT_DATA_LEN] {
-    star_attestation::report_data_for_public_key(public_key)
+    star_attestation::Quote::report_data_for_public_key(public_key)
 }
 
 fn default_enclave_sgxs() -> Result<PathBuf, EnclaveError> {
