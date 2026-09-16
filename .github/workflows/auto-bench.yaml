@@ -36,8 +36,18 @@ jobs:
             
       - name: Configure SSH known_hosts
         run: |
+          VM_IP=$(az vm show \
+            -g "$AZURE_RESOURCE_GROUP" \
+            -n "$AZURE_VM_NAME" \
+            -d \
+            --query publicIps \
+            -o tsv)
+      
           mkdir -p ~/.ssh
-          echo "${{ vars.AZURE_VM_HOST_KEY }}" >> ~/.ssh/known_hosts
+      
+          echo "$VM_IP ${{ vars.AZURE_VM_HOST_KEY }}" \
+            >> ~/.ssh/known_hosts
+      
           chmod 600 ~/.ssh/known_hosts
             
       - name: Run benchmark
