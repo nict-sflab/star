@@ -44,13 +44,7 @@ impl LibraryRuntime {
         payload: &[u8],
         initial_capacity: usize,
     ) -> Result<Vec<u8>, EnclaveError> {
-        std::thread::scope(|scope| {
-            let handle = scope.spawn(|| call_library(&self.library, op, payload, initial_capacity));
-            match handle.join() {
-                Ok(result) => result,
-                Err(panic) => std::panic::resume_unwind(panic),
-            }
-        })
+        call_library(&self.library, op, payload, initial_capacity)
     }
 }
 
