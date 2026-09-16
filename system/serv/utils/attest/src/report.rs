@@ -7,6 +7,7 @@ use crate::{
 
 const QUOTE_HEADER_LEN: usize = 48;
 const SGX_REPORT_BODY_LEN: usize = 384;
+const QUOTE_V3: u16 = 3;
 const QUOTE_V5: u16 = 5;
 const QUOTE_V5_BODY_TYPE_OFFSET: usize = 48;
 const QUOTE_V5_BODY_SIZE_OFFSET: usize = 50;
@@ -27,6 +28,13 @@ pub(crate) fn sgx_report_body_offset(quote: &[u8]) -> Result<usize> {
     }
 
     let report_body_offset = match version {
+        QUOTE_V3 => {
+            let tee_type = read_u32_le(quote, 4)?;
+            if tee_type != TEE_TYPE_SGX {
+                return Err("quote is not for SGX".into());
+            }
+            QUOTE_HEADER_LEN
+        }
         QUOTE_V5 => {
             let tee_type = read_u32_le(quote, 4)?;
             if tee_type != TEE_TYPE_SGX {
