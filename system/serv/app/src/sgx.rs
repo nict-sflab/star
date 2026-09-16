@@ -16,6 +16,7 @@ pub(crate) const SGX_TARGET: &str = "x86_64-fortanix-unknown-sgx";
 const MAX_PAYLOAD_LEN: usize = 16 * 1024 * 1024;
 const STATUS_OK: u64 = 0;
 const STATUS_BUFFER_TOO_SMALL: u64 = 5;
+const STAR_ENCLAVE_THREADS: &str = "STAR_ENCLAVE_THREADS";
 
 struct SharedLibrary(Library);
 
@@ -34,7 +35,7 @@ pub(crate) struct LibraryRuntime {
 }
 
 impl LibraryRuntime {
-    pub(crate) fn load(sgxs: &Path, worker_count: usize) -> Result<Self, EnclaveError> {
+    pub(crate) fn load(sgxs: &Path) -> Result<Self, EnclaveError> {
         let mut device = SgxDevice::new()
             .map_err(EnclaveError::Build)?
             .einittoken_provider(AesmClient::new())
@@ -50,7 +51,7 @@ impl LibraryRuntime {
         let (calls, receiver) = mpsc::channel::<LibraryCall>();
         let receiver = Arc::new(Mutex::new(receiver));
 
-        for worker_id in 0..worker_count.max(1) {
+        for worker_id in 0..enclave_worker_count() {
             let library = Arc::clone(&library);
             let receiver = Arc::clone(&receiver);
             thread::Builder::new()
@@ -82,6 +83,18 @@ impl LibraryRuntime {
             .recv()
             .map_err(|_| EnclaveError::Library("enclave worker stopped".to_string()))?
     }
+}
+
+fn enclave_worker_count() -> usize {
+    std::env::var(STAR_ENCLAVE_THREADS)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|threads| threads.get())
+                .unwrap_or(1)
+        })
 }
 
 fn library_worker(library: Arc<SharedLibrary>, receiver: Arc<Mutex<mpsc::Receiver<LibraryCall>>>) {
