@@ -1,4 +1,4 @@
-git checkout bench
+git checkout main
 
 screenfetch | tee bench/machine.txt
 git status | tee bench/durty.txt
