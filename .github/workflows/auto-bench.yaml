@@ -49,3 +49,12 @@ jobs:
             -g "$AZURE_RESOURCE_GROUP" \
             -n "$AZURE_VM_NAME" \
             --no-wait
+  
+      - name: Send webhook
+        if: always()
+        run: |
+          ACTION_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          curl -X POST \
+            -H 'Content-Type: application/json' \
+            --data "{\"text\":\"$ACTION_URL\"}" \
+            "${{ secrets.WEBHOOK_URL }}"
