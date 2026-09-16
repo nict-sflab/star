@@ -2,4 +2,4 @@
 rustflags = ['--cfg', 'getrandom_backend="linux_raw"']
 
 [target.x86_64-fortanix-unknown-sgx]
-rustflags = ['--cfg', 'getrandom_backend="rdrand"', '-C', 'target-feature=+rdrand,+avx2']
+rustflags = ['--cfg', 'getrandom_backend="rdrand"', '-C', 'target-feature=+rdrand,+avx2,+bmi2,+adx,+sha']
