@@ -9,40 +9,32 @@ services:
         - ./sgx_default_qcnl.conf:/etc/sgx_default_qcnl.conf:ro
 
   ecdaa-rs:
-    image: nixos/nix:latest
+    build:
+      context: ..
+      dockerfile: star/Dockerfile.bench
     volumes:
-      - ./bench:/bench
-    command:
-      - nix-shell
-      - -p
-      - git
-      - cargo
-      - coreutils
-      - --command
-      - >
-        set -euo pipefail;
-        rm -rf /tmp/ecdaa-rs;
-        git clone --depth 1 https://github.com/akakou/ecdaa-rs /tmp/ecdaa-rs;
-        cd /tmp/ecdaa-rs;
-        cargo bench 2>&1 | tee /bench/ecdaa-rs.log
+      - ./bench:/workspace/star/bench
+    command: >
+      bash -o pipefail -c '
+        rm -rf /tmp/ecdaa-rs &&
+        git clone --depth 1 https://github.com/akakou/ecdaa-rs /tmp/ecdaa-rs &&
+        cd /tmp/ecdaa-rs &&
+        cargo bench 2>&1 | tee /workspace/star/bench/ecdaa-rs.log
+      '
 
   arc:
-    image: nixos/nix:latest
+    build:
+      context: ..
+      dockerfile: star/Dockerfile.bench
     volumes:
-      - ./bench:/bench
-    command:
-      - nix-shell
-      - -p
-      - git
-      - cargo
-      - coreutils
-      - --command
-      - >
-        set -euo pipefail;
-        rm -rf /tmp/arc;
-        git clone --depth 1 https://github.com/cloudflareresearch/arc.git /tmp/arc;
-        cd /tmp/arc;
-        cargo bench --features suite_ristretto255 --bench arc_bench -- arc 2>&1 | tee /bench/arc.log
+      - ./bench:/workspace/star/bench
+    command: >
+      bash -o pipefail -c '
+        rm -rf /tmp/arc &&
+        git clone --depth 1 https://github.com/cloudflareresearch/arc.git /tmp/arc &&
+        cd /tmp/arc &&
+        cargo bench --features suite_ristretto255 --bench arc_bench -- arc 2>&1 | tee /workspace/star/bench/arc.log
+      '
 
   core:
     build:
