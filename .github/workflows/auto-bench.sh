@@ -8,17 +8,9 @@ git pull
 git status | tee bench/durty.txt
 screenfetch | tee bench/machine.txt
 
-git clone http://github.com/akakou/ecdaa-rs
-cd ecdaa-rs
-nix-shell -p cargo --command "cargo bench"
-cd ..
-
-git clone https://github.com/cloudflareresearch/arc.git
-cd arc
-nix-shell -p cargo --command "cargo bench --features suite_ristretto255 --bench arc_bench -- arc"
-cd ..
-
 echo "bench mark testing ..."
+sudo docker compose -f compose.bench.yaml up ecdaa-rs --exit-code-from ecdaa-rs
+sudo docker compose -f compose.bench.yaml up arc --exit-code-from arc
 sudo docker compose -f compose.bench.yaml up --build core
 sudo docker compose -f compose.bench.yaml up --build serv --exit-code-from serv
 sudo docker compose -f compose.bench.yaml up --build sidechannel
