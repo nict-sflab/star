@@ -22,7 +22,7 @@ use star_app::tls::STAR_TLS_EXTENSION_TYPE;
 
 const TLS_CERT_RELATIVE_PATH: &str = "examples/certs/server.crt";
 const TLS_KEY_RELATIVE_PATH: &str = "examples/certs/server.key";
-const SCALE_OUT_SERVER_COUNTS: &[u32] = &[1, 2, 4];
+const SCALE_OUT_SERVER_COUNTS: &[u32] = &[1, 2, 4, 8, 16];
 const SCALE_OUT_OPS_PER_SERVER: u64 = 64;
 
 unsafe extern "C" {
