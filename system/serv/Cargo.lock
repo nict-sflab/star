@@ -4892,7 +4892,6 @@ dependencies = [
  "env_logger",
  "fast-rust-sgx-caller",
  "foreign-types",
- "fortanix-sgx-abi",
  "key-manager-client",
  "key-manager-service",
  "libloading 0.8.9",

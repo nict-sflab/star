@@ -1,41 +1,35 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Condvar, Mutex, RwLock};
+use std::sync::Mutex;
 
 use aesm_client::AesmClient;
 use enclave_runner::{EnclaveBuilder, Library};
 use enclave_runner_sgx::EnclaveBuilder as SgxEnclaveBuilder;
-use fast_rust_sgx_caller::{Caller, Usercall, default_usercall};
+use fast_rust_sgx_caller::Caller;
 use sgx_isa::{Attributes, Miscselect, Sigstruct};
-use sgxs::loader::{Load, Mapping, Tcs as _};
+use sgxs::loader::{Load, Mapping};
 use sgxs::sgxs::SgxsRead;
 use sgxs_loaders::{Tcs, isgx::Device as SgxDevice};
 
 use crate::enclave::EnclaveError;
 
-mod events;
-use events::Events;
-
 pub(crate) const SGX_TARGET: &str = "x86_64-fortanix-unknown-sgx";
-
 const MAX_PAYLOAD_LEN: usize = 16 * 1024 * 1024;
 const STATUS_OK: u64 = 0;
 const STATUS_BUFFER_TOO_SMALL: u64 = 5;
 
 struct SharedLibrary(Library);
 
-// The official SGX library captures an Arc<EnclaveState>; calls are additionally
-// serialized by `gate`. Library's erased closure does not expose Send/Sync.
+// The SGX runner captures an Arc<EnclaveState>, but its erased closure does
+// not expose Send/Sync. The runtime mutex serializes every enclave entry.
 unsafe impl Send for SharedLibrary {}
 unsafe impl Sync for SharedLibrary {}
 
-// Keep the official builder's signature, attributes and launch-token handling.
-// Give it one TCS for provisioning/I/O and retain the others for direct entry.
+// Retain the official builder's signature and launch-token handling. Both
+// callers enter the same mapping, with a separate TCS for provisioning I/O.
 struct SplitLoader<'a> {
     device: SgxDevice,
-    callers: &'a mut Vec<(usize, Caller<Tcs>)>,
-    worker_count: usize,
+    caller: &'a mut Option<Caller<Tcs>>,
 }
 
 impl Load for SplitLoader<'_> {
@@ -54,13 +48,10 @@ impl Load for SplitLoader<'_> {
             .load(reader, signature, attributes, miscselect)?;
         anyhow::ensure!(
             mapping.tcss.len() >= 2,
-            "STAR needs at least two TCSes: one for provisioning and one for direct calls; rebuild the .sgxs image"
+            "STAR needs two TCSes: one for provisioning and one for direct calls; rebuild the .sgxs image"
         );
         let provisioning = mapping.tcss.pop().unwrap();
-        for tcs in mapping.tcss.into_iter().take(self.worker_count.max(1)) {
-            self.callers
-                .push((tcs.address() as usize, Caller::new(tcs)?));
-        }
+        *self.caller = Some(Caller::new(mapping.tcss.pop().unwrap())?);
         Ok(Mapping {
             info: mapping.info,
             tcss: vec![provisioning],
@@ -69,175 +60,105 @@ impl Load for SplitLoader<'_> {
 }
 
 pub(crate) struct LibraryRuntime {
+    state: Mutex<LibraryState>,
+}
+
+struct LibraryState {
     library: SharedLibrary,
-    // Provisioning must not overlap direct calls: its runner has separate
-    // usercall services, and its writes must not contend with enclave readers.
-    gate: RwLock<()>,
-    callers: Mutex<Vec<(usize, Caller<Tcs>)>>,
-    available: Condvar,
-    stopped: AtomicBool,
-    events: Events,
-}
-
-// Return a TCS even when response decoding fails. If entry fails or unwinds,
-// stop the entire enclave and wake both pool waiters and usercall waiters.
-struct CallerLease<'a> {
-    runtime: &'a LibraryRuntime,
-    caller: Option<(usize, Caller<Tcs>)>,
-    healthy: bool,
-}
-
-impl Drop for CallerLease<'_> {
-    fn drop(&mut self) {
-        if !self.healthy {
-            self.runtime.stop();
-        }
-        let mut callers = self
-            .runtime
-            .callers
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        callers.push(self.caller.take().unwrap());
-        self.runtime.available.notify_one();
-    }
+    caller: Caller<Tcs>,
+    stopped: bool,
 }
 
 impl LibraryRuntime {
-    pub(crate) fn load(sgxs: &Path, worker_count: usize) -> Result<Self, EnclaveError> {
+    pub(crate) fn load(sgxs: &Path) -> Result<Self, EnclaveError> {
         let device = SgxDevice::new()
             .map_err(EnclaveError::Build)?
             .einittoken_provider(AesmClient::new())
             .build();
-        let mut callers = Vec::new();
+        let mut caller = None;
         let mut loader = SplitLoader {
             device,
-            callers: &mut callers,
-            worker_count,
+            caller: &mut caller,
         };
         let library = EnclaveBuilder::new(SgxEnclaveBuilder::new(sgxs))
             .build(&mut loader)
             .map_err(|err| EnclaveError::Library(err.to_string()))?;
-        let events = Events::new(callers.iter().map(|(address, _)| *address));
         Ok(Self {
-            library: SharedLibrary(library),
-            gate: RwLock::new(()),
-            callers: Mutex::new(callers),
-            available: Condvar::new(),
-            stopped: AtomicBool::new(false),
-            events,
+            state: Mutex::new(LibraryState {
+                library: SharedLibrary(library),
+                caller: caller.unwrap(),
+                stopped: false,
+            }),
         })
-    }
-
-    fn stop(&self) {
-        // Hold the pool mutex to avoid losing a notification between checking
-        // stopped and sleeping on available.
-        let _callers = self.callers.lock().unwrap_or_else(|e| e.into_inner());
-        self.stopped.store(true, Ordering::Release);
-        self.available.notify_all();
-        self.events.stop();
-    }
-
-    fn check_running(&self) -> Result<(), EnclaveError> {
-        if self.stopped.load(Ordering::Acquire) {
-            Err(EnclaveError::Library(
-                "enclave stopped after a library failure".into(),
-            ))
-        } else {
-            Ok(())
-        }
     }
 
     pub(crate) fn call(
         &self,
         op: u64,
         payload: &[u8],
-        initial_capacity: usize,
+        capacity: usize,
     ) -> Result<Vec<u8>, EnclaveError> {
-        let _gate = self
-            .gate
-            .read()
-            .map_err(|e| EnclaveError::Library(e.to_string()))?;
-        let mut callers = self
-            .callers
-            .lock()
-            .map_err(|e| EnclaveError::Library(e.to_string()))?;
-        let caller = loop {
-            self.check_running()?;
-            if let Some(caller) = callers.pop() {
-                break caller;
-            }
-            callers = self
-                .available
-                .wait(callers)
-                .map_err(|e| EnclaveError::Library(e.to_string()))?;
-        };
-        drop(callers);
-        let mut lease = CallerLease {
-            runtime: self,
-            caller: Some(caller),
-            healthy: true,
-        };
-        call_library(op, payload, initial_capacity, |args| {
-            self.check_running()?;
-            lease.healthy = false;
-            let (address, caller) = lease.caller.as_mut().unwrap();
-            // STAR's entry copies the request, writes only within the supplied
-            // output, and retains no host pointers. Both buffers live through
-            // this synchronous call. Never replay an entry after a usercall error.
-            let result = unsafe {
-                caller.call_with(args, |number, args| {
-                    if self.stopped.load(Ordering::Acquire) {
-                        return Err(fast_rust_sgx_caller::Error::Stopped);
-                    }
-                    if number == Usercall::wait as u64 {
-                        self.events.wait(*address, args[0], args[1])
-                    } else if number == Usercall::send as u64 {
-                        self.events.send(args[0], args[1] as usize)
-                    } else {
-                        default_usercall(number, args)
-                    }
-                })
-            };
-            lease.healthy = result.is_ok();
-            result.map_err(|e| EnclaveError::Library(e.to_string()))
-        })
+        self.invoke(op, payload, capacity, false)
     }
 
     pub(crate) fn call_provisioning(
         &self,
         op: u64,
         payload: &[u8],
-        initial_capacity: usize,
+        capacity: usize,
     ) -> Result<Vec<u8>, EnclaveError> {
-        let _gate = self
-            .gate
-            .write()
+        self.invoke(op, payload, capacity, true)
+    }
+
+    fn invoke(
+        &self,
+        op: u64,
+        payload: &[u8],
+        capacity: usize,
+        provisioning: bool,
+    ) -> Result<Vec<u8>, EnclaveError> {
+        // There is one request worker per server. This uncontended mutex also
+        // makes the public API safe if called from other threads.
+        let mut state = self
+            .state
+            .lock()
             .map_err(|e| EnclaveError::Library(e.to_string()))?;
-        self.check_running()?;
-        // The official runner creates a Tokio runtime. Run provisioning on a
-        // scoped OS thread so this also works inside the app's async runtime.
-        std::thread::scope(|scope| {
-            scope
-                .spawn(|| {
-                    call_library(op, payload, initial_capacity, |args| {
-                        // The gate excludes all other calls and the buffers stay
-                        // alive until this scoped thread has joined.
-                        unsafe {
-                            self.library
-                                .0
-                                .call(args[0], args[1], args[2], args[3], args[4])
-                        }
-                        .map_err(|err| {
-                            self.stop();
-                            EnclaveError::Library(err.to_string())
+        if state.stopped {
+            return Err(EnclaveError::Library(
+                "enclave stopped after a library failure".into(),
+            ));
+        }
+        call_library(op, payload, capacity, |args| {
+            // Fail closed on entry errors or panics; never replay a failed entry.
+            state.stopped = true;
+            let result = if provisioning {
+                let library = &state.library;
+                // The official runner creates a Tokio runtime. A scoped thread
+                // lets provisioning work inside an existing async runtime too.
+                std::thread::scope(|scope| {
+                    scope
+                        .spawn(|| {
+                            // Both buffers live until this synchronous entry returns.
+                            unsafe { library.0.call(args[0], args[1], args[2], args[3], args[4]) }
+                                .map_err(|e| EnclaveError::Library(e.to_string()))
                         })
-                    })
+                        .join()
+                        .unwrap_or_else(|_| {
+                            Err(EnclaveError::Library("provisioning thread panicked".into()))
+                        })
                 })
-                .join()
-                .unwrap_or_else(|_| {
-                    self.stop();
-                    Err(EnclaveError::Library("provisioning thread panicked".into()))
-                })
+            } else {
+                // STAR copies the request, bounds output writes, and retains no
+                // host pointers. The mutex excludes all other enclave entries.
+                unsafe {
+                    state
+                        .caller
+                        .call(args[0], args[1], args[2], args[3], args[4])
+                }
+                .map_err(|e| EnclaveError::Library(e.to_string()))
+            };
+            state.stopped = result.is_err();
+            result
         })
     }
 }

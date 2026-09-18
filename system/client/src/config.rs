@@ -18,8 +18,14 @@ impl ProxyConfig {
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(8081);
-        let upstream_sni =
-            env::var("STAR_UPSTREAM_SNI").unwrap_or_else(|_| upstream_host.clone());
+        let upstream_sni = env::var("STAR_UPSTREAM_SNI").unwrap_or_else(|_| upstream_host.clone());
+
+        let mut upstream = StarUpstream::new(upstream_host, upstream_port, upstream_sni);
+        if let Ok(endpoints) = env::var("STAR_UPSTREAM_SHARDS") {
+            upstream = upstream
+                .with_shards(endpoints.split(',').map(|s| s.trim().to_owned()).collect())
+                .expect("invalid STAR_UPSTREAM_SHARDS");
+        }
 
         Self {
             listen_addr: env::var("STAR_CLIENT_PROXY_LISTEN")
@@ -30,7 +36,7 @@ impl ProxyConfig {
                 .ok()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(10),
-            upstream: StarUpstream::new(upstream_host, upstream_port, upstream_sni),
+            upstream,
         }
     }
 }
