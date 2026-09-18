@@ -11,6 +11,7 @@ COPY star /workspace/star
 COPY constant-time-utils /workspace/constant-time-utils
 COPY timecop-rs /workspace/timecop-rs
 COPY simple-filter-box /workspace/simple-filter-box
+COPY fast-rust-sgx-caller /workspace/fast-rust-sgx-caller
 
 WORKDIR /workspace/star/system/serv
 ENV AESM_PROXY=127.0.0.1:5555 \

@@ -244,7 +244,13 @@ impl EnclaveRuntime {
     }
 
     fn call(&self, op: u64, payload: &[u8]) -> Result<Vec<u8>, EnclaveError> {
-        self.library.call(op, payload, initial_response_capacity(op))
+        let capacity = initial_response_capacity(op);
+        match op {
+            OP_INIT | OP_ATTEST | OP_INSTALL_KEYS => {
+                self.library.call_provisioning(op, payload, capacity)
+            }
+            _ => self.library.call(op, payload, capacity),
+        }
     }
 }
 
@@ -267,8 +273,8 @@ fn default_enclave_sgxs() -> Result<PathBuf, EnclaveError> {
         "enclave",
         env_or_default(STAR_ENCLAVE_HEAP_SIZE, DEFAULT_ENCLAVE_HEAP_SIZE),
         env_or_default(STAR_ENCLAVE_STACK_SIZE, DEFAULT_ENCLAVE_STACK_SIZE),
-        std::env::var(STAR_ENCLAVE_THREADS)
-            .unwrap_or_else(|_| default_enclave_thread_count().to_string()),
+        // Reserve one additional TCS for provisioning and attestation I/O.
+        enclave_thread_count().saturating_add(1).to_string(),
     )
 }
 
