@@ -7,6 +7,11 @@ const BENCH_GROUP_NAME: &str = "enclave_call_latency";
 const OP_ONE_BENCH_NAME: &str = "op_one";
 
 fn bench_enclave_call_latency(c: &mut Criterion) {
+    let core = core_affinity::get_core_ids()
+        .and_then(|cores| cores.into_iter().next())
+        .expect("benchmark CPU core");
+    assert!(core_affinity::set_for_current(core), "pin benchmark thread");
+
     let enclave = EnclaveRuntime::from_env().expect("enclave");
     assert_eq!(enclave.one().expect("OP_ONE"), [1; 32]);
 
