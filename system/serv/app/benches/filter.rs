@@ -23,6 +23,13 @@ const CHECK_DUPLICATION_GROUP_NAME: &str = "star_filter_check_duplication";
 const DIAGNOSTICS_GROUP_NAME: &str = "star_filter_diagnostics";
 const LATENCY_BENCH_NAME: &str = "latency";
 
+fn pin_benchmark_thread() {
+    let core = core_affinity::get_core_ids()
+        .and_then(|cores| cores.into_iter().next())
+        .expect("benchmark CPU core");
+    assert!(core_affinity::set_for_current(core), "pin benchmark thread");
+}
+
 fn current_thread_runtime() -> Runtime {
     Builder::new_current_thread()
         .enable_all()
@@ -95,6 +102,7 @@ fn token_from_counter(counter: u64) -> Entry {
 }
 
 fn bench_issue_token_and_route(c: &mut Criterion) {
+    pin_benchmark_thread();
     let latency_rt = current_thread_runtime();
     let (filter, issue_enclave) =
         KeyedEnclaves::new().into_filter((0..FIXED_PREFIX_MAX).collect(), FIXED_PREFIX_MAX);
@@ -134,6 +142,7 @@ fn bench_issue_token_and_route(c: &mut Criterion) {
 }
 
 fn bench_check_duplication(c: &mut Criterion) {
+    pin_benchmark_thread();
     let latency_filter = Arc::new(build_filter((0..FIXED_PREFIX_MAX).collect()));
     let mut latency_counter = 0u64;
 
@@ -164,6 +173,7 @@ fn bench_check_duplication(c: &mut Criterion) {
 }
 
 fn bench_diagnostics(c: &mut Criterion) {
+    pin_benchmark_thread();
     if env::var_os("STAR_FILTER_BENCH_DIAGNOSTICS").is_none() {
         return;
     }
