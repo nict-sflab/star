@@ -71,6 +71,11 @@ fn build_dashmap(entries: usize) -> DashMap<Long, ()> {
 }
 
 fn bench_storage(_c: &mut Criterion) {
+    let core = core_affinity::get_core_ids()
+        .and_then(|cores| cores.into_iter().next())
+        .expect("benchmark CPU core");
+    assert!(core_affinity::set_for_current(core), "pin benchmark thread");
+
     let warmup = build_dashmap(32);
     black_box(&warmup);
     drop(warmup);

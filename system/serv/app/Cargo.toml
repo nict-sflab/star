@@ -51,6 +51,7 @@ path = "src/main.rs"
 star_tools = { path = "../tools/verifier" }
 tiny_http = "0.12"
 criterion = { version = "0.5", features = ["async_tokio", "html_reports"] }
+core_affinity = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 cpu-time = "1"
 dashmap = "6.1"

@@ -289,13 +289,23 @@ impl ShardedServers {
             .expect("scale-out benchmark operation count overflow");
         let ready = Barrier::new(self.servers.len() + 1);
         let start = Barrier::new(self.servers.len() + 1);
+        let cores = core_affinity::get_core_ids().expect("get benchmark CPU cores");
+        assert!(
+            cores.len() >= self.servers.len(),
+            "scale-out benchmark requires at least {} CPU cores",
+            self.servers.len()
+        );
 
         thread::scope(|scope| {
             let mut handles = Vec::with_capacity(self.servers.len());
-            for server in &self.servers {
+            for (server, core) in self.servers.iter().zip(cores.into_iter()) {
                 let ready = &ready;
                 let start = &start;
                 handles.push(scope.spawn(move || {
+                    assert!(
+                        core_affinity::set_for_current(core),
+                        "pin scale-out benchmark server"
+                    );
                     ready.wait();
                     start.wait();
                     for _ in 0..operations {

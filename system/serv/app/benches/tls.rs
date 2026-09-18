@@ -50,6 +50,16 @@ struct BenchHarness {
 
 impl BenchHarness {
     fn start() -> Self {
+        let mut cores = core_affinity::get_core_ids()
+            .expect("get benchmark CPU cores")
+            .into_iter();
+        let client_core = cores.next().expect("TLS benchmark client CPU core");
+        let server_core = cores.next().expect("TLS benchmark server CPU core");
+        assert!(
+            core_affinity::set_for_current(client_core),
+            "pin TLS benchmark client"
+        );
+
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind TLS benchmark server");
         let server_addr = listener.local_addr().expect("read TLS benchmark address");
         let cert_path = common::manifest_path(TLS_CERT_RELATIVE_PATH);
@@ -57,6 +67,10 @@ impl BenchHarness {
         let (latency_tx, latencies) = mpsc::channel();
 
         let server = thread::spawn(move || {
+            assert!(
+                core_affinity::set_for_current(server_core),
+                "pin TLS benchmark server"
+            );
             let mut acceptor =
                 SslAcceptor::mozilla_intermediate(SslMethod::tls()).expect("build TLS acceptor");
             acceptor
