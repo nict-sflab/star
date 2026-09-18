@@ -42,6 +42,8 @@ services:
         rm -rf /tmp/arc;
         git clone --depth 1 https://github.com/cloudflareresearch/arc.git /tmp/arc;
         cd /tmp/arc;
+        grep -q 'const PRES_LIMIT: NonZero<u32> = NonZero::new(1000)' benches/arc_bench.rs;
+        sed -i 's/const PRES_LIMIT: NonZero<u32> = NonZero::new(1000)/const PRES_LIMIT: NonZero<u32> = NonZero::new(100)/' benches/arc_bench.rs;
         cargo bench --features suite_ristretto255 --bench arc_bench -- arc 2>&1 | tee /bench/arc.log
 
   core:
@@ -50,7 +52,6 @@ services:
       dockerfile: star/Dockerfile.bench
     devices:
       - /dev/sgx_enclave
-      - /dev/sgx_provision
     volumes:
       - ./bench:/workspace/star/bench
     command: >
