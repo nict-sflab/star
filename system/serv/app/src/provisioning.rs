@@ -2,56 +2,46 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use key_manager_client::RemoteKeyManagerRuntime;
 use key_manager_service::KeyManagerRuntime;
 use std::error::Error;
+use std::sync::Arc;
 
-use crate::enclave::{EnclaveError, EnclaveRuntime, EnclaveRuntimes};
+use crate::enclave::{EnclaveError, EnclaveRuntime};
 use star_attestation::Evidence;
 
-const FILTER_ENCLAVE_POOL_SIZE: u8 = 10;
-
-pub(crate) struct ProvisionedEnclaves {
+pub(crate) struct ProvisionedEnclave {
     pub(crate) public_key: [u8; 32],
-    pub(crate) filter_enclave: EnclaveRuntimes,
-    pub(crate) issue_enclave: EnclaveRuntime,
+    pub(crate) enclave: Arc<EnclaveRuntime>,
     key_manager_quote: Vec<u8>,
-    filter_quote: Vec<u8>,
-    issue_quote: Vec<u8>,
-    filter_evidence_for_key_manager: Vec<u8>,
-    issue_evidence_for_key_manager: Vec<u8>,
+    enclave_quote: Vec<u8>,
+    enclave_evidence_for_key_manager: Vec<u8>,
     key_manager_evidence: Vec<u8>,
 }
 
-impl ProvisionedEnclaves {
+impl ProvisionedEnclave {
     pub(crate) fn provision() -> Result<Self, Box<dyn Error>> {
         let key_manager =
             RemoteKeyManagerRuntime::from_env().ok_or("STAR_KEY_MANAGER_URL is required")?;
-        let filter_enclave = EnclaveRuntimes::from_env(FILTER_ENCLAVE_POOL_SIZE)?;
-        let issue_enclave = EnclaveRuntime::from_env()?;
+        let enclave = Arc::new(EnclaveRuntime::from_env()?);
 
         let public_key = key_manager.public_key()?;
         let key_manager_quote = key_manager.public_key_attestation()?;
-        let filter_quote = filter_enclave.transfer_key_attestation()?;
-        let issue_quote = issue_enclave.transfer_key_attestation()?;
-        let filter_export = key_manager.export_keys_for_recipient_quote(&filter_quote)?;
-        let issue_export = key_manager.export_keys_for_recipient_quote(&issue_quote)?;
+        let enclave_quote = enclave.transfer_key_attestation()?;
+        let enclave_export = key_manager.export_keys_for_recipient_quote(&enclave_quote)?;
         let key_manager_evidence = evidence_for_verifier(&key_manager_quote)?;
 
-        filter_enclave.install_keys(&key_manager_evidence, &filter_export.envelope)?;
-        issue_enclave.install_keys(&key_manager_evidence, &issue_export.envelope)?;
+        enclave.install_keys(&key_manager_evidence, &enclave_export.envelope)?;
 
         Ok(Self {
             public_key,
-            filter_enclave,
-            issue_enclave,
+            enclave,
             key_manager_quote,
-            filter_quote,
-            issue_quote,
-            filter_evidence_for_key_manager: filter_export.recipient_evidence,
-            issue_evidence_for_key_manager: issue_export.recipient_evidence,
+            enclave_quote,
+            enclave_evidence_for_key_manager: enclave_export.recipient_evidence,
             key_manager_evidence,
         })
     }
 
     pub(crate) fn emit_startup_attestation(&self) {
+        // Preserve the existing log keys; both roles now use the same enclave.
         println!(
             "STAR_ATTESTATION_PUBLIC_KEY_BASE64={}",
             URL_SAFE.encode(self.public_key)
@@ -66,19 +56,19 @@ impl ProvisionedEnclaves {
         );
         println!(
             "STAR_FILTER_ENCLAVE_TRANSFER_QUOTE_BASE64={}",
-            URL_SAFE.encode(&self.filter_quote)
+            URL_SAFE.encode(&self.enclave_quote)
         );
         println!(
             "STAR_ISSUE_ENCLAVE_TRANSFER_QUOTE_BASE64={}",
-            URL_SAFE.encode(&self.issue_quote)
+            URL_SAFE.encode(&self.enclave_quote)
         );
         println!(
             "STAR_FILTER_ENCLAVE_DCAP_EVIDENCE_FOR_KEY_MANAGER_BASE64={}",
-            URL_SAFE.encode(&self.filter_evidence_for_key_manager)
+            URL_SAFE.encode(&self.enclave_evidence_for_key_manager)
         );
         println!(
             "STAR_ISSUE_ENCLAVE_DCAP_EVIDENCE_FOR_KEY_MANAGER_BASE64={}",
-            URL_SAFE.encode(&self.issue_evidence_for_key_manager)
+            URL_SAFE.encode(&self.enclave_evidence_for_key_manager)
         );
         println!(
             "STAR_KEY_MANAGER_DCAP_EVIDENCE_FOR_FILTER_ENCLAVE_BASE64={}",
@@ -91,48 +81,9 @@ impl ProvisionedEnclaves {
     }
 }
 
-pub fn install_key_manager_keys_for_pool(
-    key_manager: &KeyManagerRuntime,
-    recipient: &EnclaveRuntimes,
-) -> Result<(), Box<dyn Error>> {
-    install_keys_remotely(key_manager, recipient)
-}
-
 pub fn install_key_manager_keys_for_enclave(
     key_manager: &KeyManagerRuntime,
     recipient: &EnclaveRuntime,
-) -> Result<(), Box<dyn Error>> {
-    install_keys_remotely(key_manager, recipient)
-}
-
-trait KeyRecipient {
-    fn transfer_key_attestation(&self) -> Result<Vec<u8>, EnclaveError>;
-    fn install_keys(&self, manager_evidence: &[u8], envelope: &[u8]) -> Result<(), EnclaveError>;
-}
-
-impl KeyRecipient for EnclaveRuntimes {
-    fn transfer_key_attestation(&self) -> Result<Vec<u8>, EnclaveError> {
-        self.transfer_key_attestation()
-    }
-
-    fn install_keys(&self, manager_evidence: &[u8], envelope: &[u8]) -> Result<(), EnclaveError> {
-        self.install_keys(manager_evidence, envelope)
-    }
-}
-
-impl KeyRecipient for EnclaveRuntime {
-    fn transfer_key_attestation(&self) -> Result<Vec<u8>, EnclaveError> {
-        self.transfer_key_attestation()
-    }
-
-    fn install_keys(&self, manager_evidence: &[u8], envelope: &[u8]) -> Result<(), EnclaveError> {
-        self.install_keys(manager_evidence, envelope)
-    }
-}
-
-fn install_keys_remotely(
-    key_manager: &KeyManagerRuntime,
-    recipient: &impl KeyRecipient,
 ) -> Result<(), Box<dyn Error>> {
     let key_manager_quote = key_manager.public_key_attestation()?;
     let recipient_quote = recipient.transfer_key_attestation()?;

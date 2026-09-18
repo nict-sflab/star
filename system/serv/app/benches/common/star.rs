@@ -1,12 +1,11 @@
 use rand_core::OsRng;
 use simple_filter_box::hashmap::HashMapFilterBox;
 use star_app::{
-    KeyManagerRuntime,
-    enclave::{EnclaveRuntime, EnclaveRuntimes},
-    filter::StarFilter,
-    install_key_manager_keys_for_enclave, install_key_manager_keys_for_pool,
+    KeyManagerRuntime, enclave::EnclaveRuntime, filter::StarFilter,
+    install_key_manager_keys_for_enclave,
 };
 use star_core::{client::User, secure_channel::client::SecureChannelClient};
+use std::sync::Arc;
 
 use super::aesm_proxy::AesmProxyGuard;
 
@@ -14,33 +13,32 @@ pub type BenchFilter = StarFilter<HashMapFilterBox>;
 pub const MAX_COUNT_PER_CREDENTIAL: u64 = 1_000_000;
 
 pub struct KeyedEnclaves {
-    filter: EnclaveRuntimes,
-    issue: EnclaveRuntime,
+    enclave: Arc<EnclaveRuntime>,
 }
 
 impl KeyedEnclaves {
-    pub fn new(filter_pool_size: u8) -> Self {
+    pub fn new() -> Self {
         let _aesm_proxy = AesmProxyGuard::start();
         let key_manager = KeyManagerRuntime::from_env_with_sealed_keys(&[]).expect("key manager");
-        let filter = EnclaveRuntimes::from_env(filter_pool_size).expect("filter enclave pool");
-        let issue = EnclaveRuntime::from_env().expect("issue enclave");
-
-        install_key_manager_keys_for_pool(&key_manager, &filter)
-            .expect("install filter enclave benchmark keys");
-        install_key_manager_keys_for_enclave(&key_manager, &issue)
-            .expect("install issue enclave benchmark keys");
-
-        Self { filter, issue }
+        let enclave = Arc::new(EnclaveRuntime::from_env().expect("shard enclave"));
+        install_key_manager_keys_for_enclave(&key_manager, &enclave)
+            .expect("install shard enclave benchmark keys");
+        Self { enclave }
     }
 
     pub fn into_filter(
         self,
         prefixes: Vec<u32>,
         prefix_max: u32,
-    ) -> (BenchFilter, EnclaveRuntime) {
+    ) -> (BenchFilter, Arc<EnclaveRuntime>) {
         (
-            StarFilter::new(HashMapFilterBox::new(), prefixes, prefix_max, self.filter),
-            self.issue,
+            StarFilter::new(
+                HashMapFilterBox::new(),
+                prefixes,
+                prefix_max,
+                Arc::clone(&self.enclave),
+            ),
+            self.enclave,
         )
     }
 }

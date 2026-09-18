@@ -22,7 +22,6 @@ use star_app::tls::STAR_TLS_EXTENSION_TYPE;
 
 const TLS_CERT_RELATIVE_PATH: &str = "examples/certs/server.crt";
 const TLS_KEY_RELATIVE_PATH: &str = "examples/certs/server.key";
-const FILTER_ENCLAVES_PER_SERVER: u8 = 1;
 const SCALE_OUT_SERVER_COUNTS: &[u32] = &[1, 2, 4];
 const SCALE_OUT_OPS_PER_SERVER: u64 = 64;
 
@@ -129,15 +128,11 @@ impl RejectHarness {
             }
             RejectCase::ReplayedToken | RejectCase::InvalidCredential => {
                 let invalid_credential = matches!(case, RejectCase::InvalidCredential);
-                let (filter, issue_enclave) = KeyedEnclaves::new(FILTER_ENCLAVES_PER_SERVER)
-                    .into_filter(vec![shard_index], shard_count);
+                let (filter, issue_enclave) =
+                    KeyedEnclaves::new().into_filter(vec![shard_index], shard_count);
                 let filter = Arc::new(filter);
                 let mut rng = OsRng;
-                let mut user = register_user(
-                    &issue_enclave,
-                    MAX_COUNT_PER_CREDENTIAL,
-                    &mut rng,
-                );
+                let mut user = register_user(&issue_enclave, MAX_COUNT_PER_CREDENTIAL, &mut rng);
                 let period = u64::from_be_bytes(constant_time_utils::time::current_period());
                 let (counter, request, token) = (0..MAX_COUNT_PER_CREDENTIAL)
                     .find_map(|counter| {
@@ -179,8 +174,7 @@ impl RejectHarness {
                     }
                 });
 
-                let token_index =
-                    Ssl::new_ex_index::<Vec<u8>>().expect("TLS token ex_data index");
+                let token_index = Ssl::new_ex_index::<Vec<u8>>().expect("TLS token ex_data index");
                 acceptor
                     .add_custom_ext(
                         STAR_TLS_EXTENSION_TYPE,
@@ -219,8 +213,7 @@ impl RejectHarness {
             }
         };
 
-        let mut connector =
-            SslConnector::builder(SslMethod::tls()).expect("build TLS connector");
+        let mut connector = SslConnector::builder(SslMethod::tls()).expect("build TLS connector");
         connector.set_verify(SslVerifyMode::NONE);
         connector.set_groups_list("X25519").expect("set TLS groups");
         if let Some(extension) = extension {
@@ -276,7 +269,6 @@ impl RejectHarness {
         }
         total
     }
-
 }
 
 struct ShardedServers {

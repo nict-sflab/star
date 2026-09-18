@@ -109,10 +109,6 @@ absolute_target_dir() {
     esac
 }
 
-default_parallelism() {
-    getconf _NPROCESSORS_ONLN 2>/dev/null || printf '1\n'
-}
-
 stop_pid() {
     local pid="${1:-}"
     [ -n "$pid" ] || return 0
@@ -355,7 +351,7 @@ ensure_sgxs() {
             "$STAR_ENCLAVE_SGXS" \
             "${STAR_ENCLAVE_HEAP_SIZE:-33554432}" \
             "${STAR_ENCLAVE_STACK_SIZE:-131072}" \
-            "${STAR_ENCLAVE_THREADS:-$(default_parallelism)}"
+            2
     else
         echo "using $STAR_ENCLAVE_SGXS"
     fi
