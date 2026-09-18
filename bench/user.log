@@ -1,20 +1,18 @@
 user.latency/request_auth_plain
-                        time:   [52.747 ns 52.815 ns 52.890 ns]
-                        thrpt:  [1.4087 GiB/s 1.4107 GiB/s 1.4125 GiB/s]
-Found 9 outliers among 100 measurements (9.00%)
-  5 (5.00%) high mild
+                        time:   [52.798 ns 52.836 ns 52.879 ns]
+                        thrpt:  [1.4090 GiB/s 1.4101 GiB/s 1.4111 GiB/s]
+Found 8 outliers among 100 measurements (8.00%)
+  4 (4.00%) high mild
   4 (4.00%) high severe
-user.latency/encrypt    time:   [88.960 µs 88.964 µs 88.969 µs]
-                        thrpt:  [2.0581 MiB/s 2.0582 MiB/s 2.0583 MiB/s]
-Found 9 outliers among 100 measurements (9.00%)
-  1 (1.00%) low mild
-  7 (7.00%) high mild
-  1 (1.00%) high severe
-user.latency/route      time:   [218.35 ns 218.36 ns 218.38 ns]
-                        thrpt:  [4.5791 Melem/s 4.5795 Melem/s 4.5798 Melem/s]
+user.latency/encrypt    time:   [88.819 µs 88.824 µs 88.831 µs]
+                        thrpt:  [2.0613 MiB/s 2.0614 MiB/s 2.0616 MiB/s]
+Found 8 outliers among 100 measurements (8.00%)
+  3 (3.00%) low mild
+  1 (1.00%) high mild
+  4 (4.00%) high severe
+user.latency/route      time:   [218.20 ns 218.28 ns 218.39 ns]
+                        thrpt:  [4.5790 Melem/s 4.5814 Melem/s 4.5829 Melem/s]
 Found 10 outliers among 100 measurements (10.00%)
-  3 (3.00%) high mild
-  7 (7.00%) high severe
-Criterion.rs ERROR: error: Failed to access file "/workspace/star/core/target/criterion/user.latency/request_auth_plain/new/sample.json": No such file or directory (os error 2)
-Criterion.rs ERROR: error: Failed to access file "/workspace/star/core/target/criterion/user.latency/encrypt/new/sample.json": No such file or directory (os error 2)
-Criterion.rs ERROR: error: Failed to access file "/workspace/star/core/target/criterion/user.latency/route/new/sample.json": No such file or directory (os error 2)
+  4 (4.00%) high mild
+  6 (6.00%) high severe
+
