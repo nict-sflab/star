@@ -1,94 +1,92 @@
 enclave_call_latency/op_one
-                        time:   [107.45 µs 108.26 µs 109.17 µs]
-                        thrpt:  [9.1597 Kelem/s 9.2373 Kelem/s 9.3063 Kelem/s]
-Found 4 outliers among 40 measurements (10.00%)
-  2 (5.00%) high mild
-  2 (5.00%) high severe
+                        time:   [5.8500 µs 5.8517 µs 5.8536 µs]
+                        thrpt:  [170.84 Kelem/s 170.89 Kelem/s 170.94 Kelem/s]
 
 client_hello_reject/openssl_missing_extension
-                        time:   [8.0020 µs 8.0130 µs 8.0221 µs]
-                        thrpt:  [124.66 Kelem/s 124.80 Kelem/s 124.97 Kelem/s]
+                        time:   [7.9404 µs 7.9492 µs 7.9586 µs]
+                        thrpt:  [125.65 Kelem/s 125.80 Kelem/s 125.94 Kelem/s]
+Found 1 outliers among 20 measurements (5.00%)
+  1 (5.00%) low mild
 client_hello_reject/star_filter_invalid_credential_openssl_parse
-                        time:   [282.74 µs 283.34 µs 284.05 µs]
-                        thrpt:  [3.5205 Kelem/s 3.5293 Kelem/s 3.5369 Kelem/s]
-Found 5 outliers among 20 measurements (25.00%)
-  3 (15.00%) low mild
-  2 (10.00%) high mild
+                        time:   [154.03 µs 154.07 µs 154.13 µs]
+                        thrpt:  [6.4881 Kelem/s 6.4907 Kelem/s 6.4924 Kelem/s]
 client_hello_reject/star_filter_replayed_token_openssl_parse
-                        time:   [282.95 µs 284.31 µs 285.91 µs]
-                        thrpt:  [3.4977 Kelem/s 3.5172 Kelem/s 3.5342 Kelem/s]
+                        time:   [154.00 µs 154.06 µs 154.11 µs]
+                        thrpt:  [6.4888 Kelem/s 6.4910 Kelem/s 6.4933 Kelem/s]
+Found 1 outliers among 20 measurements (5.00%)
+  1 (5.00%) high mild
 
 client_hello_reject_scale_out_throughput/openssl_missing_extension_1_servers
-                        time:   [497.72 µs 499.65 µs 501.71 µs]
-                        thrpt:  [127.56 Kelem/s 128.09 Kelem/s 128.59 Kelem/s]
-Found 4 outliers among 20 measurements (20.00%)
-  1 (5.00%) low mild
+                        time:   [503.15 µs 505.16 µs 507.32 µs]
+                        thrpt:  [126.15 Kelem/s 126.69 Kelem/s 127.20 Kelem/s]
+Found 1 outliers among 20 measurements (5.00%)
+  1 (5.00%) high severe
+client_hello_reject_scale_out_throughput/star_filter_replayed_token_openssl_parse_1_servers
+                        time:   [9.9397 ms 9.9478 ms 9.9584 ms]
+                        thrpt:  [6.4267 Kelem/s 6.4336 Kelem/s 6.4389 Kelem/s]
+Found 1 outliers among 20 measurements (5.00%)
+  1 (5.00%) high severe
+client_hello_reject_scale_out_throughput/star_filter_invalid_credential_openssl_parse_1_servers
+                        time:   [9.8966 ms 9.9084 ms 9.9252 ms]
+                        thrpt:  [6.4482 Kelem/s 6.4592 Kelem/s 6.4669 Kelem/s]
+Found 2 outliers among 20 measurements (10.00%)
+  2 (10.00%) high severe
+client_hello_reject_scale_out_throughput/openssl_missing_extension_2_servers
+                        time:   [522.77 µs 523.61 µs 524.56 µs]
+                        thrpt:  [244.01 Kelem/s 244.45 Kelem/s 244.85 Kelem/s]
+Found 3 outliers among 20 measurements (15.00%)
   1 (5.00%) high mild
   2 (10.00%) high severe
-client_hello_reject_scale_out_throughput/star_filter_replayed_token_openssl_parse_1_servers
-                        time:   [18.316 ms 18.540 ms 18.806 ms]
-                        thrpt:  [3.4032 Kelem/s 3.4519 Kelem/s 3.4942 Kelem/s]
-Found 2 outliers among 20 measurements (10.00%)
-  2 (10.00%) high mild
-client_hello_reject_scale_out_throughput/star_filter_invalid_credential_openssl_parse_1_servers
-                        time:   [18.216 ms 18.281 ms 18.353 ms]
-                        thrpt:  [3.4871 Kelem/s 3.5009 Kelem/s 3.5133 Kelem/s]
-client_hello_reject_scale_out_throughput/openssl_missing_extension_2_servers
-                        time:   [519.51 µs 520.92 µs 522.37 µs]
-                        thrpt:  [245.04 Kelem/s 245.72 Kelem/s 246.39 Kelem/s]
+client_hello_reject_scale_out_throughput/star_filter_replayed_token_openssl_parse_2_servers
+                        time:   [9.9426 ms 9.9517 ms 9.9662 ms]
+                        thrpt:  [12.843 Kelem/s 12.862 Kelem/s 12.874 Kelem/s]
+Found 3 outliers among 20 measurements (15.00%)
+  1 (5.00%) high mild
+  2 (10.00%) high severe
+client_hello_reject_scale_out_throughput/star_filter_invalid_credential_openssl_parse_2_servers
+                        time:   [9.9268 ms 9.9397 ms 9.9571 ms]
+                        thrpt:  [12.855 Kelem/s 12.878 Kelem/s 12.894 Kelem/s]
 Found 2 outliers among 20 measurements (10.00%)
   2 (10.00%) high severe
-client_hello_reject_scale_out_throughput/star_filter_replayed_token_openssl_parse_2_servers
-                        time:   [17.775 ms 17.825 ms 17.884 ms]
-                        thrpt:  [7.1571 Kelem/s 7.1810 Kelem/s 7.2012 Kelem/s]
+client_hello_reject_scale_out_throughput/openssl_missing_extension_4_servers
+                        time:   [556.89 µs 558.61 µs 560.96 µs]
+                        thrpt:  [456.36 Kelem/s 458.28 Kelem/s 459.70 Kelem/s]
 Found 2 outliers among 20 measurements (10.00%)
   1 (5.00%) high mild
   1 (5.00%) high severe
-client_hello_reject_scale_out_throughput/star_filter_invalid_credential_openssl_parse_2_servers
-                        time:   [17.961 ms 18.066 ms 18.212 ms]
-                        thrpt:  [7.0284 Kelem/s 7.0852 Kelem/s 7.1266 Kelem/s]
-Found 2 outliers among 20 measurements (10.00%)
-  2 (10.00%) high mild
-client_hello_reject_scale_out_throughput/openssl_missing_extension_4_servers
-                        time:   [563.19 µs 565.28 µs 567.94 µs]
-                        thrpt:  [450.75 Kelem/s 452.87 Kelem/s 454.55 Kelem/s]
-Found 1 outliers among 20 measurements (5.00%)
-  1 (5.00%) high mild
 client_hello_reject_scale_out_throughput/star_filter_replayed_token_openssl_parse_4_servers
-                        time:   [17.837 ms 17.901 ms 17.983 ms]
-                        thrpt:  [14.236 Kelem/s 14.301 Kelem/s 14.352 Kelem/s]
-Found 5 outliers among 20 measurements (25.00%)
-  1 (5.00%) low mild
-  1 (5.00%) high mild
-  3 (15.00%) high severe
+                        time:   [9.9690 ms 9.9795 ms 9.9946 ms]
+                        thrpt:  [25.614 Kelem/s 25.652 Kelem/s 25.680 Kelem/s]
+Found 2 outliers among 20 measurements (10.00%)
+  2 (10.00%) high severe
 client_hello_reject_scale_out_throughput/star_filter_invalid_credential_openssl_parse_4_servers
-                        time:   [17.908 ms 18.011 ms 18.141 ms]
-                        thrpt:  [14.112 Kelem/s 14.213 Kelem/s 14.295 Kelem/s]
-Found 3 outliers among 20 measurements (15.00%)
-  3 (15.00%) high mild
+                        time:   [9.9500 ms 9.9617 ms 9.9803 ms]
+                        thrpt:  [25.651 Kelem/s 25.698 Kelem/s 25.729 Kelem/s]
+Found 2 outliers among 20 measurements (10.00%)
+  2 (10.00%) high severe
 
 star_filter_issue_token_and_route/latency
-                        time:   [271.81 µs 273.21 µs 274.88 µs]
-                        thrpt:  [3.6379 Kelem/s 3.6602 Kelem/s 3.6790 Kelem/s]
-Found 3 outliers among 100 measurements (3.00%)
-  2 (2.00%) high mild
-  1 (1.00%) high severe
-star_filter_issue_token_and_route/parallel_throughput
-                        time:   [16.695 ms 16.796 ms 16.911 ms]
-                        thrpt:  [7.5692 Kelem/s 7.6208 Kelem/s 7.6667 Kelem/s]
-Found 5 outliers among 100 measurements (5.00%)
+                        time:   [137.27 µs 137.29 µs 137.30 µs]
+                        thrpt:  [7.2831 Kelem/s 7.2840 Kelem/s 7.2848 Kelem/s]
+Found 11 outliers among 100 measurements (11.00%)
+  2 (2.00%) low severe
+  3 (3.00%) low mild
   3 (3.00%) high mild
-  2 (2.00%) high severe
+  3 (3.00%) high severe
+star_filter_issue_token_and_route/parallel_throughput
+                        time:   [8.9344 ms 8.9444 ms 8.9544 ms]
+                        thrpt:  [14.295 Kelem/s 14.311 Kelem/s 14.327 Kelem/s]
+Found 4 outliers among 100 measurements (4.00%)
+  3 (3.00%) low mild
+  1 (1.00%) high mild
 
 star_filter_check_duplication/latency
-                        time:   [278.37 ns 282.85 ns 286.28 ns]
-                        thrpt:  [3.4930 Melem/s 3.5355 Melem/s 3.5923 Melem/s]
+                        time:   [271.69 ns 276.58 ns 280.67 ns]
+                        thrpt:  [3.5629 Melem/s 3.6156 Melem/s 3.6806 Melem/s]
 star_filter_check_duplication/parallel_throughput
-                        time:   [3.2241 ms 3.5888 ms 4.4095 ms]
-                        thrpt:  [1.8578 Melem/s 2.2826 Melem/s 2.5408 Melem/s]
-Found 3 outliers among 40 measurements (7.50%)
-  1 (2.50%) low mild
-  1 (2.50%) high mild
+                        time:   [2.9012 ms 3.2832 ms 4.0881 ms]
+                        thrpt:  [2.0038 Melem/s 2.4952 Melem/s 2.8236 Melem/s]
+Found 1 outliers among 40 measurements (2.50%)
   1 (2.50%) high severe
 
 
@@ -97,8 +95,8 @@ DashMap<[u8; 32], ()> live allocated bytes
        21800        28672          1099776          50.45
 
 pure_tls_server_side_latency/server_side_tls_handshake
-                        time:   [606.53 µs 607.02 µs 607.57 µs]
-                        thrpt:  [1.6459 Kelem/s 1.6474 Kelem/s 1.6487 Kelem/s]
-Found 2 outliers among 40 measurements (5.00%)
-  2 (5.00%) high mild
+                        time:   [609.68 µs 610.00 µs 610.35 µs]
+                        thrpt:  [1.6384 Kelem/s 1.6393 Kelem/s 1.6402 Kelem/s]
+Found 7 outliers among 40 measurements (17.50%)
+  7 (17.50%) low mild
 
