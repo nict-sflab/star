@@ -1,6 +1,6 @@
 FROM nixos/nix:2.35.2
 
-RUN nix-channel --add https://channels.nixos.org/nixos-26.05 nixpkgs \
+RUN nix-channel --add https://channels.nixos.org/nixos-unstable nixpkgs \
     && nix-channel --update
 
 WORKDIR /workspace
