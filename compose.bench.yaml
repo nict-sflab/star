@@ -58,7 +58,7 @@ services:
     command: >
       bash -o pipefail -c '
         RUSTFLAGS="--cfg getrandom_backend=\"rdrand\" -C target-feature=+rdrand,+avx2,+bmi2,+adx,+sha" cargo bench --manifest-path core/Cargo.toml --bench enclave --target x86_64-fortanix-unknown-sgx -- --discard-baseline --noplot | tee bench/serv1.log &&
-        cargo bench --manifest-path core/Cargo.toml --bench user -- --discard-baseline | tee bench/user.log &&
+        cargo bench --manifest-path core/Cargo.toml --bench user -- --discard-baseline --noplot | tee bench/user.log &&
         cargo run --manifest-path core/Cargo.toml --bin comm --release -- --discard-baseline | tee bench/comm.log
       '
 
