@@ -52,6 +52,7 @@ services:
       dockerfile: star/Dockerfile.bench
     devices:
       - /dev/sgx_enclave
+      - /dev/sgx_provision
     volumes:
       - ./bench:/workspace/star/bench
     command: >
