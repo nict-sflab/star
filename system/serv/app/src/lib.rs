@@ -10,10 +10,8 @@ mod sgx;
 pub mod tls;
 
 pub use key_manager_service::KeyManagerRuntime;
-pub use provisioning::{
-    benchmark_key_bundle, install_key_manager_keys_for_enclave, install_key_manager_keys_for_pool,
-};
-pub use server::{build_server, Shard};
+pub use provisioning::{benchmark_key_bundle, install_key_manager_keys_for_enclave};
+pub use server::{Shard, build_server};
 
 #[cfg(test)]
 pub(crate) use server::build_server_without_startup_attestation;

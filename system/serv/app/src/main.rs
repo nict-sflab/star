@@ -1,7 +1,14 @@
-use star_app::{build_server, Shard};
+use star_app::{Shard, build_server};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
+    if std::env::args().nth(1).as_deref() == Some("--prepare-enclave") {
+        println!(
+            "{}",
+            star_app::enclave::EnclaveRuntime::prepare_image()?.display()
+        );
+        return Ok(());
+    }
     let api_addr = env_or_default("STAR_API_ADDR", "0.0.0.0:8080");
     let proxy_addr = env_or_default("STAR_PROXY_ADDR", "0.0.0.0:8081");
     let upstream_addr = env_or_default("STAR_UPSTREAM_ADDR", "0.0.0.0:3000");

@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use base64::{engine::general_purpose::URL_SAFE, Engine as _};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use rand::rngs::OsRng;
 use star_core::{client::User, secure_channel::client::SecureChannelClient};
 
@@ -51,7 +51,10 @@ impl StarClient {
         })
     }
 
-    pub(crate) fn token_request(&self) -> Result<Vec<u8>, BoxError> {
+    pub(crate) fn token_request(&self, shard_count: u32) -> Result<(Vec<u8>, u32), BoxError> {
+        if shard_count == 0 {
+            return Err("STAR shard count must be positive".into());
+        }
         let mut session = self.session.lock().unwrap();
         let period = current_period();
 
@@ -70,14 +73,48 @@ impl StarClient {
         }
         session.next_counter += 1;
 
+        let route = session.user.route(counter, period, shard_count);
         let mut rng = OsRng;
         session
             .user
             .request_auth(counter, period, &mut rng)
+            .map(|request| (request, route))
             .map_err(|error| format!("failed to build STAR token request: {error:?}").into())
     }
 }
 
 fn current_period() -> u64 {
     u64::from_be_bytes(constant_time_utils::time::current_period())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use star_core::serv::{core::token::Token, enclave::Enclave};
+
+    #[test]
+    fn encrypted_requests_and_client_routes_agree() {
+        // Exercise the actual client counter/period handling and server token
+        // derivation without SGX, attestation, or an external key manager.
+        let enclave = Enclave::new(64, [17; 32], [29; 32]).unwrap();
+        for shard_count in [1, 2, 4, 7] {
+            let mut user = User::new(64, SecureChannelClient::new(enclave.public_key()).unwrap());
+            user.receive_credential_plain(&enclave.issue_cred_plain(&mut OsRng));
+            let client = StarClient {
+                session: Arc::new(Mutex::new(CredentialSession {
+                    user,
+                    period: current_period(),
+                    next_counter: 0,
+                })),
+            };
+            assert!(client.token_request(0).is_err());
+            for _ in 0..64 {
+                let (request, route) = client.token_request(shard_count).unwrap();
+                let period = client.session.lock().unwrap().period;
+                let token = enclave.issue_token(&request, period.to_be_bytes()).unwrap();
+                let token = Token::new(token.try_into().unwrap());
+                assert_eq!(route, token.route(shard_count));
+            }
+        }
+    }
 }

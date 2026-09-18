@@ -26,7 +26,6 @@ anyhow = "1"
 enclave-runner = "0.8"
 enclave-runner-sgx = "0.1.4"
 fast-rust-sgx-caller = { path = "../../../../fast-rust-sgx-caller" }
-fortanix-sgx-abi = "0.6"
 sgx-isa = "0.6"
 sgxs = "0.9"
 sgxs-loaders = "0.5.2"
