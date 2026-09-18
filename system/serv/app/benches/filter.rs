@@ -15,35 +15,16 @@ use star_app::{
     install_key_manager_keys_for_enclave,
 };
 use star_core::client::User;
-use tokio::{
-    runtime::{Builder, Runtime},
-    task::JoinSet,
-};
+use tokio::runtime::{Builder, Runtime};
 
 const FIXED_PREFIX_MAX: u32 = 2;
-const FIXED_CONCURRENCY: usize = FIXED_PREFIX_MAX as usize;
-
-const ISSUE_TOKEN_OPS_PER_WORKER: usize = 64;
-const ISSUE_TOKEN_BATCH_OPS: usize = FIXED_CONCURRENCY * ISSUE_TOKEN_OPS_PER_WORKER;
-const CHECK_DUPLICATION_OPS_PER_WORKER: usize = 4096;
-const CHECK_DUPLICATION_BATCH_OPS: usize = FIXED_CONCURRENCY * CHECK_DUPLICATION_OPS_PER_WORKER;
-
 const ISSUE_TOKEN_GROUP_NAME: &str = "star_filter_issue_token_and_route";
 const CHECK_DUPLICATION_GROUP_NAME: &str = "star_filter_check_duplication";
 const DIAGNOSTICS_GROUP_NAME: &str = "star_filter_diagnostics";
 const LATENCY_BENCH_NAME: &str = "latency";
-const PARALLEL_THROUGHPUT_BENCH_NAME: &str = "parallel_throughput";
 
 fn current_thread_runtime() -> Runtime {
     Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("tokio runtime")
-}
-
-fn multi_thread_runtime(worker_threads: usize) -> Runtime {
-    Builder::new_multi_thread()
-        .worker_threads(worker_threads)
         .enable_all()
         .build()
         .expect("tokio runtime")
@@ -115,7 +96,6 @@ fn token_from_counter(counter: u64) -> Entry {
 
 fn bench_issue_token_and_route(c: &mut Criterion) {
     let latency_rt = current_thread_runtime();
-    let throughput_rt = multi_thread_runtime(FIXED_CONCURRENCY);
     let (filter, issue_enclave) =
         KeyedEnclaves::new().into_filter((0..FIXED_PREFIX_MAX).collect(), FIXED_PREFIX_MAX);
     let filter = Arc::new(filter);
@@ -150,77 +130,12 @@ fn bench_issue_token_and_route(c: &mut Criterion) {
         )
     });
 
-    // Each worker owns its enclave and duplicate list, as in the server.
-    let (filters, mut generators): (Vec<_>, Vec<_>) = (0..FIXED_PREFIX_MAX)
-        .map(|shard| {
-            let (filter, enclave) = KeyedEnclaves::new().into_filter(vec![shard], FIXED_PREFIX_MAX);
-            (Arc::new(filter), TokenRequestGenerator::new(enclave))
-        })
-        .unzip();
-    group.throughput(Throughput::Elements(ISSUE_TOKEN_BATCH_OPS as u64));
-    group.bench_function(PARALLEL_THROUGHPUT_BENCH_NAME, |b| {
-        b.to_async(&throughput_rt).iter_batched(
-            || {
-                generators
-                    .iter_mut()
-                    .enumerate()
-                    .map(|(shard, generator)| {
-                        (0..ISSUE_TOKEN_OPS_PER_WORKER)
-                            .map(|_| {
-                                loop {
-                                    let request = generator.next_request();
-                                    if generator.user.route(
-                                        generator.counter - 1,
-                                        generator.period,
-                                        FIXED_PREFIX_MAX,
-                                    ) == shard as u32
-                                    {
-                                        break request;
-                                    }
-                                }
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                    .collect::<Vec<_>>()
-            },
-            |batches| {
-                let filters = &filters;
-                async move {
-                    let mut joins = JoinSet::new();
-                    for (shard, requests) in batches.into_iter().enumerate() {
-                        let filter = Arc::clone(&filters[shard]);
-                        joins.spawn(async move {
-                            for request in requests {
-                                let result = filter
-                                    .issue_token_and_route(black_box(&request))
-                                    .await
-                                    .expect("issue token and route");
-                                assert_eq!(result.1, shard as u32);
-                                black_box(result);
-                            }
-                        });
-                    }
-                    while let Some(joined) = joins.join_next().await {
-                        joined.expect("join shard worker");
-                    }
-                }
-            },
-            BatchSize::PerIteration,
-        )
-    });
-
     group.finish();
 }
 
 fn bench_check_duplication(c: &mut Criterion) {
-    let throughput_rt = multi_thread_runtime(FIXED_CONCURRENCY);
     let latency_filter = Arc::new(build_filter((0..FIXED_PREFIX_MAX).collect()));
-    let throughput_filters: Vec<_> = (0..FIXED_PREFIX_MAX)
-        .map(|shard| Arc::new(build_filter(vec![shard])))
-        .collect();
     let mut latency_counter = 0u64;
-    let mut throughput_batch_start = 0u64;
-    let throughput_batch_ops = CHECK_DUPLICATION_BATCH_OPS as u64;
 
     let mut group = c.benchmark_group(CHECK_DUPLICATION_GROUP_NAME);
     group.sample_size(40);
@@ -243,37 +158,6 @@ fn bench_check_duplication(c: &mut Criterion) {
             },
             BatchSize::PerIteration,
         )
-    });
-
-    group.throughput(Throughput::Elements(throughput_batch_ops));
-    group.bench_function(PARALLEL_THROUGHPUT_BENCH_NAME, |b| {
-        let filters = &throughput_filters;
-        b.to_async(&throughput_rt).iter(|| {
-            let batch_start = advance_batch(&mut throughput_batch_start, throughput_batch_ops);
-            async move {
-                let mut joins = JoinSet::new();
-                for worker in 0..FIXED_CONCURRENCY {
-                    let filter = Arc::clone(&filters[worker]);
-                    joins.spawn(async move {
-                        for offset in 0..CHECK_DUPLICATION_OPS_PER_WORKER {
-                            let idx = batch_start + (offset * FIXED_CONCURRENCY + worker) as u64;
-                            let token = token_from_counter(idx);
-                            black_box(
-                                filter
-                                    .check_duplication(
-                                        black_box(&token),
-                                        black_box(route_for_token_index(idx)),
-                                    )
-                                    .expect("unique token on its shard"),
-                            );
-                        }
-                    });
-                }
-                while let Some(joined) = joins.join_next().await {
-                    joined.expect("join check_duplication worker");
-                }
-            }
-        });
     });
 
     group.finish();
