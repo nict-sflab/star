@@ -1,9 +1,7 @@
 use std::error::Error;
 use std::fmt;
 use std::io;
-use std::ops::Deref;
 use std::path::PathBuf;
-use std::sync::{Condvar, Mutex};
 
 use crate::env_or_default;
 use crate::sgx::{LibraryRuntime, build_sgxs};
@@ -11,7 +9,6 @@ use crate::sgx::{LibraryRuntime, build_sgxs};
 const STAR_ENCLAVE_SGXS: &str = "STAR_ENCLAVE_SGXS";
 const STAR_ENCLAVE_HEAP_SIZE: &str = "STAR_ENCLAVE_HEAP_SIZE";
 const STAR_ENCLAVE_STACK_SIZE: &str = "STAR_ENCLAVE_STACK_SIZE";
-const STAR_ENCLAVE_THREADS: &str = "STAR_ENCLAVE_THREADS";
 
 const DEFAULT_ENCLAVE_HEAP_SIZE: &str = "33554432";
 const DEFAULT_ENCLAVE_STACK_SIZE: &str = "131072";
@@ -36,42 +33,6 @@ const INSTALL_KEYS_RESPONSE_CAPACITY: usize = 0;
 const ISSUE_TOKEN_REQUEST_CAPACITY: usize = 8 + 192;
 const ONE_RESPONSE_CAPACITY: usize = ISSUE_TOKEN_RESPONSE_CAPACITY;
 const ONE_REQUEST_PAYLOAD: [u8; ISSUE_TOKEN_REQUEST_CAPACITY] = [0; ISSUE_TOKEN_REQUEST_CAPACITY];
-
-pub struct EnclaveRuntimes {
-    runtime: EnclaveRuntime,
-    permits: Mutex<PermitState>,
-    available: Condvar,
-}
-
-struct PermitState {
-    available: usize,
-    total: usize,
-}
-
-pub struct EnclaveLease<'a> {
-    runtimes: &'a EnclaveRuntimes,
-}
-
-impl<'a> Deref for EnclaveLease<'a> {
-    type Target = EnclaveRuntime;
-
-    fn deref(&self) -> &Self::Target {
-        &self.runtimes.runtime
-    }
-}
-
-impl<'a> Drop for EnclaveLease<'a> {
-    fn drop(&mut self) {
-        let Ok(mut guard) = self.runtimes.permits.lock() else {
-            return;
-        };
-
-        if guard.available < guard.total {
-            guard.available += 1;
-            self.runtimes.available.notify_one();
-        }
-    }
-}
 
 #[derive(Debug)]
 pub enum EnclaveError {
@@ -120,64 +81,23 @@ impl Error for EnclaveError {
     }
 }
 
-impl EnclaveRuntimes {
-    pub fn from_env(num: u8) -> Result<Self, EnclaveError> {
-        let runtime = EnclaveRuntime::from_env()?;
-        let total = (num as usize).min(enclave_thread_count());
-
-        Ok(Self {
-            runtime,
-            permits: Mutex::new(PermitState {
-                available: total,
-                total,
-            }),
-            available: Condvar::new(),
-        })
-    }
-
-    pub async fn pick(&self) -> Option<EnclaveLease<'_>> {
-        self.pick_blocking()
-    }
-
-    pub fn pick_blocking(&self) -> Option<EnclaveLease<'_>> {
-        let mut guard = self.permits.lock().ok()?;
-        if guard.total == 0 {
-            return None;
-        }
-
-        while guard.available == 0 {
-            guard = self.available.wait(guard).ok()?;
-        }
-        guard.available -= 1;
-
-        Some(EnclaveLease { runtimes: self })
-    }
-
-    pub fn transfer_key_attestation(&self) -> Result<Vec<u8>, EnclaveError> {
-        self.runtime.transfer_key_attestation()
-    }
-
-    pub fn install_keys(
-        &self,
-        manager_evidence: &[u8],
-        envelope: &[u8],
-    ) -> Result<(), EnclaveError> {
-        self.runtime.install_keys(manager_evidence, envelope)
-    }
-}
-
 pub struct EnclaveRuntime {
     library: LibraryRuntime,
 }
 
 impl EnclaveRuntime {
     pub fn from_env() -> Result<Self, EnclaveError> {
-        let sgxs = default_enclave_sgxs()?;
+        let sgxs = Self::prepare_image()?;
         let runtime = Self {
             library: LibraryRuntime::load(&sgxs)?,
         };
         runtime.call(OP_INIT, &[])?;
         Ok(runtime)
+    }
+
+    /// Build the shared image once before starting independent shard processes.
+    pub fn prepare_image() -> Result<PathBuf, EnclaveError> {
+        default_enclave_sgxs()
     }
 
     pub fn public_key(&self) -> Result<[u8; ENCLAVE_PUBLIC_KEY_LEN], EnclaveError> {
@@ -225,8 +145,7 @@ impl EnclaveRuntime {
         manager_evidence: &[u8],
         envelope: &[u8],
     ) -> Result<(), EnclaveError> {
-        let mut payload =
-            Vec::with_capacity(8 + manager_evidence.len() + envelope.len());
+        let mut payload = Vec::with_capacity(8 + manager_evidence.len() + envelope.len());
         for blob in [manager_evidence, envelope] {
             payload.extend_from_slice(&(blob.len() as u32).to_be_bytes());
             payload.extend_from_slice(blob);
@@ -240,7 +159,13 @@ impl EnclaveRuntime {
     }
 
     fn call(&self, op: u64, payload: &[u8]) -> Result<Vec<u8>, EnclaveError> {
-        self.library.call(op, payload, initial_response_capacity(op))
+        let capacity = initial_response_capacity(op);
+        match op {
+            OP_INIT | OP_ATTEST | OP_INSTALL_KEYS => {
+                self.library.call_provisioning(op, payload, capacity)
+            }
+            _ => self.library.call(op, payload, capacity),
+        }
     }
 }
 
@@ -255,31 +180,17 @@ fn default_enclave_sgxs() -> Result<PathBuf, EnclaveError> {
         return Ok(PathBuf::from(path));
     }
 
-    let enclave_dir = PathBuf::from(option_env!("CARGO_MANIFEST_DIR").unwrap_or("."))
-        .join("../enclave");
+    let enclave_dir =
+        PathBuf::from(option_env!("CARGO_MANIFEST_DIR").unwrap_or(".")).join("../enclave");
 
     build_sgxs(
         &enclave_dir.join("Cargo.toml"),
         "enclave",
         env_or_default(STAR_ENCLAVE_HEAP_SIZE, DEFAULT_ENCLAVE_HEAP_SIZE),
         env_or_default(STAR_ENCLAVE_STACK_SIZE, DEFAULT_ENCLAVE_STACK_SIZE),
-        std::env::var(STAR_ENCLAVE_THREADS)
-            .unwrap_or_else(|_| default_enclave_thread_count().to_string()),
+        // One direct caller and one provisioning TCS; never entered concurrently.
+        "2".into(),
     )
-}
-
-fn enclave_thread_count() -> usize {
-    std::env::var(STAR_ENCLAVE_THREADS)
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or_else(default_enclave_thread_count)
-}
-
-fn default_enclave_thread_count() -> usize {
-    std::thread::available_parallelism()
-        .map(|threads| threads.get())
-        .unwrap_or(1)
 }
 
 fn initial_response_capacity(op: u64) -> usize {

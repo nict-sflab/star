@@ -3,43 +3,60 @@ use chacha20poly1305::{
     aead::{Aead, KeyInit},
     ChaCha20Poly1305, Nonce,
 };
-use hpke::{
-    aead::ChaCha20Poly1305 as HpkeChaCha20Poly1305,
-    kdf::HkdfSha256,
-    kem::{Kem as _, X25519HkdfSha256},
-    setup_receiver, Deserializable, HpkeError, OpModeR, Serializable,
+use hpke_ng::{
+    kem::dh::{DiffieHellman, X25519},
+    ChaCha20Poly1305 as HpkeChaCha20Poly1305, DhKemX25519HkdfSha256, HkdfSha256, Hpke,
+    HpkeError, Kem,
 };
 use rand::{CryptoRng, RngCore};
 
+use super::RngCompat;
+
+type HpkeSuite = Hpke<DhKemX25519HkdfSha256, HkdfSha256, HpkeChaCha20Poly1305>;
+
 // HPKE receiver living inside the enclave.
 pub struct SecureChannelServer {
-    pub sk: <X25519HkdfSha256 as hpke::kem::Kem>::PrivateKey,
-    pub pk: <X25519HkdfSha256 as hpke::kem::Kem>::PublicKey,
+    pub sk: <DhKemX25519HkdfSha256 as Kem>::PrivateKey,
+    pub pk: [u8; 32],
 }
 
 impl SecureChannelServer {
     /// Restore a receiver from an existing 32-byte X25519 secret key.
     pub fn new(sk_bytes: [u8; 32]) -> Result<Self, HpkeError> {
-        let sk = <X25519HkdfSha256 as hpke::kem::Kem>::PrivateKey::from_bytes(&sk_bytes)?;
-        let pk = X25519HkdfSha256::sk_to_pk(&sk);
+        let sk = DhKemX25519HkdfSha256::sk_from_bytes(&sk_bytes)?;
+
+        // hpke-ng caches the matching public key in its private-key wrapper for
+        // decapsulation. Derive the advertised public key once at construction.
+        let raw_sk = X25519::sk_from_bytes(&sk_bytes)?;
+        let raw_pk = X25519::sk_to_pk(&raw_sk);
+        let pk_bytes = X25519::pk_to_bytes(&raw_pk);
+        let pk = pk_bytes
+            .as_slice()
+            .try_into()
+            .expect("X25519 public key must be 32 bytes");
+
         Ok(Self { sk, pk })
     }
 
-    /// Generate a fresh receiver keypair using curve25519-dalek.
+    /// Generate a fresh receiver keypair using hpke-ng.
     pub fn random<R>(rng: &mut R) -> Self
     where
         R: CryptoRng + RngCore,
     {
-        let (sk, pk) = X25519HkdfSha256::gen_keypair(rng);
+        let mut compat_rng = RngCompat(rng);
+        let (sk, pk) = DhKemX25519HkdfSha256::generate(&mut compat_rng)
+            .expect("X25519 key generation must succeed");
+        let pk = pk
+            .as_ref()
+            .try_into()
+            .expect("X25519 public key must be 32 bytes");
 
         Self { sk, pk }
     }
 
     /// Public key for advertising to senders.
     pub fn public_key(&self) -> [u8; 32] {
-        let bytes = self.pk.to_bytes();
-        let bytes_ref: &[u8] = bytes.as_ref();
-        bytes_ref.try_into().expect("public key must be 32 bytes")
+        self.pk
     }
 
     /// Decrypt an HPKE ciphertext (X25519 + ChaCha20-Poly1305).
@@ -50,15 +67,8 @@ impl SecureChannelServer {
         aad: &[u8],
         ciphertext: &[u8],
     ) -> Result<Vec<u8>, HpkeError> {
-        let enc = <X25519HkdfSha256 as hpke::kem::Kem>::EncappedKey::from_bytes(enc)?;
-        let mut ctx = setup_receiver::<HpkeChaCha20Poly1305, HkdfSha256, X25519HkdfSha256>(
-            &OpModeR::Base,
-            &self.sk,
-            &enc,
-            info,
-        )?;
-
-        ctx.open(ciphertext, aad)
+        let enc = DhKemX25519HkdfSha256::enc_from_bytes(enc)?;
+        HpkeSuite::open_base(&enc, &self.sk, info, aad, ciphertext)
     }
 
     pub fn respond_cipher<R>(&self, response: &[u8], cipher: &[u8], rng: &mut R) -> Vec<u8>

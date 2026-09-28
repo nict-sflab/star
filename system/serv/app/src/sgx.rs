@@ -1,55 +1,164 @@
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
 
 use aesm_client::AesmClient;
 use enclave_runner::{EnclaveBuilder, Library};
 use enclave_runner_sgx::EnclaveBuilder as SgxEnclaveBuilder;
-use sgxs_loaders::isgx::Device as SgxDevice;
+use fast_rust_sgx_caller::Caller;
+use sgx_isa::{Attributes, Miscselect, Sigstruct};
+use sgxs::loader::{Load, Mapping};
+use sgxs::sgxs::SgxsRead;
+use sgxs_loaders::{Tcs, isgx::Device as SgxDevice};
 
 use crate::enclave::EnclaveError;
 
 pub(crate) const SGX_TARGET: &str = "x86_64-fortanix-unknown-sgx";
-
 const MAX_PAYLOAD_LEN: usize = 16 * 1024 * 1024;
 const STATUS_OK: u64 = 0;
 const STATUS_BUFFER_TOO_SMALL: u64 = 5;
 
-pub(crate) struct LibraryRuntime {
-    library: Library,
+struct SharedLibrary(Library);
+
+// The SGX runner captures an Arc<EnclaveState>, but its erased closure does
+// not expose Send/Sync. The runtime mutex serializes every enclave entry.
+unsafe impl Send for SharedLibrary {}
+unsafe impl Sync for SharedLibrary {}
+
+// Retain the official builder's signature and launch-token handling. Both
+// callers enter the same mapping, with a separate TCS for provisioning I/O.
+struct SplitLoader<'a> {
+    device: SgxDevice,
+    caller: &'a mut Option<Caller<Tcs>>,
 }
 
-unsafe impl Send for LibraryRuntime {}
-unsafe impl Sync for LibraryRuntime {}
+impl Load for SplitLoader<'_> {
+    type MappingInfo = <SgxDevice as Load>::MappingInfo;
+    type Tcs = Tcs;
+
+    fn load<R: SgxsRead>(
+        &mut self,
+        reader: &mut R,
+        signature: &Sigstruct,
+        attributes: Attributes,
+        miscselect: Miscselect,
+    ) -> anyhow::Result<Mapping<Self>> {
+        let mut mapping = self
+            .device
+            .load(reader, signature, attributes, miscselect)?;
+        anyhow::ensure!(
+            mapping.tcss.len() >= 2,
+            "STAR needs two TCSes: one for provisioning and one for direct calls; rebuild the .sgxs image"
+        );
+        let provisioning = mapping.tcss.pop().unwrap();
+        *self.caller = Some(Caller::new(mapping.tcss.pop().unwrap())?);
+        Ok(Mapping {
+            info: mapping.info,
+            tcss: vec![provisioning],
+        })
+    }
+}
+
+pub(crate) struct LibraryRuntime {
+    state: Mutex<LibraryState>,
+}
+
+struct LibraryState {
+    library: SharedLibrary,
+    caller: Caller<Tcs>,
+    stopped: bool,
+}
 
 impl LibraryRuntime {
     pub(crate) fn load(sgxs: &Path) -> Result<Self, EnclaveError> {
-        let mut device = SgxDevice::new()
+        let device = SgxDevice::new()
             .map_err(EnclaveError::Build)?
             .einittoken_provider(AesmClient::new())
             .build();
-
-        let sgx_builder = SgxEnclaveBuilder::new(sgxs);
-
-        let library = EnclaveBuilder::new(sgx_builder)
-            .build(&mut device)
+        let mut caller = None;
+        let mut loader = SplitLoader {
+            device,
+            caller: &mut caller,
+        };
+        let library = EnclaveBuilder::new(SgxEnclaveBuilder::new(sgxs))
+            .build(&mut loader)
             .map_err(|err| EnclaveError::Library(err.to_string()))?;
-
-        Ok(Self { library })
+        Ok(Self {
+            state: Mutex::new(LibraryState {
+                library: SharedLibrary(library),
+                caller: caller.unwrap(),
+                stopped: false,
+            }),
+        })
     }
 
     pub(crate) fn call(
         &self,
         op: u64,
         payload: &[u8],
-        initial_capacity: usize,
+        capacity: usize,
     ) -> Result<Vec<u8>, EnclaveError> {
-        std::thread::scope(|scope| {
-            let handle = scope.spawn(|| call_library(&self.library, op, payload, initial_capacity));
-            match handle.join() {
-                Ok(result) => result,
-                Err(panic) => std::panic::resume_unwind(panic),
-            }
+        self.invoke(op, payload, capacity, false)
+    }
+
+    pub(crate) fn call_provisioning(
+        &self,
+        op: u64,
+        payload: &[u8],
+        capacity: usize,
+    ) -> Result<Vec<u8>, EnclaveError> {
+        self.invoke(op, payload, capacity, true)
+    }
+
+    fn invoke(
+        &self,
+        op: u64,
+        payload: &[u8],
+        capacity: usize,
+        provisioning: bool,
+    ) -> Result<Vec<u8>, EnclaveError> {
+        // There is one request worker per server. This uncontended mutex also
+        // makes the public API safe if called from other threads.
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|e| EnclaveError::Library(e.to_string()))?;
+        if state.stopped {
+            return Err(EnclaveError::Library(
+                "enclave stopped after a library failure".into(),
+            ));
+        }
+        call_library(op, payload, capacity, |args| {
+            // Fail closed on entry errors or panics; never replay a failed entry.
+            state.stopped = true;
+            let result = if provisioning {
+                let library = &state.library;
+                // The official runner creates a Tokio runtime. A scoped thread
+                // lets provisioning work inside an existing async runtime too.
+                std::thread::scope(|scope| {
+                    scope
+                        .spawn(|| {
+                            // Both buffers live until this synchronous entry returns.
+                            unsafe { library.0.call(args[0], args[1], args[2], args[3], args[4]) }
+                                .map_err(|e| EnclaveError::Library(e.to_string()))
+                        })
+                        .join()
+                        .unwrap_or_else(|_| {
+                            Err(EnclaveError::Library("provisioning thread panicked".into()))
+                        })
+                })
+            } else {
+                // STAR copies the request, bounds output writes, and retains no
+                // host pointers. The mutex excludes all other enclave entries.
+                unsafe {
+                    state
+                        .caller
+                        .call(args[0], args[1], args[2], args[3], args[4])
+                }
+                .map_err(|e| EnclaveError::Library(e.to_string()))
+            };
+            state.stopped = result.is_err();
+            result
         })
     }
 }
@@ -144,30 +253,27 @@ fn run_command(command: &mut Command) -> Result<(), EnclaveError> {
 }
 
 fn call_library(
-    library: &Library,
     op: u64,
     payload: &[u8],
     initial_capacity: usize,
+    mut call: impl FnMut([u64; 5]) -> Result<(u64, u64), EnclaveError>,
 ) -> Result<Vec<u8>, EnclaveError> {
     let mut output = vec![0u8; initial_capacity];
 
     loop {
-        let (status, len) = unsafe {
-            library.call(
-                op,
-                payload.as_ptr() as u64,
-                payload.len() as u64,
-                output.as_mut_ptr() as u64,
-                output.len() as u64,
-            )
-        }
-        .map_err(|err| EnclaveError::Library(err.to_string()))?;
+        let (status, len) = call([
+            op,
+            payload.as_ptr() as u64,
+            payload.len() as u64,
+            output.as_mut_ptr() as u64,
+            output.len() as u64,
+        ])?;
 
         let len =
             usize::try_from(len).map_err(|_| EnclaveError::ResponseTooLarge { len: usize::MAX })?;
 
         if status == STATUS_BUFFER_TOO_SMALL {
-            if len > MAX_PAYLOAD_LEN {
+            if len <= output.len() || len > MAX_PAYLOAD_LEN {
                 return Err(EnclaveError::ResponseTooLarge { len });
             }
 
@@ -191,3 +297,6 @@ fn call_library(
         });
     }
 }
+
+#[cfg(test)]
+mod tests;

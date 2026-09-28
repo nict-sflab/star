@@ -11,33 +11,24 @@ use criterion::{BatchSize, Criterion, Throughput, black_box, criterion_group, cr
 use rand_core::OsRng;
 use simple_filter_box::{core::Entry, hashmap::HashMapFilterBox};
 use star_app::{
-    KeyManagerRuntime,
-    enclave::{EnclaveRuntime, EnclaveRuntimes},
-    filter::StarFilter,
+    KeyManagerRuntime, enclave::EnclaveRuntime, filter::StarFilter,
     install_key_manager_keys_for_enclave,
 };
 use star_core::client::User;
-use tokio::{
-    runtime::{Builder, Runtime},
-    task::JoinSet,
-};
-
+use tokio::runtime::{Builder, Runtime};
 
 const FIXED_PREFIX_MAX: u32 = 2;
-const FIXED_CONCURRENCY: usize = FIXED_PREFIX_MAX as usize;
-const DEFAULT_FILTER_ENCLAVES: u8 = 2;
-
-const ISSUE_TOKEN_OPS_PER_WORKER: usize = 64;
-const ISSUE_TOKEN_BATCH_OPS: usize = FIXED_CONCURRENCY * ISSUE_TOKEN_OPS_PER_WORKER;
-const CHECK_DUPLICATION_OPS_PER_WORKER: usize = 4096;
-const CHECK_DUPLICATION_BATCH_OPS: usize =
-    FIXED_CONCURRENCY * CHECK_DUPLICATION_OPS_PER_WORKER;
-
 const ISSUE_TOKEN_GROUP_NAME: &str = "star_filter_issue_token_and_route";
 const CHECK_DUPLICATION_GROUP_NAME: &str = "star_filter_check_duplication";
 const DIAGNOSTICS_GROUP_NAME: &str = "star_filter_diagnostics";
 const LATENCY_BENCH_NAME: &str = "latency";
-const PARALLEL_THROUGHPUT_BENCH_NAME: &str = "parallel_throughput";
+
+fn pin_benchmark_thread() {
+    let core = core_affinity::get_core_ids()
+        .and_then(|cores| cores.into_iter().next())
+        .expect("benchmark CPU core");
+    assert!(core_affinity::set_for_current(core), "pin benchmark thread");
+}
 
 fn current_thread_runtime() -> Runtime {
     Builder::new_current_thread()
@@ -46,33 +37,17 @@ fn current_thread_runtime() -> Runtime {
         .expect("tokio runtime")
 }
 
-fn multi_thread_runtime(worker_threads: usize) -> Runtime {
-    Builder::new_multi_thread()
-        .worker_threads(worker_threads)
-        .enable_all()
-        .build()
-        .expect("tokio runtime")
-}
-
-fn filter_enclave_count() -> u8 {
-    env::var("STAR_FILTER_BENCH_ENCLAVES")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_FILTER_ENCLAVES)
-}
-
-fn build_filter() -> BenchFilter {
+fn build_filter(prefixes: Vec<u32>) -> BenchFilter {
     StarFilter::new(
         HashMapFilterBox::new(),
-        (0..FIXED_PREFIX_MAX).collect(),
+        prefixes,
         FIXED_PREFIX_MAX,
-        EnclaveRuntimes::from_env(filter_enclave_count()).expect("filter enclave pool"),
+        Arc::new(EnclaveRuntime::from_env().expect("shard enclave")),
     )
 }
 
 struct TokenRequestGenerator {
-    issue_enclave: EnclaveRuntime,
+    issue_enclave: Arc<EnclaveRuntime>,
     user: User,
     counter: u64,
     period: u64,
@@ -80,7 +55,7 @@ struct TokenRequestGenerator {
 }
 
 impl TokenRequestGenerator {
-    fn new(issue_enclave: EnclaveRuntime) -> Self {
+    fn new(issue_enclave: Arc<EnclaveRuntime>) -> Self {
         let mut rng = OsRng;
         let user = register_user(&issue_enclave, MAX_COUNT_PER_CREDENTIAL, &mut rng);
 
@@ -127,12 +102,10 @@ fn token_from_counter(counter: u64) -> Entry {
 }
 
 fn bench_issue_token_and_route(c: &mut Criterion) {
+    pin_benchmark_thread();
     let latency_rt = current_thread_runtime();
-    let throughput_rt = multi_thread_runtime(FIXED_CONCURRENCY);
-    let (filter, issue_enclave) = KeyedEnclaves::new(filter_enclave_count()).into_filter(
-        (0..FIXED_PREFIX_MAX).collect(),
-        FIXED_PREFIX_MAX,
-    );
+    let (filter, issue_enclave) =
+        KeyedEnclaves::new().into_filter((0..FIXED_PREFIX_MAX).collect(), FIXED_PREFIX_MAX);
     let filter = Arc::new(filter);
     let request_generator = Arc::new(Mutex::new(TokenRequestGenerator::new(issue_enclave)));
 
@@ -165,63 +138,13 @@ fn bench_issue_token_and_route(c: &mut Criterion) {
         )
     });
 
-    group.throughput(Throughput::Elements(ISSUE_TOKEN_BATCH_OPS as u64));
-    group.bench_function(PARALLEL_THROUGHPUT_BENCH_NAME, |b| {
-        let filter = Arc::clone(&filter);
-        let request_generator = Arc::clone(&request_generator);
-
-        b.to_async(&throughput_rt).iter_batched(
-            || {
-                let mut generator = request_generator
-                    .lock()
-                    .expect("request generator mutex");
-                (0..ISSUE_TOKEN_BATCH_OPS)
-                    .map(|_| generator.next_request())
-                    .collect::<Vec<_>>()
-            },
-            |requests| {
-                let filter = Arc::clone(&filter);
-                async move {
-                    let mut worker_requests = (0..FIXED_CONCURRENCY)
-                        .map(|_| Vec::with_capacity(ISSUE_TOKEN_OPS_PER_WORKER))
-                        .collect::<Vec<_>>();
-                    for (idx, request) in requests.into_iter().enumerate() {
-                        worker_requests[idx % FIXED_CONCURRENCY].push(request);
-                    }
-
-                    let mut joins = JoinSet::new();
-                    for requests in worker_requests {
-                        let filter = Arc::clone(&filter);
-                        joins.spawn(async move {
-                            for request in requests {
-                                black_box(
-                                    filter
-                                        .issue_token_and_route(black_box(request.as_slice()))
-                                        .await
-                                        .expect("issue token and route"),
-                                );
-                            }
-                        });
-                    }
-                    while let Some(joined) = joins.join_next().await {
-                        joined.expect("join issue token worker");
-                    }
-                }
-            },
-            BatchSize::PerIteration,
-        )
-    });
-
     group.finish();
 }
 
 fn bench_check_duplication(c: &mut Criterion) {
-    let throughput_rt = multi_thread_runtime(FIXED_CONCURRENCY);
-    let latency_filter = Arc::new(build_filter());
-    let throughput_filter = Arc::new(build_filter());
+    pin_benchmark_thread();
+    let latency_filter = Arc::new(build_filter((0..FIXED_PREFIX_MAX).collect()));
     let mut latency_counter = 0u64;
-    let mut throughput_batch_start = 0u64;
-    let throughput_batch_ops = CHECK_DUPLICATION_BATCH_OPS as u64;
 
     let mut group = c.benchmark_group(CHECK_DUPLICATION_GROUP_NAME);
     group.sample_size(40);
@@ -236,45 +159,21 @@ fn bench_check_duplication(c: &mut Criterion) {
                 (token_from_counter(idx), route_for_token_index(idx))
             },
             |(token, route)| {
-                black_box(filter.check_duplication(black_box(&token), black_box(route)));
+                black_box(
+                    filter
+                        .check_duplication(black_box(&token), black_box(route))
+                        .expect("unique token on its shard"),
+                );
             },
             BatchSize::PerIteration,
         )
-    });
-
-    group.throughput(Throughput::Elements(throughput_batch_ops));
-    group.bench_function(PARALLEL_THROUGHPUT_BENCH_NAME, |b| {
-        let filter = Arc::clone(&throughput_filter);
-        b.to_async(&throughput_rt).iter(|| {
-            let filter = Arc::clone(&filter);
-            let batch_start = advance_batch(&mut throughput_batch_start, throughput_batch_ops);
-            async move {
-                let mut joins = JoinSet::new();
-                for worker in 0..FIXED_CONCURRENCY {
-                    let filter = Arc::clone(&filter);
-                    joins.spawn(async move {
-                        for offset in 0..CHECK_DUPLICATION_OPS_PER_WORKER {
-                            let idx = batch_start
-                                + (offset * FIXED_CONCURRENCY + worker) as u64;
-                            let token = token_from_counter(idx);
-                            black_box(filter.check_duplication(
-                                black_box(&token),
-                                black_box(route_for_token_index(idx)),
-                            ));
-                        }
-                    });
-                }
-                while let Some(joined) = joins.join_next().await {
-                    joined.expect("join check_duplication worker");
-                }
-            }
-        });
     });
 
     group.finish();
 }
 
 fn bench_diagnostics(c: &mut Criterion) {
+    pin_benchmark_thread();
     if env::var_os("STAR_FILTER_BENCH_DIAGNOSTICS").is_none() {
         return;
     }

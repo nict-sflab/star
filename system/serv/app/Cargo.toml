@@ -21,10 +21,14 @@ constant-time-utils = { path = "../../../../constant-time-utils", default-featur
 simple-filter-box = { path = "../../../../simple-filter-box", default-features = false, features = ["hashmap"] }
 star-core = { path = "../../../core" }
 star_attestation = { path = "../utils/attest", features = ["host-dcap"] }
-aesm-client = { version = "0.6.2", features = ["sgxs"] }
+aesm-client = { version = "0.6.3", features = ["sgxs"] }
+anyhow = "1"
 enclave-runner = "0.8"
-enclave-runner-sgx = "0.1"
-sgxs-loaders = "0.5"
+enclave-runner-sgx = "0.1.4"
+fast-rust-sgx-caller = { path = "../../../../fast-rust-sgx-caller" }
+sgx-isa = "0.6"
+sgxs = "0.9"
+sgxs-loaders = "0.5.2"
 base64 = "0.22.1"
 data-encoding = "2.10.0"
 libloading = "0.8"
@@ -47,9 +51,9 @@ path = "src/main.rs"
 star_tools = { path = "../tools/verifier" }
 tiny_http = "0.12"
 criterion = { version = "0.5", features = ["async_tokio", "html_reports"] }
+core_affinity = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 cpu-time = "1"
-anyhow = "1"
 dashmap = "6.1"
 
 [[bench]]

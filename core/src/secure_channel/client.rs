@@ -3,22 +3,25 @@ use chacha20poly1305::{
     aead::{Aead, KeyInit},
     ChaCha20Poly1305, Nonce,
 };
-use hpke::{
-    aead::ChaCha20Poly1305 as HpkeChaCha20Poly1305, kdf::HkdfSha256, kem::X25519HkdfSha256,
-    setup_sender, Deserializable, HpkeError, OpModeS, Serializable,
+use hpke_ng::{
+    ChaCha20Poly1305 as HpkeChaCha20Poly1305, DhKemX25519HkdfSha256, HkdfSha256, Hpke,
+    HpkeError, Kem,
 };
 use rand::{CryptoRng, RngCore};
 
+use super::RngCompat;
+
+type HpkeSuite = Hpke<DhKemX25519HkdfSha256, HkdfSha256, HpkeChaCha20Poly1305>;
+
 // HPKE sender living outside the enclave.
 pub struct SecureChannelClient {
-    receiver_pk: <X25519HkdfSha256 as hpke::kem::Kem>::PublicKey,
+    receiver_pk: <DhKemX25519HkdfSha256 as Kem>::PublicKey,
 }
 
 impl SecureChannelClient {
     /// Restore a sender from the receiver's 32-byte X25519 public key.
     pub fn new(receiver_pk_bytes: [u8; 32]) -> Result<Self, HpkeError> {
-        let receiver_pk =
-            <X25519HkdfSha256 as hpke::kem::Kem>::PublicKey::from_bytes(&receiver_pk_bytes)?;
+        let receiver_pk = DhKemX25519HkdfSha256::pk_from_bytes(&receiver_pk_bytes)?;
         Ok(Self { receiver_pk })
     }
 
@@ -33,20 +36,16 @@ impl SecureChannelClient {
         rng.fill_bytes(&mut aad);
         rng.fill_bytes(&mut info);
 
-        let (enc, mut sender_ctx) = setup_sender::<
-            HpkeChaCha20Poly1305,
-            HkdfSha256,
-            X25519HkdfSha256,
-            _,
-        >(&OpModeS::Base, &self.receiver_pk, &info, rng)?;
+        let mut compat_rng = RngCompat(rng);
+        let (enc, ciphertext) =
+            HpkeSuite::seal_base(&mut compat_rng, &self.receiver_pk, &info, &aad, plaintext)?;
 
-        let ciphertext = sender_ctx.seal(plaintext, &aad)?;
-
+        let enc_bytes = enc.as_ref();
         let mut envelope =
-            Vec::with_capacity(aad.len() + info.len() + enc.to_bytes().len() + ciphertext.len());
+            Vec::with_capacity(aad.len() + info.len() + enc_bytes.len() + ciphertext.len());
         envelope.extend_from_slice(&aad);
         envelope.extend_from_slice(&info);
-        envelope.extend_from_slice(&enc.to_bytes());
+        envelope.extend_from_slice(enc_bytes);
         envelope.extend_from_slice(&ciphertext);
         Ok(envelope)
     }

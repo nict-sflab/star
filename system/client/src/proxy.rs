@@ -31,8 +31,8 @@ impl StarReverseProxy {
             return Ok(());
         }
 
-        let token = self.star.token_request()?;
-        let mut upstream = self.upstream.connect(token).await?;
+        let (token, shard) = self.star.token_request(self.upstream.shard_count())?;
+        let mut upstream = self.upstream.connect(token, shard).await?;
 
         request.close_connection();
         upstream.write_all(request.as_bytes()).await?;
@@ -85,10 +85,7 @@ impl ServerApp for StarReverseProxy {
 pub fn build_server(config: ProxyConfig) -> Result<Server, BoxError> {
     let listen_addr = config.listen_addr.clone();
     let proxy = StarReverseProxy {
-        star: StarClient::register(
-            &config.star_api_base,
-            config.max_requests_per_period,
-        )?,
+        star: StarClient::register(&config.star_api_base, config.max_requests_per_period)?,
         upstream: config.upstream,
     };
 
