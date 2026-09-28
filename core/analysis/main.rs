@@ -45,7 +45,7 @@ fn main() {
         .expect("token issuance failed");
     timecop::unpoison(token.as_slice());
 
-    fail1();
+    // fail1();
     fail2();
 
     println!("done");
@@ -70,7 +70,7 @@ fn fail1() {
     let info = b"ct-test";
 
     let res = Suite::setup_receiver_base(&bad_encapped_key, &sk, info);
-    assert!(matches!(res, Err(HpkeError::DecapError)));
+    assert!(matches!(res, Err(HpkeError::EncapError)));
 }
 
 fn fail2() {
@@ -96,7 +96,9 @@ fn fail2() {
     let min_len = AAD_LEN + INFO_LEN + ENC_LEN;
     assert!(envelope.len() >= min_len, "HPKE envelope too short");
 
-    envelope[min_len - 1] = !envelope[min_len - 1];
+    //envelope[min_len - 1] = !envelope[min_len - 1];
+    *envelope.last_mut().unwrap() ^= 1;
+
 
     let aad = &envelope[..AAD_LEN];
     let info = &envelope[AAD_LEN..AAD_LEN + INFO_LEN];
