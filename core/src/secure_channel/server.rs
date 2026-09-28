@@ -79,9 +79,6 @@ impl SecureChannelServer {
             return Vec::new();
         };
 
-        #[cfg(feature = "timecop")]
-        timecop::poison(ciphertext);
-
         let key = match self.receive_hpke(enc, info, aad, ciphertext) {
             Ok(key) => key,
             Err(_) => return Vec::new(),
