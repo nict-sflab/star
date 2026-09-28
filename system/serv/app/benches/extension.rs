@@ -323,7 +323,6 @@ impl ShardedServers {
             .checked_mul(SCALE_OUT_OPS_PER_SERVER)
             .expect("scale-out benchmark operation count overflow");
 
-        for server in &mut self.servers {
             server
                 .stdin
                 .write_all(&operations.to_le_bytes())
