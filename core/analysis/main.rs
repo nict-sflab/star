@@ -45,7 +45,7 @@ fn main() {
         .expect("token issuance failed");
     timecop::unpoison(token.as_slice());
 
-    // fail1();
+    fail1();
     fail2();
 
     println!("done");
