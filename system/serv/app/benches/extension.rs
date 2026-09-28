@@ -322,6 +322,7 @@ impl ShardedServers {
         let operations = batches
             .checked_mul(SCALE_OUT_OPS_PER_SERVER)
             .expect("scale-out benchmark operation count overflow");
+
         for server in &mut self.servers {
             server
                 .stdin
