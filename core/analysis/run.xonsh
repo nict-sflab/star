@@ -21,47 +21,37 @@ elf = Path("target") / SGX_TARGET / "release" / "analysis"
 if not elf.is_file():
     raise RuntimeError(f"SGX ELF was not produced: {elf}")
 
-checks = [
-    ("credential", ANALYSIS_DIR / "checkct-credential.ini"),
-    ("hpke", ANALYSIS_DIR / "checkct-hpke.ini"),
+config = ANALYSIS_DIR / "checkct.ini"
+cmd = [
+    "binsec",
+    "-sse",
+    "-checkct",
+    "-sse-script",
+    str(config),
+    "-sse-depth",
+    "1000000",
+    str(elf),
 ]
 
-logs = []
-addresses = []
+proc = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+log = proc.stdout
 
-for name, config in checks:
-    cmd = [
-        "binsec",
-        "-sse",
-        "-checkct",
-        "-sse-script",
-        str(config),
-        "-sse-depth",
-        "1000000",
-        str(elf),
-    ]
-    proc = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    log = proc.stdout
-    print(f"=== BINSEC CHECKCT: {name} ===")
-    print(log, end="" if log.endswith("\n") else "\n")
-    logs.append((name, log))
+print("=== BINSEC CHECKCT: issue_token ===")
+print(log, end="" if log.endswith("\n") else "\n")
 
-    addresses.extend(
-        re.findall(r"Instruction (0x[0-9A-Fa-f]+) has ", log)
-    )
+if proc.returncode != 0 or "[checkct:error]" in log:
+    raise RuntimeError("Binsec checkct failed for issue_token")
 
-    if proc.returncode != 0 or "[checkct:error]" in log:
-        raise RuntimeError(f"Binsec checkct failed for {name}")
+addresses = re.findall(r"Instruction (0x[0-9A-Fa-f]+) has ", log)
 
 STAR_BENCH_PATH.mkdir(parents=True, exist_ok=True)
 
 with open(FILE_NAME, "w") as out:
-    for name, log in logs:
-        out.write(f"=== BINSEC CHECKCT: {name} ===\n")
-        out.write(log)
-        if not log.endswith("\n"):
-            out.write("\n")
+    out.write("=== BINSEC CHECKCT: issue_token ===\n")
+    out.write(log)
+    if not log.endswith("\n"):
         out.write("\n")
+    out.write("\n")
 
     for address in dict.fromkeys(addresses):
         pc = int(address, 16)
