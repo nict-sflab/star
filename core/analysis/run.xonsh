@@ -1,37 +1,89 @@
 #!/usr/bin/env xonsh
 
-import re, os
+import os
+import re
+import subprocess
 from pathlib import Path
 
+SGX_TARGET = "x86_64-fortanix-unknown-sgx"
 STAR_BENCH_PATH = Path(os.environ.get("STAR_BENCH_PATH", "/workspace/star/bench"))
 FILE_NAME = STAR_BENCH_PATH / "analysis.s"
+ANALYSIS_DIR = Path(__file__).resolve().parent
 
-cd @(Path(__file__).resolve().parent.parent)
+cd @(ANALYSIS_DIR.parent)
 
 jobs = @.env.get("CARGO_BUILD_JOBS") or $(nproc).strip()
-$RUSTFLAGS = "-C debuginfo=2 -C force-frame-pointers=yes"
+$RUSTFLAGS = '--cfg getrandom_backend="rdrand" -C debuginfo=2 -C force-frame-pointers=yes'
 
-cargo build -j @(jobs) --bin analysis --features timecop --release
+cargo build -j @(jobs) --bin analysis --release --target @(SGX_TARGET)
 
-log = $(valgrind --leak-check=full --show-leak-kinds=all ./target/release/analysis 2>&1)
-print(log, end="")
+elf = Path("target") / SGX_TARGET / "release" / "analysis"
+if not elf.is_file():
+    raise RuntimeError(f"SGX ELF was not produced: {elf}")
 
-addresses = dict.fromkeys(re.findall(r'at (0x[0-9A-Fa-f]+):', log))
+checks = [
+    ("credential", ANALYSIS_DIR / "checkct-credential.ini"),
+    ("hpke", ANALYSIS_DIR / "checkct-hpke.ini"),
+]
+
+logs = []
+addresses = []
+
+for name, config in checks:
+    cmd = [
+        "binsec",
+        "-sse",
+        "-checkct",
+        "-sse-script",
+        str(config),
+        "-sse-depth",
+        "1000000",
+        str(elf),
+    ]
+    proc = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    log = proc.stdout
+    print(f"=== BINSEC CHECKCT: {name} ===")
+    print(log, end="" if log.endswith("\n") else "\n")
+    logs.append((name, log))
+
+    addresses.extend(
+        re.findall(r"Instruction (0x[0-9A-Fa-f]+) has ", log)
+    )
+
+    if proc.returncode != 0 or "[checkct:error]" in log:
+        raise RuntimeError(f"Binsec checkct failed for {name}")
+
+STAR_BENCH_PATH.mkdir(parents=True, exist_ok=True)
 
 with open(FILE_NAME, "w") as out:
-    out.write("=== VALGRIND OUTPUT ===\n")
-    out.write(log)
-    if not log.endswith("\n"):
+    for name, log in logs:
+        out.write(f"=== BINSEC CHECKCT: {name} ===\n")
+        out.write(log)
+        if not log.endswith("\n"):
+            out.write("\n")
         out.write("\n")
-    out.write("\n")
 
-    for a in addresses:
-        f = int(a, 16) - 0x4000000
+    for address in dict.fromkeys(addresses):
+        pc = int(address, 16)
+        start = max(0, pc - 512)
+        stop = pc + 512
+        disassembly = subprocess.run(
+            [
+                "objdump",
+                "-Cd",
+                "--demangle",
+                f"--start-address={start}",
+                f"--stop-address={stop}",
+                str(elf),
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=True,
+        ).stdout
 
-        out.write(f"=== A={a} F={f:#x} ===\n")
-        out.write(
-            $(objdump -Cd --demangle ./target/release/analysis \
-                @("--start-address=" + str(f - 512)) \
-                @("--stop-address=" + str(f + 512)))
-        )
+        out.write(f"=== LEAK AT {address} ===\n")
+        out.write(disassembly)
+        if not disassembly.endswith("\n"):
+            out.write("\n")
         out.write("\n")
