@@ -1,111 +1,92 @@
-use constant_time_utils::time;
-use rand::{rngs::OsRng, RngCore};
-use star_core::client::User;
-use star_core::secure_channel::{client::SecureChannelClient, server::SecureChannelServer};
-use star_core::serv::core::token;
-use star_core::serv::enclave::Enclave;
+use core::ptr::{addr_of, addr_of_mut, read_volatile, write_volatile};
 
-const period: u64 = 1;
+use star_core::secure_channel::server::SecureChannelServer;
+use star_core::serv::core::cred::Credential;
 
-// #[cfg(feature = "timecop")]
+#[no_mangle]
+pub static mut BINSEC_SECRET_TOKEN_KEY: [u8; 32] = [0x11; 32];
+#[no_mangle]
+pub static mut BINSEC_SECRET_HPKE_KEY: [u8; 32] = [0x22; 32];
+
+#[no_mangle]
+pub static mut BINSEC_PUBLIC_CREDENTIAL: [u8; 64] = [0; 64];
+#[no_mangle]
+pub static mut BINSEC_PUBLIC_COUNT: [u8; 8] = [0; 8];
+#[no_mangle]
+pub static mut BINSEC_PUBLIC_PERIOD: [u8; 8] = [0; 8];
+#[no_mangle]
+pub static mut BINSEC_PUBLIC_CURRENT_PERIOD: [u8; 8] = [0; 8];
+#[no_mangle]
+pub static mut BINSEC_PUBLIC_MAX_COUNT: [u8; 8] = [0xff; 8];
+
+#[no_mangle]
+pub static mut BINSEC_PUBLIC_ENC: [u8; 32] = [0; 32];
+#[no_mangle]
+pub static mut BINSEC_PUBLIC_INFO: [u8; 32] = [0; 32];
+#[no_mangle]
+pub static mut BINSEC_PUBLIC_AAD: [u8; 32] = [0; 32];
+#[no_mangle]
+pub static mut BINSEC_PUBLIC_CIPHERTEXT: [u8; 48] = [0; 48];
+
+#[no_mangle]
+pub static mut BINSEC_RESULT: u8 = 0;
+
+#[no_mangle]
+#[inline(never)]
+pub extern "C" fn binsec_halt() -> ! {
+    loop {
+        core::hint::spin_loop();
+    }
+}
+
+#[no_mangle]
+#[inline(never)]
+pub extern "C" fn binsec_check_credential() -> ! {
+    let secret_key = unsafe { read_volatile(addr_of!(BINSEC_SECRET_TOKEN_KEY)) };
+    let credential_bytes = unsafe { read_volatile(addr_of!(BINSEC_PUBLIC_CREDENTIAL)) };
+    let count = unsafe { read_volatile(addr_of!(BINSEC_PUBLIC_COUNT)) };
+    let period = unsafe { read_volatile(addr_of!(BINSEC_PUBLIC_PERIOD)) };
+    let current_period = unsafe { read_volatile(addr_of!(BINSEC_PUBLIC_CURRENT_PERIOD)) };
+    let max_count = unsafe { read_volatile(addr_of!(BINSEC_PUBLIC_MAX_COUNT)) };
+
+    let credential = Credential::from_bytes(&credential_bytes);
+    let valid = credential.is_valid(period, count, current_period, max_count, secret_key);
+
+    unsafe {
+        write_volatile(addr_of_mut!(BINSEC_RESULT), u8::from(valid));
+    }
+    binsec_halt()
+}
+
+#[no_mangle]
+#[inline(never)]
+pub extern "C" fn binsec_check_hpke() -> ! {
+    let secret_key = unsafe { read_volatile(addr_of!(BINSEC_SECRET_HPKE_KEY)) };
+    let enc = unsafe { read_volatile(addr_of!(BINSEC_PUBLIC_ENC)) };
+    let info = unsafe { read_volatile(addr_of!(BINSEC_PUBLIC_INFO)) };
+    let aad = unsafe { read_volatile(addr_of!(BINSEC_PUBLIC_AAD)) };
+    let ciphertext = unsafe { read_volatile(addr_of!(BINSEC_PUBLIC_CIPHERTEXT)) };
+
+    let receiver = match SecureChannelServer::new(secret_key) {
+        Ok(receiver) => receiver,
+        Err(_) => {
+            unsafe {
+                write_volatile(addr_of_mut!(BINSEC_RESULT), 0xff);
+            }
+            binsec_halt()
+        }
+    };
+
+    let result = receiver.receive_hpke(&enc, &info, &aad, &ciphertext);
+    let ok = result.is_ok();
+    core::mem::forget(result);
+
+    unsafe {
+        write_volatile(addr_of_mut!(BINSEC_RESULT), u8::from(ok));
+    }
+    binsec_halt()
+}
+
 fn main() {
-    // End-to-end demo: issue a credential, request a token over HPKE, and inspect the token.
-    let mut rng: OsRng = OsRng;
-
-    // Bootstrap enclave secrets.
-    let mut token_sk = [0u8; 32];
-    let mut hpke_sk = [0u8; 32];
-    rng.fill_bytes(&mut token_sk);
-    rng.fill_bytes(&mut hpke_sk);
-
-    timecop::poison(hpke_sk.as_slice());
-    timecop::poison(token_sk.as_slice());
-
-    let max_tokens_per_credential = 3u32;
-    let enclave = Enclave::new(max_tokens_per_credential, token_sk, hpke_sk)
-        .expect("failed to initialize enclave");
-
-    // User setup and credential issuance.
-    let pk = enclave.public_key();
-
-    timecop::unpoison(pk.as_slice());
-    let sender = SecureChannelClient::new(pk).expect("failed to initialize sender");
-    let mut user = User::new(max_tokens_per_credential as u64, sender);
-    let (cipher, ck) = user.request_credential(&mut rng);
-    let credential_bytes: Vec<u8> = enclave.issue_cred(&cipher, &mut rng);
-
-    timecop::unpoison(credential_bytes.as_slice());
-    user.receive_credential(&credential_bytes, &ck);
-
-    let envelope = user
-        .request_auth(1, period, &mut rng)
-        .expect("failed to build token request");
-    let token = enclave
-        .issue_token(&envelope, period.to_be_bytes())
-        .expect("token issuance failed");
-    timecop::unpoison(token.as_slice());
-
-    fail1();
-    fail2();
-
-    println!("done");
-}
-
-use hpke_ng::{
-    ChaCha20Poly1305, DhKemX25519HkdfSha256, HkdfSha384, Hpke, HpkeError, Kem,
-};
-
-fn fail1() {
-    type KemType = DhKemX25519HkdfSha256;
-    type Suite = Hpke<KemType, HkdfSha384, ChaCha20Poly1305>;
-
-    let sk_bytes = [0u8; 32];
-    timecop::poison(sk_bytes.as_slice());
-
-    let sk = KemType::sk_from_bytes(&sk_bytes).unwrap();
-
-    let plain = [0u8; 32];
-    let bad_encapped_key = KemType::enc_from_bytes(&plain).expect("bad enc parse failed");
-
-    let info = b"ct-test";
-
-    let res = Suite::setup_receiver_base(&bad_encapped_key, &sk, info);
-    assert!(matches!(res, Err(HpkeError::EncapError)));
-}
-
-fn fail2() {
-    let mut rng = OsRng;
-    let mut hpke_sk = [0u8; 32];
-    rng.fill_bytes(&mut hpke_sk);
-
-    timecop::poison(hpke_sk.as_slice());
-    let receiver = SecureChannelServer::new(hpke_sk).unwrap();
-
-    let receiver_pk = receiver.public_key();
-    timecop::unpoison(receiver_pk.as_slice());
-
-    let sender = SecureChannelClient::new(receiver_pk).expect("sender init failed");
-    let (envelope, _shared_key) = sender
-        .send_shared_key(&mut rng)
-        .expect("send shared key failed");
-
-    let mut envelope = envelope.clone();
-    const AAD_LEN: usize = 32;
-    const INFO_LEN: usize = 32;
-    const ENC_LEN: usize = 32;
-    let min_len = AAD_LEN + INFO_LEN + ENC_LEN;
-    assert!(envelope.len() >= min_len, "HPKE envelope too short");
-
-    //envelope[min_len - 1] = !envelope[min_len - 1];
-    *envelope.last_mut().unwrap() ^= 1;
-
-
-    let aad = &envelope[..AAD_LEN];
-    let info = &envelope[AAD_LEN..AAD_LEN + INFO_LEN];
-    let enc = &envelope[AAD_LEN + INFO_LEN..AAD_LEN + INFO_LEN + ENC_LEN];
-    let ciphertext = &envelope[AAD_LEN + INFO_LEN + ENC_LEN..];
-
-    // this is target
-    let decrypted_key = receiver.receive_hpke(enc, info, aad, ciphertext);
-    assert!(matches!(decrypted_key, Err(HpkeError::OpenError)));
+    binsec_check_credential()
 }
