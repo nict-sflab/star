@@ -13,7 +13,7 @@ STAR is designed around two security goals: rate-limiting and unlinkability.
 | Path | Role |
 | --- | --- |
 | [`core/`](core/) | Core Library of the STAR |
-| [`core/analysis/`](core/analysis/) | Side-channel checks / Timecop-style analysis |
+| [`core/analysis/`](core/analysis/) | Binsec side-channel checks over SGX-target ELF binaries |
 | [`system/client/`](system/client/) | Client-side Proxy |
 | [`system/serv/`](system/serv/) | Rate-Limiting Service |
 | [`system/serv/app/`](system/serv/app/) | Filtering Proxy / Registration API |
