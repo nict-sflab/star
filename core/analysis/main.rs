@@ -5,26 +5,19 @@ use star_core::secure_channel::{client::SecureChannelClient, server::SecureChann
 use star_core::serv::core::token;
 use star_core::serv::enclave::Enclave;
 
+mod rng;
+use rng::PoisonedRng;
+
 const PERIOD: u64 = 1;
 
 fn main() {
-    let mut rng: OsRng = OsRng;
+    let mut rng: PoisonedRng = PoisonedRng::new();
 
     // arg of target 1
-
-    let mut token_sk = [0u8; 32];
-    let mut hpke_sk = [0u8; 32];
-    rng.fill_bytes(&mut token_sk);
-    rng.fill_bytes(&mut hpke_sk);
-
-    timecop::poison(hpke_sk.as_slice());
-    timecop::poison(token_sk.as_slice());
-
     let max_tokens_per_credential = 3u32;
-    
+
     // target 1
-    let enclave = Enclave::new(max_tokens_per_credential, token_sk, hpke_sk)
-        .expect("failed to initialize enclave");
+    let enclave = Enclave::default(&mut rng);
 
     // User setup and credential issuance.
     let pk = enclave.public_key();
