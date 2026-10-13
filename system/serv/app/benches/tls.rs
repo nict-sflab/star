@@ -26,7 +26,7 @@ struct FirstFlightHarness {
 impl FirstFlightHarness {
     fn new() -> Self {
         let mut acceptor =
-            SslAcceptor::mozilla_intermediate(SslMethod::tls()).expect("build TLS acceptor");
+            SslAcceptor::mozilla_intermediate_v5(SslMethod::tls()).expect("build TLS acceptor");
         tls::configure_server(&mut acceptor, CertificateKind::Chain);
         acceptor
             .set_min_proto_version(Some(SslVersion::TLS1_3))
