@@ -1,8 +1,5 @@
 mod common;
 
-use std::os::raw::{c_int, c_uchar, c_uint};
-use std::ptr;
-use std::slice;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -10,24 +7,16 @@ use common::scale_out::{OPS_PER_SERVER, SERVER_COUNTS, ScaleOutServers, run_work
 use common::star::{KeyedEnclaves, MAX_COUNT_PER_CREDENTIAL, register_user};
 use common::tls::{self, CertificateKind, MemoryStream};
 use criterion::{Criterion, Throughput, black_box, criterion_group};
-use foreign_types::ForeignTypeRef;
 use openssl::error::ErrorStack;
 use openssl::ssl::{
-    ClientHelloResponse, ExtensionContext, HandshakeError, Ssl, SslAcceptor, SslAlert,
-    SslMethod, SslRef,
+    ClientHelloResponse, ExtensionContext, HandshakeError, SslAcceptor, SslAlert, SslMethod,
 };
 use rand_core::OsRng;
 use star_app::filter::StarFilterErrorStatus;
-use star_app::tls::STAR_TLS_EXTENSION_TYPE;
-
-unsafe extern "C" {
-    fn SSL_client_hello_get0_ext(
-        s: *mut openssl_sys::SSL,
-        type_: c_uint,
-        out: *mut *const c_uchar,
-        outlen: *mut usize,
-    ) -> c_int;
-}
+use star_app::tls::{
+    register_star_tls_extension, star_tls_client_hello_callback,
+    star_tls_extension_from_client_hello, STAR_TLS_EXTENSION_TYPE,
+};
 
 #[derive(Clone, Copy)]
 enum RejectCase {
@@ -46,11 +35,12 @@ impl RejectHarness {
         let mut acceptor =
             SslAcceptor::mozilla_intermediate_v5(SslMethod::tls()).expect("build TLS acceptor");
         tls::configure_server(&mut acceptor, CertificateKind::File);
+        register_star_tls_extension(&mut acceptor).expect("register STAR extension");
 
         let extension = match case {
             RejectCase::MissingExtension => {
                 acceptor.set_client_hello_callback(|ssl, alert| {
-                    if star_extension_from_client_hello(ssl).is_none() {
+                    if star_tls_extension_from_client_hello(ssl).is_none() {
                         return reject_client_hello(alert, SslAlert::DECODE_ERROR);
                     }
                     Ok(ClientHelloResponse::SUCCESS)
@@ -98,47 +88,9 @@ impl RejectHarness {
                     request
                 };
 
-                acceptor.set_client_hello_callback(|ssl, alert| {
-                    match star_extension_from_client_hello(ssl) {
-                        Some(data) if !data.is_empty() => Ok(ClientHelloResponse::SUCCESS),
-                        _ => reject_client_hello(alert, SslAlert::DECODE_ERROR),
-                    }
-                });
-
-                let token_index = Ssl::new_ex_index::<Vec<u8>>().expect("TLS token ex_data index");
-                acceptor
-                    .add_custom_ext(
-                        STAR_TLS_EXTENSION_TYPE,
-                        ExtensionContext::CLIENT_HELLO,
-                        |_ssl, _context, _cert| Ok(None::<Vec<u8>>),
-                        move |ssl, _context, ext_data, _cert| {
-                            if ext_data.is_empty() {
-                                return Err(SslAlert::DECODE_ERROR);
-                            }
-
-                            if let Some(existing) = ssl.ex_data(token_index) {
-                                return if existing.as_slice() == ext_data {
-                                    Ok(())
-                                } else {
-                                    Err(SslAlert::ILLEGAL_PARAMETER)
-                                };
-                            }
-
-                            filter
-                                .filter_client_hello(ext_data)
-                                .map_err(|error| match error {
-                                    StarFilterErrorStatus::InvalidToken
-                                    | StarFilterErrorStatus::Internal => SslAlert::DECODE_ERROR,
-                                    StarFilterErrorStatus::InvalidRoute
-                                    | StarFilterErrorStatus::DuplicatedToken => {
-                                        SslAlert::ILLEGAL_PARAMETER
-                                    }
-                                })?;
-                            ssl.set_ex_data(token_index, ext_data.to_vec());
-                            Ok(())
-                        },
-                    )
-                    .expect("configure STAR extension");
+                acceptor.set_client_hello_callback(
+                    star_tls_client_hello_callback(filter).expect("configure STAR extension"),
+                );
 
                 Some(request)
             }
@@ -212,27 +164,6 @@ fn reject_client_hello(
 ) -> Result<ClientHelloResponse, ErrorStack> {
     *alert = ssl_alert;
     Err(ErrorStack::get())
-}
-
-fn star_extension_from_client_hello<'a>(ssl: &'a SslRef) -> Option<&'a [u8]> {
-    let mut out = ptr::null();
-    let mut out_len = 0usize;
-    let found = unsafe {
-        SSL_client_hello_get0_ext(
-            ssl.as_ptr(),
-            STAR_TLS_EXTENSION_TYPE as c_uint,
-            &mut out,
-            &mut out_len,
-        )
-    };
-
-    if found != 1 || (out.is_null() && out_len != 0) {
-        return None;
-    }
-    if out_len == 0 {
-        return Some(&[]);
-    }
-    Some(unsafe { slice::from_raw_parts(out, out_len) })
 }
 
 fn bench_client_hello_reject(c: &mut Criterion) {
