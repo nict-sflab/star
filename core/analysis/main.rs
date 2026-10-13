@@ -5,13 +5,13 @@ use star_core::secure_channel::{client::SecureChannelClient, server::SecureChann
 use star_core::serv::core::token;
 use star_core::serv::enclave::Enclave;
 
-const period: u64 = 1;
+const PERIOD: u64 = 1;
 
 fn main() {
-    // End-to-end demo: issue a credential, request a token over HPKE, and inspect the token.
     let mut rng: OsRng = OsRng;
 
-    // Bootstrap enclave secrets.
+    // arg of target 1
+
     let mut token_sk = [0u8; 32];
     let mut hpke_sk = [0u8; 32];
     rng.fill_bytes(&mut token_sk);
@@ -21,26 +21,40 @@ fn main() {
     timecop::poison(token_sk.as_slice());
 
     let max_tokens_per_credential = 3u32;
+    
+    // target 1
     let enclave = Enclave::new(max_tokens_per_credential, token_sk, hpke_sk)
         .expect("failed to initialize enclave");
 
     // User setup and credential issuance.
     let pk = enclave.public_key();
-
     timecop::unpoison(pk.as_slice());
     let sender = SecureChannelClient::new(pk).expect("failed to initialize sender");
     let mut user = User::new(max_tokens_per_credential as u64, sender);
     let (cipher, ck) = user.request_credential(&mut rng);
+
+    // arg of target 2
+    timecop::poison(cipher.as_slice());
+
+    // target 2
     let credential_bytes: Vec<u8> = enclave.issue_cred(&cipher, &mut rng);
 
     timecop::unpoison(credential_bytes.as_slice());
     user.receive_credential(&credential_bytes, &ck);
 
     let envelope = user
-        .request_auth(1, period, &mut rng)
+        .request_auth(1, PERIOD, &mut rng)
         .expect("failed to build token request");
+
+    let period = PERIOD.to_be_bytes();
+
+    // arg of target 3
+    timecop::poison(period.as_slice());
+    timecop::poison(envelope.as_slice());
+
+    // target 3
     let token = enclave
-        .issue_token(&envelope, period.to_be_bytes())
+        .issue_token(&envelope, period)
         .expect("token issuance failed");
     timecop::unpoison(token.as_slice());
 
