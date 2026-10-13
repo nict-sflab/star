@@ -1,12 +1,13 @@
 mod common;
 
+use cpu_time::ThreadTime;
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use openssl::ssl::{SslAcceptor, SslConnector, SslFiletype, SslMethod, SslVerifyMode};
 use std::error::Error;
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::mpsc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const WARMUP_REQUESTS: usize = 128;
 const TLS_CERT_RELATIVE_PATH: &str = "examples/certs/server.crt";
@@ -91,7 +92,7 @@ impl BenchHarness {
                 tcp.set_write_timeout(Some(IO_TIMEOUT))
                     .expect("set TCP write timeout");
 
-                let start = Instant::now();
+                let start = ThreadTime::now();
                 let _tls = acceptor.accept(tcp).expect("accept TLS handshake");
                 latency_tx
                     .send(start.elapsed())
