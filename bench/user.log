@@ -1,16 +1,17 @@
 user.latency/request_auth_plain
-                        time:   [55.866 ns 55.903 ns 55.947 ns]
-                        thrpt:  [1.3317 GiB/s 1.3328 GiB/s 1.3337 GiB/s]
-Found 11 outliers among 100 measurements (11.00%)
+                        time:   [54.334 ns 54.402 ns 54.483 ns]
+                        thrpt:  [1.3675 GiB/s 1.3695 GiB/s 1.3712 GiB/s]
+Found 13 outliers among 100 measurements (13.00%)
+  13 (13.00%) high mild
+user.latency/encrypt    time:   [94.560 µs 94.567 µs 94.577 µs]
+                        thrpt:  [1.9361 MiB/s 1.9362 MiB/s 1.9364 MiB/s]
+Found 6 outliers among 100 measurements (6.00%)
+  1 (1.00%) low mild
   3 (3.00%) high mild
-  8 (8.00%) high severe
-user.latency/encrypt    time:   [90.465 µs 90.469 µs 90.473 µs]
-                        thrpt:  [2.0239 MiB/s 2.0240 MiB/s 2.0240 MiB/s]
-Found 3 outliers among 100 measurements (3.00%)
-  3 (3.00%) high severe
-user.latency/route      time:   [219.90 ns 219.96 ns 220.03 ns]
-                        thrpt:  [4.5448 Melem/s 4.5462 Melem/s 4.5476 Melem/s]
-Found 10 outliers among 100 measurements (10.00%)
-  3 (3.00%) high mild
+  2 (2.00%) high severe
+user.latency/route      time:   [219.96 ns 220.04 ns 220.12 ns]
+                        thrpt:  [4.5430 Melem/s 4.5447 Melem/s 4.5462 Melem/s]
+Found 12 outliers among 100 measurements (12.00%)
+  5 (5.00%) high mild
   7 (7.00%) high severe
 
