@@ -1,31 +1,31 @@
 enclave.issue_token.stages/decrypt
-                        time:   [128.95 µs 129.22 µs 129.54 µs]
-                        thrpt:  [1.4135 MiB/s 1.4170 MiB/s 1.4200 MiB/s]
+                        time:   [128.76 µs 128.94 µs 129.17 µs]
+                        thrpt:  [1.4176 MiB/s 1.4201 MiB/s 1.4220 MiB/s]
 Found 11 outliers among 100 measurements (11.00%)
-  5 (5.00%) high mild
-  6 (6.00%) high severe
-enclave.issue_token.stages/verify
-                        time:   [544.45 ns 545.45 ns 546.60 ns]
-                        thrpt:  [139.58 MiB/s 139.87 MiB/s 140.13 MiB/s]
-Found 12 outliers among 100 measurements (12.00%)
   4 (4.00%) high mild
-  8 (8.00%) high severe
+  7 (7.00%) high severe
+enclave.issue_token.stages/verify
+                        time:   [543.14 ns 544.48 ns 545.95 ns]
+                        thrpt:  [139.75 MiB/s 140.12 MiB/s 140.47 MiB/s]
+Found 13 outliers among 100 measurements (13.00%)
+  6 (6.00%) high mild
+  7 (7.00%) high severe
 enclave.issue_token.stages/token_generation
-                        time:   [328.24 ns 328.93 ns 329.65 ns]
-                        thrpt:  [92.575 MiB/s 92.780 MiB/s 92.973 MiB/s]
-Found 14 outliers among 100 measurements (14.00%)
-  7 (7.00%) high mild
+                        time:   [328.33 ns 329.05 ns 329.81 ns]
+                        thrpt:  [92.532 MiB/s 92.746 MiB/s 92.948 MiB/s]
+Found 10 outliers among 100 measurements (10.00%)
+  3 (3.00%) high mild
   7 (7.00%) high severe
 enclave.issue_token.stages/route
-                        time:   [246.97 ns 247.53 ns 248.13 ns]
-                        thrpt:  [4.0301 Melem/s 4.0399 Melem/s 4.0491 Melem/s]
-Found 10 outliers among 100 measurements (10.00%)
-  5 (5.00%) high mild
-  5 (5.00%) high severe
-enclave.issue_token.stages/encrypt
-                        time:   [1.0883 µs 1.0903 µs 1.0927 µs]
-                        thrpt:  [27.929 MiB/s 27.989 MiB/s 28.042 MiB/s]
+                        time:   [247.56 ns 248.07 ns 248.66 ns]
+                        thrpt:  [4.0216 Melem/s 4.0311 Melem/s 4.0393 Melem/s]
 Found 12 outliers among 100 measurements (12.00%)
-  4 (4.00%) high mild
+  6 (6.00%) high mild
+  6 (6.00%) high severe
+enclave.issue_token.stages/encrypt
+                        time:   [1.0872 µs 1.0887 µs 1.0905 µs]
+                        thrpt:  [27.986 MiB/s 28.032 MiB/s 28.070 MiB/s]
+Found 11 outliers among 100 measurements (11.00%)
+  3 (3.00%) high mild
   8 (8.00%) high severe
 
