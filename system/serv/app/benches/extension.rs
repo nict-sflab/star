@@ -98,47 +98,36 @@ impl RejectHarness {
                     request
                 };
 
-                acceptor.set_client_hello_callback(|ssl, alert| {
-                    match star_extension_from_client_hello(ssl) {
-                        Some(data) if !data.is_empty() => Ok(ClientHelloResponse::SUCCESS),
-                        _ => reject_client_hello(alert, SslAlert::DECODE_ERROR),
-                    }
-                });
-
                 let token_index = Ssl::new_ex_index::<Vec<u8>>().expect("TLS token ex_data index");
-                acceptor
-                    .add_custom_ext(
-                        STAR_TLS_EXTENSION_TYPE,
-                        ExtensionContext::CLIENT_HELLO,
-                        |_ssl, _context, _cert| Ok(None::<Vec<u8>>),
-                        move |ssl, _context, ext_data, _cert| {
-                            if ext_data.is_empty() {
-                                return Err(SslAlert::DECODE_ERROR);
-                            }
+                acceptor.set_client_hello_callback(move |ssl, alert| {
+                    let ext_data = match star_extension_from_client_hello(ssl) {
+                        Some(data) if !data.is_empty() => data,
+                        _ => return reject_client_hello(alert, SslAlert::DECODE_ERROR),
+                    };
 
-                            if let Some(existing) = ssl.ex_data(token_index) {
-                                return if existing.as_slice() == ext_data {
-                                    Ok(())
-                                } else {
-                                    Err(SslAlert::ILLEGAL_PARAMETER)
-                                };
-                            }
+                    if let Some(existing) = ssl.ex_data(token_index) {
+                        return if existing.as_slice() == ext_data {
+                            Ok(ClientHelloResponse::SUCCESS)
+                        } else {
+                            reject_client_hello(alert, SslAlert::ILLEGAL_PARAMETER)
+                        };
+                    }
 
-                            filter
-                                .filter_client_hello(ext_data)
-                                .map_err(|error| match error {
-                                    StarFilterErrorStatus::InvalidToken
-                                    | StarFilterErrorStatus::Internal => SslAlert::DECODE_ERROR,
-                                    StarFilterErrorStatus::InvalidRoute
-                                    | StarFilterErrorStatus::DuplicatedToken => {
-                                        SslAlert::ILLEGAL_PARAMETER
-                                    }
-                                })?;
-                            ssl.set_ex_data(token_index, ext_data.to_vec());
-                            Ok(())
-                        },
-                    )
-                    .expect("configure STAR extension");
+                    if let Err(error) = filter.filter_client_hello(ext_data) {
+                        let ssl_alert = match error {
+                            StarFilterErrorStatus::InvalidToken
+                            | StarFilterErrorStatus::Internal => SslAlert::DECODE_ERROR,
+                            StarFilterErrorStatus::InvalidRoute
+                            | StarFilterErrorStatus::DuplicatedToken => {
+                                SslAlert::ILLEGAL_PARAMETER
+                            }
+                        };
+                        return reject_client_hello(alert, ssl_alert);
+                    }
+
+                    ssl.set_ex_data(token_index, ext_data.to_vec());
+                    Ok(ClientHelloResponse::SUCCESS)
+                });
 
                 Some(request)
             }
