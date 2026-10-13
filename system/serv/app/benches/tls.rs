@@ -72,6 +72,7 @@ impl FirstFlightHarness {
             "client did not produce its Finished message"
         );
 
+        drop(server);
         Self { acceptor, client_hello }
     }
 
