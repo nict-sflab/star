@@ -81,7 +81,7 @@ where
         *STAR_TLS_TOKEN_EX_INDEX.get().expect("TLS token index set")
     };
 
-    Ok(move |ssl, alert| {
+    Ok(move |ssl: &mut SslRef, alert: &mut SslAlert| {
         let extension = match star_tls_extension_from_client_hello(ssl) {
             Some(extension) if !extension.is_empty() => extension,
             _ => {
