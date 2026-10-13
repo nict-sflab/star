@@ -45,3 +45,9 @@ harness = false
 
 [package.metadata.fortanix-sgx]
 threads = 2
+
+# Match hpke-ng's own benchmark optimization settings so cryptographic
+# routines can be inlined and optimized across crate boundaries.
+[profile.bench]
+lto = "thin"
+codegen-units = 1
