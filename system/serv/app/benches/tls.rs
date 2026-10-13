@@ -1,144 +1,153 @@
 mod common;
 
-use cpu_time::ThreadTime;
-use criterion::{Criterion, Throughput, criterion_group, criterion_main};
-use openssl::ssl::{SslAcceptor, SslConnector, SslFiletype, SslMethod, SslVerifyMode};
-use std::error::Error;
-use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::sync::mpsc;
-use std::thread;
-use std::time::Duration;
+use common::scale_out::{OPS_PER_SERVER, SERVER_COUNTS, ScaleOutServers, run_worker};
+use common::tls::{self, CertificateKind, MemoryStream};
+use criterion::{Criterion, Throughput, black_box, criterion_group};
+use openssl::ssl::{
+    ErrorCode, HandshakeError, MidHandshakeSslStream, SslAcceptor, SslMethod, SslVersion,
+};
+use std::time::{Duration, Instant};
 
-const WARMUP_REQUESTS: usize = 128;
-const TLS_CERT_RELATIVE_PATH: &str = "examples/certs/server.crt";
-const TLS_KEY_RELATIVE_PATH: &str = "examples/certs/server.key";
-const IO_TIMEOUT: Duration = Duration::from_secs(2);
-const LATENCY_RECV_TIMEOUT: Duration = Duration::from_secs(2);
-const BENCH_GROUP_NAME: &str = "pure_tls_server_side_latency";
-const TLS_HANDSHAKE_ONLY: &str = "server_side_tls_handshake";
+const BENCH_CASE_NAME: &str = "openssl_tls13_first_flight_to_server_finished";
 
-struct PlainTlsClient {
-    connector: SslConnector,
+fn expected_client_finished_wait(handshake: &MidHandshakeSslStream<MemoryStream<&[u8]>>) -> bool {
+    handshake.error().code() == ErrorCode::WANT_READ
+        && handshake.get_ref().consumed_all()
+        && !handshake.get_ref().written().is_empty()
+        && handshake.ssl().version_str() == "TLSv1.3"
+        && !handshake.ssl().session_reused()
 }
 
-impl PlainTlsClient {
+struct FirstFlightHarness {
+    acceptor: SslAcceptor,
+    client_hello: Vec<u8>,
+}
+
+impl FirstFlightHarness {
     fn new() -> Self {
-        let mut builder = SslConnector::builder(SslMethod::tls()).expect("build TLS connector");
-        builder.set_verify(SslVerifyMode::NONE);
-        builder
-            .set_groups_list("X25519")
-            .expect("set client TLS group");
-        Self {
-            connector: builder.build(),
-        }
-    }
+        let mut acceptor =
+            SslAcceptor::mozilla_intermediate(SslMethod::tls()).expect("build TLS acceptor");
+        tls::configure_server(&mut acceptor, CertificateKind::Chain);
+        acceptor
+            .set_min_proto_version(Some(SslVersion::TLS1_3))
+            .expect("require TLS 1.3");
+        acceptor
+            .set_max_proto_version(Some(SslVersion::TLS1_3))
+            .expect("limit TLS to 1.3");
+        acceptor.set_num_tickets(0).expect("disable session tickets");
+        let acceptor = acceptor.build();
 
-    fn handshake(&self, addr: SocketAddr) -> Result<(), Box<dyn Error + Send + Sync>> {
-        let tcp = TcpStream::connect(addr)?;
-        tcp.set_read_timeout(Some(IO_TIMEOUT))?;
-        tcp.set_write_timeout(Some(IO_TIMEOUT))?;
-        let _tls = self.connector.connect("localhost", tcp)?;
-        Ok(())
-    }
-}
+        let mut connector = tls::client_connector();
+        connector
+            .set_min_proto_version(Some(SslVersion::TLS1_3))
+            .expect("require client TLS 1.3");
+        connector
+            .set_max_proto_version(Some(SslVersion::TLS1_3))
+            .expect("limit client TLS to 1.3");
 
-struct BenchHarness {
-    server_addr: SocketAddr,
-    client: PlainTlsClient,
-    latencies: mpsc::Receiver<Duration>,
-    _server: thread::JoinHandle<()>,
-}
-
-impl BenchHarness {
-    fn start() -> Self {
-        let mut cores = core_affinity::get_core_ids()
-            .expect("get benchmark CPU cores")
-            .into_iter();
-        let client_core = cores.next().expect("TLS benchmark client CPU core");
-        let server_core = cores.next().expect("TLS benchmark server CPU core");
+        // The client is used only for setup and validation, never during measurement.
+        let (client_hello, mut client) = tls::prepare_client_hello(connector.build());
+        let server = match acceptor.accept(MemoryStream::recording(client_hello.as_slice())) {
+            Err(HandshakeError::WouldBlock(handshake)) => handshake,
+            _ => panic!("server must wait for the client's Finished"),
+        };
         assert!(
-            core_affinity::set_for_current(client_core),
-            "pin TLS benchmark client"
+            expected_client_finished_wait(&server),
+            "server did not reach the expected TLS 1.3 WANT_READ state"
+        );
+        // The recorded first flight must be enough for the client to verify the
+        // server certificate and reach its own Finished (not merely ServerHello/HRR).
+        client.get_mut().set_input(server.get_ref().written().to_vec());
+        let completed_client = client
+            .handshake()
+            .expect("server first flight must complete the client's TLS 1.3 handshake");
+        assert_eq!(completed_client.ssl().version_str(), "TLSv1.3");
+        assert!(!completed_client.ssl().session_reused(), "TLS resumption detected");
+        assert!(
+            completed_client.ssl().peer_certificate().is_some(),
+            "certificate authentication was skipped"
+        );
+        assert!(
+            completed_client.get_ref().written().len() > client_hello.len(),
+            "client did not produce its Finished message"
         );
 
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind TLS benchmark server");
-        let server_addr = listener.local_addr().expect("read TLS benchmark address");
-        let cert_path = common::manifest_path(TLS_CERT_RELATIVE_PATH);
-        let key_path = common::manifest_path(TLS_KEY_RELATIVE_PATH);
-        let (latency_tx, latencies) = mpsc::channel();
+        Self { acceptor, client_hello }
+    }
 
-        let server = thread::spawn(move || {
-            assert!(
-                core_affinity::set_for_current(server_core),
-                "pin TLS benchmark server"
-            );
-            let mut acceptor =
-                SslAcceptor::mozilla_intermediate(SslMethod::tls()).expect("build TLS acceptor");
-            acceptor
-                .set_private_key_file(key_path, SslFiletype::PEM)
-                .expect("set server TLS private key");
-            acceptor
-                .set_certificate_chain_file(cert_path)
-                .expect("set server TLS certificate chain");
-            acceptor
-                .set_groups_list("X25519")
-                .expect("set server TLS group");
-            let acceptor = acceptor.build();
-
-            for tcp in listener.incoming() {
-                let tcp = tcp.expect("accept TCP connection");
-                tcp.set_read_timeout(Some(IO_TIMEOUT))
-                    .expect("set TCP read timeout");
-                tcp.set_write_timeout(Some(IO_TIMEOUT))
-                    .expect("set TCP write timeout");
-
-                let start = ThreadTime::now();
-                let _tls = acceptor.accept(tcp).expect("accept TLS handshake");
-                latency_tx
-                    .send(start.elapsed())
-                    .expect("record TLS handshake latency");
+    fn generates_server_first_flight(&self) -> bool {
+        // Each accept() creates a fresh server SSL session.
+        match self.acceptor.accept(MemoryStream::recording(black_box(self.client_hello.as_slice()))) {
+            Err(HandshakeError::WouldBlock(handshake)) => expected_client_finished_wait(&handshake),
+            Ok(_) | Err(HandshakeError::Failure(_)) => false,
+            Err(HandshakeError::SetupFailure(error)) => {
+                panic!("TLS server setup failed: {error}")
             }
-        });
-
-        let mut harness = Self {
-            server_addr,
-            client: PlainTlsClient::new(),
-            latencies,
-            _server: server,
-        };
-        for _ in 0..WARMUP_REQUESTS {
-            harness.one_server_side_latency();
         }
-        harness
     }
 
-    fn one_server_side_latency(&mut self) -> Duration {
-        self.client
-            .handshake(self.server_addr)
-            .expect("run TLS client");
-        self.latencies
-            .recv_timeout(LATENCY_RECV_TIMEOUT)
-            .expect("wait server-side latency")
-    }
-
-    fn measure(&mut self, iters: u64) -> Duration {
-        (0..iters)
-            .map(|_| self.one_server_side_latency())
-            .sum()
+    fn measure(&self, iters: u64) -> Duration {
+        let mut total = Duration::ZERO;
+        for _ in 0..iters {
+            let start = Instant::now();
+            let completed = self.generates_server_first_flight();
+            total += start.elapsed();
+            assert!(completed, "unexpected TLS server first-flight outcome");
+        }
+        total
     }
 }
 
-fn bench_pure_tls_server_side_latency(c: &mut Criterion) {
-    let mut harness = BenchHarness::start();
-    let mut group = c.benchmark_group(BENCH_GROUP_NAME);
-    group.sample_size(40);
-    group.measurement_time(Duration::from_secs(6));
-    group.throughput(Throughput::Elements(1));
-    group.bench_function(TLS_HANDSHAKE_ONLY, |b| {
-        b.iter_custom(|iters| harness.measure(iters));
+fn run_scale_out_worker(core_id: usize) {
+    run_worker(core_id, FirstFlightHarness::new, |server, operations| {
+        for _ in 0..operations {
+            assert!(server.generates_server_first_flight());
+        }
     });
+}
+
+fn bench_tls_server_first_flight(c: &mut Criterion) {
+    let mut harness = None;
+    let mut group = c.benchmark_group("tls13_server_first_flight");
+    group.sample_size(20);
+    group.warm_up_time(Duration::from_secs(1));
+    group.measurement_time(Duration::from_secs(4));
+    group.throughput(Throughput::Elements(1));
+    group.bench_function(BENCH_CASE_NAME, |b| {
+        let server = harness.get_or_insert_with(FirstFlightHarness::new);
+        b.iter_custom(|iters| server.measure(iters));
+    });
+    group.finish();
+
+    let mut group = c.benchmark_group("tls13_server_first_flight_scale_out_throughput");
+    group.sample_size(20);
+    group.warm_up_time(Duration::from_secs(1));
+    group.measurement_time(Duration::from_secs(4));
+    for &server_count in SERVER_COUNTS {
+        let mut servers = None;
+        group.throughput(Throughput::Elements(u64::from(server_count) * OPS_PER_SERVER));
+        group.bench_function(format!("{BENCH_CASE_NAME}_{server_count}_servers"), |b| {
+            let servers = servers.get_or_insert_with(|| {
+                ScaleOutServers::new(server_count, |_, _, core| vec![core.to_string()])
+            });
+            b.iter_custom(|batches| servers.measure(batches));
+        });
+        if let Some(servers) = servers {
+            servers.finish();
+        }
+    }
     group.finish();
 }
 
-criterion_group!(benches, bench_pure_tls_server_side_latency);
-criterion_main!(benches);
+criterion_group!(benches, bench_tls_server_first_flight);
+
+fn main() {
+    let mut args = std::env::args();
+    if args.nth(1).as_deref() == Some("--scale-out-worker") {
+        let core_id = args.next().expect("server CPU core").parse().expect("CPU core");
+        run_scale_out_worker(core_id);
+        return;
+    }
+    benches();
+    Criterion::default().configure_from_args().final_summary();
+}
