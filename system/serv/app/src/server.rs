@@ -87,8 +87,7 @@ fn build_server_with_startup_attestation(
     let tls_key_path = env_or_default("TLS_KEY_PATH", "./examples/certs/server.key");
 
     if tls_cert_path.is_empty() || tls_key_path.is_empty() {
-        println!("use plain");
-        proxy_service.add_tcp(proxy_addr);
+        panic!("no tls key");
     } else {
         println!("use tls");
         let mut tls_settings = TlsSettings::intermediate(&tls_cert_path, &tls_key_path)?;
