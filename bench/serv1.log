@@ -1,31 +1,31 @@
 enclave.issue_token.stages/decrypt
-                        time:   [63.145 µs 63.242 µs 63.365 µs]
-                        thrpt:  [2.8897 MiB/s 2.8953 MiB/s 2.8998 MiB/s]
+                        time:   [63.081 µs 63.272 µs 63.485 µs]
+                        thrpt:  [2.8842 MiB/s 2.8939 MiB/s 2.9027 MiB/s]
 Found 11 outliers among 100 measurements (11.00%)
   4 (4.00%) high mild
   7 (7.00%) high severe
 enclave.issue_token.stages/verify
-                        time:   [293.13 ns 293.60 ns 294.20 ns]
-                        thrpt:  [259.33 MiB/s 259.86 MiB/s 260.28 MiB/s]
+                        time:   [291.50 ns 292.25 ns 293.06 ns]
+                        thrpt:  [260.34 MiB/s 261.06 MiB/s 261.73 MiB/s]
+Found 12 outliers among 100 measurements (12.00%)
+  3 (3.00%) high mild
+  9 (9.00%) high severe
+enclave.issue_token.stages/token_generation
+                        time:   [241.54 ns 242.00 ns 242.56 ns]
+                        thrpt:  [125.82 MiB/s 126.11 MiB/s 126.34 MiB/s]
 Found 10 outliers among 100 measurements (10.00%)
   4 (4.00%) high mild
   6 (6.00%) high severe
-enclave.issue_token.stages/token_generation
-                        time:   [243.97 ns 244.36 ns 244.86 ns]
-                        thrpt:  [124.64 MiB/s 124.89 MiB/s 125.09 MiB/s]
-Found 13 outliers among 100 measurements (13.00%)
-  5 (5.00%) high mild
-  8 (8.00%) high severe
 enclave.issue_token.stages/route
-                        time:   [111.36 ns 111.55 ns 111.77 ns]
-                        thrpt:  [8.9473 Melem/s 8.9649 Melem/s 8.9798 Melem/s]
-Found 13 outliers among 100 measurements (13.00%)
-  5 (5.00%) high mild
+                        time:   [110.79 ns 111.07 ns 111.37 ns]
+                        thrpt:  [8.9794 Melem/s 9.0037 Melem/s 9.0257 Melem/s]
+Found 12 outliers among 100 measurements (12.00%)
+  4 (4.00%) high mild
   8 (8.00%) high severe
 enclave.issue_token.stages/encrypt
-                        time:   [724.72 ns 725.76 ns 727.10 ns]
-                        thrpt:  [41.972 MiB/s 42.049 MiB/s 42.110 MiB/s]
-Found 9 outliers among 100 measurements (9.00%)
-  3 (3.00%) high mild
-  6 (6.00%) high severe
+                        time:   [723.21 ns 724.45 ns 725.90 ns]
+                        thrpt:  [42.041 MiB/s 42.125 MiB/s 42.197 MiB/s]
+Found 13 outliers among 100 measurements (13.00%)
+  5 (5.00%) high mild
+  8 (8.00%) high severe
 
