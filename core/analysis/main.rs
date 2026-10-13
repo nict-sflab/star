@@ -7,7 +7,6 @@ use star_core::serv::enclave::Enclave;
 
 const period: u64 = 1;
 
-// #[cfg(feature = "timecop")]
 fn main() {
     // End-to-end demo: issue a credential, request a token over HPKE, and inspect the token.
     let mut rng: OsRng = OsRng;
@@ -96,7 +95,6 @@ fn fail2() {
     let min_len = AAD_LEN + INFO_LEN + ENC_LEN;
     assert!(envelope.len() >= min_len, "HPKE envelope too short");
 
-    //envelope[min_len - 1] = !envelope[min_len - 1];
     *envelope.last_mut().unwrap() ^= 1;
 
 

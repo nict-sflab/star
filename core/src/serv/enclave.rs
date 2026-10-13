@@ -7,9 +7,6 @@ use alloc::vec::Vec;
 use hpke_ng::HpkeError;
 use rand::RngCore;
 
-#[cfg(feature = "timecop")]
-use timecop;
-
 // HPKE receiver living inside the enclave.
 pub struct Enclave {
     cipher_receiver: SecureChannelServer,
@@ -64,8 +61,6 @@ impl Enclave {
     /// Issue a token from an already decrypted request (credential 64 bytes + count 8 bytes + period 8 bytes).
     /// This is mainly for examples/tests; production callers should use `issue_token` with HPKE-protected payloads.
     pub fn issue_token_plain(&self, request: &[u8], current_period: Short) -> Vec<u8> {
-        #[cfg(feature = "timecop")]
-        timecop::poison(request);
 
         if request.len() < 80 {
             return alloc::vec![0u8];
@@ -89,9 +84,6 @@ impl Enclave {
     {
         let cred = self.issue_cred_plain(rng);
 
-        #[cfg(feature = "timecop")]
-        timecop::poison(cred.as_slice());
-
         // The HPKE envelope is aad(32) || info(32) || enc(32) || ciphertext.
         // respond_cipher expects the full envelope to recover the shared key.
         let result = self.cipher_receiver.respond_cipher(&cred, cipher, rng);
@@ -103,13 +95,7 @@ impl Enclave {
     where
         R: RngCore,
     {
-        #[cfg(feature = "timecop")]
-        timecop::poison(self.sk.as_slice());
         let cred = Credential::random(self.sk, rng);
-
-        #[cfg(feature = "timecop")]
-        timecop::poison(cred.uid.as_slice());
-
         let result = cred.to_bytes();
 
         return result;
