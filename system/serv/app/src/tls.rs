@@ -2,7 +2,6 @@ use foreign_types::ForeignTypeRef;
 use openssl::error::ErrorStack;
 use openssl::ex_data::Index;
 use openssl::ssl::{ClientHelloResponse, Ssl};
-use pingora::listeners::tls::TlsSettings;
 use pingora::tls::ssl::{SslAlert, SslRef};
 use simple_filter_box::core::FilterBox;
 use std::os::raw::{c_int, c_uchar, c_uint};
@@ -24,7 +23,7 @@ unsafe extern "C" {
     ) -> c_int;
 }
 
-fn star_tls_extension_from_client_hello<'a>(ssl: &'a SslRef) -> Option<&'a [u8]> {
+pub fn star_tls_extension_from_client_hello<'a>(ssl: &'a SslRef) -> Option<&'a [u8]> {
     let mut out = ptr::null();
     let mut out_len = 0usize;
 
@@ -50,14 +49,19 @@ fn star_tls_extension_from_client_hello<'a>(ssl: &'a SslRef) -> Option<&'a [u8]>
     Some(unsafe { slice::from_raw_parts(out as *const u8, out_len) })
 }
 
-pub fn configure_tls_token_extension<T>(
-    tls_settings: &mut TlsSettings,
+/// Creates the callback used by both the server and the rejection benchmarks.
+pub fn star_tls_client_hello_callback<T>(
     filter: Arc<StarFilter<T>>,
-) -> Result<(), ErrorStack>
+) -> Result<
+    impl Fn(&mut SslRef, &mut SslAlert) -> Result<ClientHelloResponse, ErrorStack>
+        + Send
+        + Sync
+        + 'static,
+    ErrorStack,
+>
 where
     T: FilterBox + Send + Sync + 'static,
 {
-    tls_settings.set_groups_list("X25519")?;
     let token_index = if let Some(index) = STAR_TLS_TOKEN_EX_INDEX.get() {
         *index
     } else {
@@ -66,15 +70,14 @@ where
         *STAR_TLS_TOKEN_EX_INDEX.get().expect("TLS token index set")
     };
 
-    tls_settings.set_client_hello_callback(move |ssl, alert| {
-        let Some(extension) = star_tls_extension_from_client_hello(ssl) else {
-            *alert = SslAlert::DECODE_ERROR;
-            return Err(ErrorStack::get());
+    Ok(move |ssl, alert| {
+        let extension = match star_tls_extension_from_client_hello(ssl) {
+            Some(extension) if !extension.is_empty() => extension,
+            _ => {
+                *alert = SslAlert::DECODE_ERROR;
+                return Err(ErrorStack::get());
+            }
         };
-        if extension.is_empty() {
-            *alert = SslAlert::DECODE_ERROR;
-            return Err(ErrorStack::get());
-        }
 
         if let Some(existing) = ssl.ex_data(token_index) {
             if existing.as_slice() == extension {
@@ -97,7 +100,5 @@ where
 
         ssl.set_ex_data(token_index, extension.to_vec());
         Ok(ClientHelloResponse::SUCCESS)
-    });
-
-    Ok(())
+    })
 }
