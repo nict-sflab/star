@@ -1,4 +1,4 @@
-rm ./bench/*
+sudo rm ./bench/*
 
 git reset
 git checkout main
