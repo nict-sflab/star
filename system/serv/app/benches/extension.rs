@@ -1,29 +1,24 @@
 mod common;
 
-use std::io::{self, Read, Write};
 use std::os::raw::{c_int, c_uchar, c_uint};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::ptr;
 use std::slice;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use common::scale_out::{OPS_PER_SERVER, SERVER_COUNTS, ScaleOutServers, run_worker};
 use common::star::{KeyedEnclaves, MAX_COUNT_PER_CREDENTIAL, register_user};
+use common::tls::{self, CertificateKind, MemoryStream};
 use criterion::{Criterion, Throughput, black_box, criterion_group};
 use foreign_types::ForeignTypeRef;
 use openssl::error::ErrorStack;
 use openssl::ssl::{
     ClientHelloResponse, ExtensionContext, HandshakeError, Ssl, SslAcceptor, SslAlert,
-    SslConnector, SslFiletype, SslMethod, SslRef, SslVerifyMode,
+    SslMethod, SslRef,
 };
 use rand_core::OsRng;
 use star_app::filter::StarFilterErrorStatus;
 use star_app::tls::STAR_TLS_EXTENSION_TYPE;
-
-const TLS_CERT_RELATIVE_PATH: &str = "examples/certs/server.crt";
-const TLS_KEY_RELATIVE_PATH: &str = "examples/certs/server.key";
-const SCALE_OUT_SERVER_COUNTS: &[u32] = &[1, 2, 4, 8, 16];
-const SCALE_OUT_OPS_PER_SERVER: u64 = 64;
 
 unsafe extern "C" {
     fn SSL_client_hello_get0_ext(
@@ -32,57 +27,6 @@ unsafe extern "C" {
         out: *mut *const c_uchar,
         outlen: *mut usize,
     ) -> c_int;
-}
-
-#[derive(Debug)]
-struct ClientHelloRecorder {
-    output: Vec<u8>,
-}
-
-impl Read for ClientHelloRecorder {
-    fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
-        Err(io::Error::from(io::ErrorKind::WouldBlock))
-    }
-}
-
-impl Write for ClientHelloRecorder {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.output.extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-struct ClientHelloInput<'a> {
-    input: &'a [u8],
-    offset: usize,
-}
-
-impl Read for ClientHelloInput<'_> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        if self.offset == self.input.len() {
-            return Err(io::Error::from(io::ErrorKind::WouldBlock));
-        }
-
-        let input = &self.input[self.offset..];
-        let len = input.len().min(buf.len());
-        buf[..len].copy_from_slice(&input[..len]);
-        self.offset += len;
-        Ok(len)
-    }
-}
-
-impl Write for ClientHelloInput<'_> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -101,20 +45,7 @@ impl RejectHarness {
     fn new(case: RejectCase, shard_index: u32, shard_count: u32) -> Self {
         let mut acceptor =
             SslAcceptor::mozilla_intermediate_v5(SslMethod::tls()).expect("build TLS acceptor");
-        acceptor
-            .set_certificate_file(
-                common::manifest_path(TLS_CERT_RELATIVE_PATH),
-                SslFiletype::PEM,
-            )
-            .expect("set TLS certificate");
-        acceptor
-            .set_private_key_file(
-                common::manifest_path(TLS_KEY_RELATIVE_PATH),
-                SslFiletype::PEM,
-            )
-            .expect("set TLS private key");
-        acceptor.check_private_key().expect("check TLS private key");
-        acceptor.set_groups_list("X25519").expect("set TLS groups");
+        tls::configure_server(&mut acceptor, CertificateKind::File);
 
         let extension = match case {
             RejectCase::MissingExtension => {
@@ -213,9 +144,7 @@ impl RejectHarness {
             }
         };
 
-        let mut connector = SslConnector::builder(SslMethod::tls()).expect("build TLS connector");
-        connector.set_verify(SslVerifyMode::NONE);
-        connector.set_groups_list("X25519").expect("set TLS groups");
+        let mut connector = tls::client_connector();
         if let Some(extension) = extension {
             connector
                 .add_custom_ext(
@@ -227,16 +156,7 @@ impl RejectHarness {
                 .expect("configure client STAR extension");
         }
 
-        let recorder = ClientHelloRecorder { output: Vec::new() };
-        let client_hello = match connector.build().connect("localhost", recorder) {
-            Ok(_) => panic!("client handshake unexpectedly completed without server input"),
-            Err(HandshakeError::WouldBlock(handshake))
-            | Err(HandshakeError::Failure(handshake)) => handshake.get_ref().output.clone(),
-            Err(HandshakeError::SetupFailure(error)) => {
-                panic!("TLS client setup failed: {error}")
-            }
-        };
-        assert!(!client_hello.is_empty(), "recorded ClientHello is empty");
+        let (client_hello, _client) = tls::prepare_client_hello(connector.build());
 
         let harness = Self {
             acceptor: acceptor.build(),
@@ -247,10 +167,7 @@ impl RejectHarness {
     }
 
     fn is_rejected(&self) -> bool {
-        match self.acceptor.accept(ClientHelloInput {
-            input: black_box(self.client_hello.as_slice()),
-            offset: 0,
-        }) {
+        match self.acceptor.accept(MemoryStream::new(black_box(self.client_hello.as_slice()))) {
             Err(HandshakeError::Failure(_)) => true,
             Ok(_) | Err(HandshakeError::WouldBlock(_)) => false,
             Err(HandshakeError::SetupFailure(error)) => {
@@ -271,127 +188,22 @@ impl RejectHarness {
     }
 }
 
-struct ShardedServers {
-    servers: Vec<ServerProcess>,
-}
-
-struct ServerProcess {
-    child: Child,
-    stdin: ChildStdin,
-    stdout: ChildStdout,
-}
-
-impl ShardedServers {
-    fn new(case: &str, server_count: u32) -> Self {
-        let cores = core_affinity::get_core_ids().expect("get benchmark CPU cores");
-        assert!(
-            cores.len() >= server_count as usize,
-            "scale-out benchmark requires at least {server_count} CPU cores"
-        );
-        let executable = std::env::current_exe().expect("get benchmark executable");
-        let servers = cores
-            .into_iter()
-            .take(server_count as usize)
-            .enumerate()
-            .map(|(shard_index, core)| {
-                let mut child = Command::new(&executable)
-                    .arg("--scale-out-worker")
-                    .arg(case)
-                    .arg(shard_index.to_string())
-                    .arg(server_count.to_string())
-                    .arg(core.id.to_string())
-                    .stdin(Stdio::piped())
-                    .stdout(Stdio::piped())
-                    .spawn()
-                    .expect("spawn scale-out benchmark server");
-                let mut server = ServerProcess {
-                    stdin: child.stdin.take().expect("server stdin"),
-                    stdout: child.stdout.take().expect("server stdout"),
-                    child,
-                };
-                let mut ready = [0];
-                server.stdout.read_exact(&mut ready).expect("server setup");
-                assert_eq!(ready, [b'R']);
-                server
-            })
-            .collect::<Vec<_>>();
-        Self { servers }
-    }
-
-    fn measure(&mut self, batches: u64) -> Duration {
-        let operations = batches
-            .checked_mul(SCALE_OUT_OPS_PER_SERVER)
-            .expect("scale-out benchmark operation count overflow");
-
-        for server in &mut self.servers {
-            server
-                .stdin
-                .write_all(&operations.to_le_bytes())
-                .expect("send server operation count");
-        }
-        for server in &mut self.servers {
-            let mut ready = [0];
-            server.stdout.read_exact(&mut ready).expect("server ready");
-            assert_eq!(ready, [b'R']);
-        }
-
-        let timer = Instant::now();
-        for server in &mut self.servers {
-            server.stdin.write_all(&[b'S']).expect("start server");
-        }
-        for server in &mut self.servers {
-            let mut done = [0];
-            server.stdout.read_exact(&mut done).expect("server result");
-            assert_eq!(done, [b'D']);
-        }
-        timer.elapsed()
-    }
-
-    fn finish(self) {
-        for mut server in self.servers {
-            drop(server.stdin);
-            assert!(server.child.wait().expect("server exit").success());
-        }
-    }
-}
-
 fn run_scale_out_worker(case: &str, shard_index: u32, shard_count: u32, core_id: usize) {
-    assert!(
-        core_affinity::set_for_current(core_affinity::CoreId { id: core_id }),
-        "pin scale-out benchmark server"
-    );
     let case = match case {
         "openssl_missing_extension" => RejectCase::MissingExtension,
         "star_filter_replayed_token_openssl_parse" => RejectCase::ReplayedToken,
         "star_filter_invalid_credential_openssl_parse" => RejectCase::InvalidCredential,
         _ => panic!("unknown scale-out benchmark case"),
     };
-    let server = RejectHarness::new(case, shard_index, shard_count);
-    let input = io::stdin();
-    let output = io::stdout();
-    let mut stdin = input.lock();
-    let mut stdout = output.lock();
-    stdout.write_all(&[b'R']).expect("signal server setup");
-    stdout.flush().expect("flush server setup");
-    loop {
-        let mut count = [0; 8];
-        match stdin.read_exact(&mut count) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => break,
-            Err(error) => panic!("read server operation count: {error}"),
-        }
-        let operations = u64::from_le_bytes(count);
-        stdout.write_all(&[b'R']).expect("signal server ready");
-        stdout.flush().expect("flush server ready");
-        let mut start = [0];
-        stdin.read_exact(&mut start).expect("wait for server start");
-        assert_eq!(start, [b'S']);
-        for _ in 0..operations {
-            assert!(server.is_rejected());
-        }
-        stdout.write_all(&[b'D']).expect("signal server completion");
-        stdout.flush().expect("flush server completion");
-    }
+    run_worker(
+        core_id,
+        || RejectHarness::new(case, shard_index, shard_count),
+        |server, operations| {
+            for _ in 0..operations {
+                assert!(server.is_rejected());
+            }
+        },
+    );
 }
 
 fn reject_client_hello(
@@ -461,15 +273,23 @@ fn bench_client_hello_reject(c: &mut Criterion) {
     group.warm_up_time(Duration::from_secs(1));
     group.measurement_time(Duration::from_secs(4));
 
-    for &server_count in SCALE_OUT_SERVER_COUNTS {
+    for &server_count in SERVER_COUNTS {
         for &name in &cases {
             let mut servers = None;
             group.throughput(Throughput::Elements(
-                u64::from(server_count) * SCALE_OUT_OPS_PER_SERVER,
+                u64::from(server_count) * OPS_PER_SERVER,
             ));
             group.bench_function(format!("{name}_{server_count}_servers"), |b| {
-                let servers =
-                    servers.get_or_insert_with(|| ShardedServers::new(name, server_count));
+                let servers = servers.get_or_insert_with(|| {
+                    ScaleOutServers::new(server_count, |shard_index, shard_count, core| {
+                        vec![
+                            name.to_string(),
+                            shard_index.to_string(),
+                            shard_count.to_string(),
+                            core.to_string(),
+                        ]
+                    })
+                });
                 b.iter_custom(|batches| servers.measure(batches));
             });
             if let Some(servers) = servers {

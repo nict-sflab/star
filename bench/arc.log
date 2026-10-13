@@ -4,115 +4,115 @@
   Downloaded alloca v0.4.0
   Downloaded version_check v0.9.5
   Downloaded zeroize_derive v1.4.3
-  Downloaded walkdir v2.5.0
   Downloaded zeroize v1.8.2
-  Downloaded tinytemplate v1.2.1
   Downloaded zmij v1.0.21
-  Downloaded time-core v0.1.8
-  Downloaded unicode-ident v1.0.24
-  Downloaded zerocopy-derive v0.8.42
-  Downloaded hex v0.4.3
-  Downloaded zerocopy v0.8.42
-  Downloaded wyz v0.5.1
-  Downloaded ahash v0.8.12
+  Downloaded walkdir v2.5.0
+  Downloaded tinytemplate v1.2.1
   Downloaded typenum v1.19.0
-  Downloaded block-buffer v0.10.4
-  Downloaded ff_derive v0.13.1
-  Downloaded ciborium-io v0.2.2
-  Downloaded spongefish-derive v0.5.1
-  Downloaded keccak v0.1.6
-  Downloaded strsim v0.11.1
-  Downloaded darling_macro v0.23.0
-  Downloaded ident_case v1.0.1
-  Downloaded subtle v2.6.1
-  Downloaded tap v1.0.1
-  Downloaded cfg-if v1.0.4
-  Downloaded powerfmt v0.2.0
-  Downloaded curve25519-dalek-derive v0.1.1
-  Downloaded crypto-common v0.1.6
+  Downloaded unicode-ident v1.0.24
+  Downloaded ciborium v0.2.2
   Downloaded rand_chacha v0.3.1
-  Downloaded num-conv v0.2.0
-  Downloaded crypto-common v0.2.1
-  Downloaded rustc_version v0.4.1
-  Downloaded block-buffer v0.12.0
-  Downloaded ppv-lite86 v0.2.21
-  Downloaded keccak v0.2.0
-  Downloaded shlex v1.3.0
-  Downloaded rand_core v0.6.4
-  Downloaded sha2 v0.10.9
   Downloaded same-file v1.0.6
-  Downloaded hybrid-array v0.4.10
-  Downloaded serde_with_macros v3.18.0
+  Downloaded zerocopy-derive v0.8.42
+  Downloaded subtle v2.6.1
+  Downloaded block-buffer v0.10.4
+  Downloaded tap v1.0.1
+  Downloaded strsim v0.11.1
+  Downloaded radium v0.7.0
+  Downloaded ppv-lite86 v0.2.21
+  Downloaded zerocopy v0.8.42
   Downloaded semver v1.0.27
-  Downloaded getrandom v0.2.17
-  Downloaded once_cell v1.21.4
-  Downloaded half v2.7.1
-  Downloaded spongefish v0.5.1
+  Downloaded sha2 v0.10.9
+  Downloaded shlex v1.3.0
+  Downloaded byteorder v1.5.0
+  Downloaded proc-macro2 v1.0.106
+  Downloaded elliptic-curve v0.13.8
   Downloaded serde_derive v1.0.228
-  Downloaded darling_core v0.23.0
-  Downloaded serde v1.0.228
-  Downloaded base64 v0.22.1
+  Downloaded serde_core v1.0.228
   Downloaded num-bigint v0.3.3
-  Downloaded rand v0.8.5
-  Downloaded num-bigint v0.4.6
-  Downloaded crypto-bigint v0.5.5
-  Downloaded cc v1.2.57
-  Downloaded hashbrown v0.15.5
+  Downloaded clap_builder v4.6.0
   Downloaded serde_json v1.0.149
   Downloaded regex v1.12.3
-  Downloaded itertools v0.14.0
+  Downloaded libm v0.2.16
   Downloaded serde_with v3.18.0
-  Downloaded clap_builder v4.6.0
   Downloaded time v0.3.47
-  Downloaded bitvec v1.0.1
-  Downloaded syn v1.0.109
-  Downloaded chrono v0.4.44
   Downloaded syn v2.0.117
   Downloaded curve25519-dalek v4.1.3
+  Downloaded syn v1.0.109
+  Downloaded chrono v0.4.44
   Downloaded regex-syntax v0.8.10
+  Downloaded bitvec v1.0.1
+  Downloaded itertools v0.14.0
   Downloaded itertools v0.13.0
-  Downloaded libm v0.2.16
-  Downloaded criterion v0.8.2
-  Downloaded memchr v2.8.0
-  Downloaded clap v4.6.0
-  Downloaded proc-macro2 v1.0.106
-  Downloaded num-traits v0.2.19
-  Downloaded elliptic-curve v0.13.8
-  Downloaded serde_core v1.0.228
-  Downloaded const-oid v0.10.2
+  Downloaded hashbrown v0.15.5
   Downloaded sha3 v0.11.0
-  Downloaded aho-corasick v1.1.4
-  Downloaded darling v0.23.0
-  Downloaded criterion-plot v0.8.2
+  Downloaded rand v0.8.5
   Downloaded regex-automata v0.4.14
-  Downloaded ciborium v0.2.2
-  Downloaded quote v1.0.45
-  Downloaded byteorder v1.5.0
-  Downloaded autocfg v1.5.0
-  Downloaded num-integer v0.1.46
+  Downloaded num-bigint v0.4.6
+  Downloaded memchr v2.8.0
+  Downloaded criterion v0.8.2
+  Downloaded serde v1.0.228
+  Downloaded half v2.7.1
+  Downloaded base64 v0.22.1
+  Downloaded sha3 v0.10.8
+  Downloaded libc v0.2.183
+  Downloaded darling_core v0.23.0
+  Downloaded num-traits v0.2.19
+  Downloaded aho-corasick v1.1.4
+  Downloaded serde_with_macros v3.18.0
   Downloaded group v0.13.0
-  Downloaded either v1.15.0
-  Downloaded digest v0.10.7
-  Downloaded anstyle v1.0.14
+  Downloaded once_cell v1.21.4
+  Downloaded hybrid-array v0.4.10
+  Downloaded digest v0.11.2
+  Downloaded darling v0.23.0
+  Downloaded rustc_version v0.4.1
+  Downloaded rand_core v0.6.4
+  Downloaded quote v1.0.45
+  Downloaded page_size v0.6.0
+  Downloaded oorandom v11.1.5
+  Downloaded num-integer v0.1.46
+  Downloaded getrandom v0.2.17
+  Downloaded autocfg v1.5.0
+  Downloaded keccak v0.2.0
   Downloaded generic-array v0.14.9
   Downloaded find-msvc-tools v0.1.9
   Downloaded ff v0.13.1
-  Downloaded sha3 v0.10.8
-  Downloaded anes v0.1.6
-  Downloaded libc v0.2.183
-  Downloaded oorandom v11.1.5
-  Downloaded itoa v1.0.17
-  Downloaded digest v0.11.2
-  Downloaded deranged v0.5.8
-  Downloaded cpufeatures v0.2.17
-  Downloaded page_size v0.6.0
-  Downloaded clap_lex v1.1.0
-  Downloaded cast v0.3.0
-  Downloaded ciborium-ll v0.2.2
+  Downloaded num-conv v0.2.0
+  Downloaded hex v0.4.3
+  Downloaded digest v0.10.7
   Downloaded base16ct v0.2.0
-  Downloaded radium v0.7.0
+  Downloaded cfg-if v1.0.4
+  Downloaded cast v0.3.0
+  Downloaded keccak v0.1.6
+  Downloaded itoa v1.0.17
+  Downloaded crypto-bigint v0.5.5
+  Downloaded cc v1.2.57
+  Downloaded deranged v0.5.8
+  Downloaded darling_macro v0.23.0
+  Downloaded ff_derive v0.13.1
+  Downloaded powerfmt v0.2.0
+  Downloaded ident_case v1.0.1
   Downloaded funty v2.0.0
+  Downloaded const-oid v0.10.2
+  Downloaded clap v4.6.0
+  Downloaded anstyle v1.0.14
+  Downloaded either v1.15.0
+  Downloaded curve25519-dalek-derive v0.1.1
+  Downloaded cpufeatures v0.2.17
   Downloaded addchain v0.2.1
+  Downloaded crypto-common v0.2.1
+  Downloaded crypto-common v0.1.6
+  Downloaded ciborium-ll v0.2.2
+  Downloaded ahash v0.8.12
+  Downloaded criterion-plot v0.8.2
+  Downloaded ciborium-io v0.2.2
+  Downloaded block-buffer v0.12.0
+  Downloaded anes v0.1.6
+  Downloaded time-core v0.1.8
+  Downloaded clap_lex v1.1.0
+  Downloaded wyz v0.5.1
+  Downloaded spongefish v0.5.1
+  Downloaded spongefish-derive v0.5.1
    Compiling proc-macro2 v1.0.106
    Compiling quote v1.0.45
    Compiling unicode-ident v1.0.24
@@ -122,64 +122,64 @@
    Compiling version_check v0.9.5
    Compiling libc v0.2.183
    Compiling zerocopy v0.8.42
-   Compiling syn v1.0.109
    Compiling radium v0.7.0
+   Compiling syn v1.0.109
    Compiling tap v1.0.1
-   Compiling libm v0.2.16
    Compiling serde_core v1.0.228
    Compiling funty v2.0.0
+   Compiling libm v0.2.16
    Compiling subtle v2.6.1
-   Compiling semver v1.0.27
    Compiling byteorder v1.5.0
+   Compiling semver v1.0.27
    Compiling either v1.15.0
-   Compiling shlex v1.3.0
    Compiling ident_case v1.0.1
+   Compiling zmij v1.0.21
+   Compiling strsim v0.11.1
    Compiling serde v1.0.228
    Compiling cpufeatures v0.2.17
-   Compiling zmij v1.0.21
-   Compiling const-oid v0.10.2
-   Compiling strsim v0.11.1
-   Compiling wyz v0.5.1
    Compiling find-msvc-tools v0.1.9
+   Compiling shlex v1.3.0
+   Compiling const-oid v0.10.2
    Compiling keccak v0.2.0
+   Compiling wyz v0.5.1
    Compiling serde_json v1.0.149
-   Compiling once_cell v1.21.4
-   Compiling keccak v0.1.6
-   Compiling rustc_version v0.4.1
+   Compiling clap_lex v1.1.0
    Compiling cc v1.2.57
+   Compiling rustc_version v0.4.1
+   Compiling memchr v2.8.0
    Compiling regex-syntax v0.8.10
+   Compiling once_cell v1.21.4
    Compiling generic-array v0.14.9
    Compiling ahash v0.8.12
-   Compiling memchr v2.8.0
-   Compiling anstyle v1.0.14
+   Compiling keccak v0.1.6
    Compiling ciborium-io v0.2.2
-   Compiling clap_lex v1.1.0
+   Compiling anstyle v1.0.14
    Compiling itoa v1.0.17
-   Compiling itertools v0.14.0
    Compiling itertools v0.13.0
-   Compiling base16ct v0.2.0
-   Compiling same-file v1.0.6
+   Compiling itertools v0.14.0
+   Compiling hashbrown v0.15.5
    Compiling cast v0.3.0
    Compiling num-traits v0.2.19
    Compiling num-bigint v0.3.3
+   Compiling same-file v1.0.6
+   Compiling base16ct v0.2.0
    Compiling curve25519-dalek v4.1.3
-   Compiling clap_builder v4.6.0
    Compiling bitvec v1.0.1
-   Compiling hashbrown v0.15.5
+   Compiling clap_builder v4.6.0
+   Compiling anes v0.1.6
    Compiling walkdir v2.5.0
    Compiling oorandom v11.1.5
-   Compiling anes v0.1.6
    Compiling hex v0.4.3
    Compiling syn v2.0.117
    Compiling hybrid-array v0.4.10
    Compiling alloca v0.4.0
-   Compiling num-integer v0.1.46
    Compiling getrandom v0.2.17
    Compiling page_size v0.6.0
+   Compiling num-integer v0.1.46
    Compiling rand_core v0.6.4
    Compiling regex-automata v0.4.14
-   Compiling crypto-common v0.2.1
    Compiling block-buffer v0.12.0
+   Compiling crypto-common v0.2.1
    Compiling criterion-plot v0.8.2
    Compiling num-bigint v0.4.6
    Compiling digest v0.11.2
@@ -193,12 +193,12 @@
    Compiling group v0.13.0
    Compiling zeroize_derive v1.4.3
    Compiling zerocopy-derive v0.8.42
-   Compiling serde_derive v1.0.228
    Compiling curve25519-dalek-derive v0.1.1
+   Compiling serde_derive v1.0.228
    Compiling spongefish-derive v0.5.1
    Compiling zeroize v1.8.2
-   Compiling block-buffer v0.10.4
    Compiling crypto-common v0.1.6
+   Compiling block-buffer v0.10.4
    Compiling crypto-bigint v0.5.5
    Compiling digest v0.10.7
    Compiling darling_macro v0.23.0
@@ -219,50 +219,48 @@
    Compiling spongefish v0.5.1
    Compiling sigma-proofs v0.3.0 (https://github.com/armfazh/sigma-proofs?rev=f6a1737673ed3b76c66659a17e7ec4174fcdbe7a#f6a17376)
    Compiling arc v0.1.0 (/tmp/arc)
-    Finished `bench` profile [optimized] target(s) in 20.05s
+    Finished `bench` profile [optimized] target(s) in 19.76s
      Running benches/arc_bench.rs (target/release/deps/arc_bench-23f867fe18b6b1d7)
 Benchmarking Ristretto255/arc/keygen
 Benchmarking Ristretto255/arc/keygen: Warming up for 3.0000 s
-Benchmarking Ristretto255/arc/keygen: Collecting 100 samples in estimated 5.0942 s (35k iterations)
+Benchmarking Ristretto255/arc/keygen: Collecting 100 samples in estimated 5.1803 s (35k iterations)
 Benchmarking Ristretto255/arc/keygen: Analyzing
-Ristretto255/arc/keygen time:   [144.15 µs 144.25 µs 144.33 µs]
-Found 19 outliers among 100 measurements (19.00%)
-  19 (19.00%) high mild
+Ristretto255/arc/keygen time:   [143.39 µs 143.41 µs 143.44 µs]
 Benchmarking Ristretto255/arc/credential_request
 Benchmarking Ristretto255/arc/credential_request: Warming up for 3.0000 s
-Benchmarking Ristretto255/arc/credential_request: Collecting 100 samples in estimated 5.0224 s (20k iterations)
+Benchmarking Ristretto255/arc/credential_request: Collecting 100 samples in estimated 5.0998 s (20k iterations)
 Benchmarking Ristretto255/arc/credential_request: Analyzing
 Ristretto255/arc/credential_request
-                        time:   [239.91 µs 239.96 µs 240.01 µs]
-Found 1 outliers among 100 measurements (1.00%)
-  1 (1.00%) high severe
+                        time:   [251.01 µs 252.09 µs 253.38 µs]
 Benchmarking Ristretto255/arc/credential_response
 Benchmarking Ristretto255/arc/credential_response: Warming up for 3.0000 s
 
-Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 5.1s, enable flat sampling, or reduce sample count to 60.
-Benchmarking Ristretto255/arc/credential_response: Collecting 100 samples in estimated 5.1014 s (5050 iterations)
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 5.3s, enable flat sampling, or reduce sample count to 60.
+Benchmarking Ristretto255/arc/credential_response: Collecting 100 samples in estimated 5.2757 s (5050 iterations)
 Benchmarking Ristretto255/arc/credential_response: Analyzing
 Ristretto255/arc/credential_response
-                        time:   [1.0413 ms 1.0426 ms 1.0441 ms]
+                        time:   [1.0395 ms 1.0407 ms 1.0421 ms]
 Benchmarking Ristretto255/arc/credential
 Benchmarking Ristretto255/arc/credential: Warming up for 3.0000 s
-Benchmarking Ristretto255/arc/credential: Collecting 100 samples in estimated 8.5234 s (10k iterations)
+Benchmarking Ristretto255/arc/credential: Collecting 100 samples in estimated 9.6551 s (10k iterations)
 Benchmarking Ristretto255/arc/credential: Analyzing
 Ristretto255/arc/credential
-                        time:   [850.59 µs 851.15 µs 851.64 µs]
+                        time:   [979.45 µs 984.08 µs 988.88 µs]
+Found 16 outliers among 100 measurements (16.00%)
+  16 (16.00%) high mild
 Benchmarking Ristretto255/arc/present
 Benchmarking Ristretto255/arc/present: Warming up for 3.0000 s
 
-Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 9.2s, enable flat sampling, or reduce sample count to 50.
-Benchmarking Ristretto255/arc/present: Collecting 100 samples in estimated 9.1811 s (5050 iterations)
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 8.3s, enable flat sampling, or reduce sample count to 50.
+Benchmarking Ristretto255/arc/present: Collecting 100 samples in estimated 8.3036 s (5050 iterations)
 Benchmarking Ristretto255/arc/present: Analyzing
 Ristretto255/arc/present
-                        time:   [1.6992 ms 1.7087 ms 1.7197 ms]
+                        time:   [1.6401 ms 1.6439 ms 1.6485 ms]
 Benchmarking Ristretto255/arc/verify
 Benchmarking Ristretto255/arc/verify: Warming up for 3.0000 s
 
-Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 9.3s, enable flat sampling, or reduce sample count to 50.
-Benchmarking Ristretto255/arc/verify: Collecting 100 samples in estimated 9.3296 s (5050 iterations)
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 9.5s, enable flat sampling, or reduce sample count to 50.
+Benchmarking Ristretto255/arc/verify: Collecting 100 samples in estimated 9.4761 s (5050 iterations)
 Benchmarking Ristretto255/arc/verify: Analyzing
-Ristretto255/arc/verify time:   [1.8504 ms 1.8511 ms 1.8517 ms]
+Ristretto255/arc/verify time:   [1.8786 ms 1.8803 ms 1.8823 ms]
 
