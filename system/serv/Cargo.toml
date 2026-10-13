@@ -9,3 +9,10 @@ members = [
     "tools/verifier",
 ]
 resolver = "3"
+
+# Applies to host binaries and the Fortanix SGX enclave release builds.
+[profile.release]
+opt-level = 3
+codegen-units = 1
+lto = "thin"
+incremental = false

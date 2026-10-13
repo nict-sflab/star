@@ -21,3 +21,10 @@ ureq = "2"
 
 [dev-dependencies]
 tiny_http = "0.12"
+
+# Optimize the independent client release build as well.
+[profile.release]
+opt-level = 3
+codegen-units = 1
+lto = "thin"
+incremental = false

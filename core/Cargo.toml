@@ -46,8 +46,14 @@ harness = false
 [package.metadata.fortanix-sgx]
 threads = 2
 
-# Match hpke-ng's own benchmark optimization settings so cryptographic
-# routines can be inlined and optimized across crate boundaries.
+# Optimize HPKE/ChaCha20-Poly1305 across crate boundaries in release builds.
+[profile.release]
+opt-level = 3
+codegen-units = 1
+lto = "thin"
+incremental = false
+
+# Keep the same LTO/codegen settings for Criterion benchmarks.
 [profile.bench]
 lto = "thin"
 codegen-units = 1

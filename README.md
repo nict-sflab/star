@@ -38,3 +38,10 @@ docker compose -f compose.bench.yaml up --build sidechannel
 docker compose -f compose.bench.yaml down --rmi all --remove-orphans
 ```
 
+## HPKE and release builds
+
+The secure channel and key-manager provisioning use **X25519 + HKDF-SHA256 + ChaCha20-Poly1305**. The AEAD is selected in Rust code, not through a Cargo profile.
+
+The independent Cargo roots (`core/`, `system/client/`, and `system/serv/`) each configure release builds with `opt-level = 3`, `codegen-units = 1`, `lto = "thin"`, and `incremental = false`. This also applies to enclave images built with `cargo build --release --target x86_64-fortanix-unknown-sgx` under `system/serv/`.
+
+SGX-specific CPU feature flags remain in `.cargo/config.toml`. Do not add `-C target-cpu=native` globally: host and SGX builds may need to run on different processors.
