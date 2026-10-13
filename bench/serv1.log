@@ -1,0 +1,31 @@
+enclave.issue_token.stages/decrypt
+                        time:   [123.61 µs 123.78 µs 124.00 µs]
+                        thrpt:  [1.4767 MiB/s 1.4793 MiB/s 1.4814 MiB/s]
+Found 10 outliers among 100 measurements (10.00%)
+  3 (3.00%) high mild
+  7 (7.00%) high severe
+enclave.issue_token.stages/verify
+                        time:   [550.79 ns 551.83 ns 553.11 ns]
+                        thrpt:  [137.94 MiB/s 138.26 MiB/s 138.52 MiB/s]
+Found 11 outliers among 100 measurements (11.00%)
+  4 (4.00%) high mild
+  7 (7.00%) high severe
+enclave.issue_token.stages/token_generation
+                        time:   [330.00 ns 330.49 ns 331.12 ns]
+                        thrpt:  [92.165 MiB/s 92.340 MiB/s 92.478 MiB/s]
+Found 10 outliers among 100 measurements (10.00%)
+  3 (3.00%) high mild
+  7 (7.00%) high severe
+enclave.issue_token.stages/route
+                        time:   [247.24 ns 247.75 ns 248.31 ns]
+                        thrpt:  [4.0273 Melem/s 4.0364 Melem/s 4.0447 Melem/s]
+Found 10 outliers among 100 measurements (10.00%)
+  4 (4.00%) high mild
+  6 (6.00%) high severe
+enclave.issue_token.stages/encrypt
+                        time:   [1.0287 µs 1.0302 µs 1.0320 µs]
+                        thrpt:  [29.570 MiB/s 29.624 MiB/s 29.666 MiB/s]
+Found 12 outliers among 100 measurements (12.00%)
+  4 (4.00%) high mild
+  8 (8.00%) high severe
+
