@@ -3,7 +3,7 @@ use openssl::error::ErrorStack;
 use openssl::ex_data::Index;
 use openssl::ssl::{ClientHelloResponse, Ssl};
 use pingora::listeners::tls::TlsSettings;
-use pingora::tls::ssl::{ExtensionContext, SslAlert, SslRef};
+use pingora::tls::ssl::{SslAlert, SslRef};
 use simple_filter_box::core::FilterBox;
 use std::os::raw::{c_int, c_uchar, c_uint};
 use std::sync::{Arc, OnceLock};
@@ -66,49 +66,38 @@ where
         *STAR_TLS_TOKEN_EX_INDEX.get().expect("TLS token index set")
     };
 
-    tls_settings.set_client_hello_callback(|ssl, alert| {
-        if matches!(
-            star_tls_extension_from_client_hello(ssl),
-            Some(extension) if !extension.is_empty()
-        ) {
-            return Ok(ClientHelloResponse::SUCCESS);
+    tls_settings.set_client_hello_callback(move |ssl, alert| {
+        let Some(extension) = star_tls_extension_from_client_hello(ssl) else {
+            *alert = SslAlert::DECODE_ERROR;
+            return Err(ErrorStack::get());
+        };
+        if extension.is_empty() {
+            *alert = SslAlert::DECODE_ERROR;
+            return Err(ErrorStack::get());
         }
 
-        *alert = SslAlert::DECODE_ERROR;
-        Err(ErrorStack::get())
+        if let Some(existing) = ssl.ex_data(token_index) {
+            if existing.as_slice() == extension {
+                return Ok(ClientHelloResponse::SUCCESS);
+            }
+            *alert = SslAlert::ILLEGAL_PARAMETER;
+            return Err(ErrorStack::get());
+        }
+
+        if let Err(error) = filter.filter_client_hello(extension) {
+            *alert = match error {
+                StarFilterErrorStatus::InvalidRoute
+                | StarFilterErrorStatus::DuplicatedToken => SslAlert::ILLEGAL_PARAMETER,
+                StarFilterErrorStatus::InvalidToken | StarFilterErrorStatus::Internal => {
+                    SslAlert::DECODE_ERROR
+                }
+            };
+            return Err(ErrorStack::get());
+        }
+
+        ssl.set_ex_data(token_index, extension.to_vec());
+        Ok(ClientHelloResponse::SUCCESS)
     });
-
-    tls_settings.add_custom_ext(
-        STAR_TLS_EXTENSION_TYPE,
-        ExtensionContext::CLIENT_HELLO,
-        |_ssl, _context, _cert| Ok(None::<Vec<u8>>),
-        move |ssl, _context, extension, _cert| {
-            if extension.is_empty() {
-                return Err(SslAlert::DECODE_ERROR);
-            }
-
-            if let Some(existing) = ssl.ex_data(token_index) {
-                return if existing.as_slice() == extension {
-                    Ok(())
-                } else {
-                    Err(SslAlert::ILLEGAL_PARAMETER)
-                };
-            }
-
-            if let Err(error) = filter.filter_client_hello(extension) {
-                return Err(match error {
-                    StarFilterErrorStatus::InvalidRoute
-                    | StarFilterErrorStatus::DuplicatedToken => SslAlert::ILLEGAL_PARAMETER,
-                    StarFilterErrorStatus::InvalidToken | StarFilterErrorStatus::Internal => {
-                        SslAlert::DECODE_ERROR
-                    }
-                });
-            }
-
-            ssl.set_ex_data(token_index, extension.to_vec());
-            Ok(())
-        },
-    )?;
 
     Ok(())
 }
