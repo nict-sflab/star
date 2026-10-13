@@ -10,7 +10,7 @@ use crate::env_or_default;
 use crate::filter::StarFilter;
 use crate::provisioning::ProvisionedEnclave;
 use crate::proxy::UpstreamProxy;
-use crate::tls::star_tls_client_hello_callback;
+use crate::tls::{register_star_tls_extension, star_tls_client_hello_callback};
 
 pub struct Shard {
     index: u32,
@@ -92,6 +92,7 @@ fn build_server_with_startup_attestation(
         println!("use tls");
         let mut tls_settings = TlsSettings::intermediate(&tls_cert_path, &tls_key_path)?;
         tls_settings.set_groups_list("X25519")?;
+        register_star_tls_extension(&mut tls_settings)?;
         tls_settings.set_client_hello_callback(star_tls_client_hello_callback(filter)?);
         proxy_service.add_tls_with_settings(proxy_addr, None, tls_settings);
     }

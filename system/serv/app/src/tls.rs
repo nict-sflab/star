@@ -1,7 +1,7 @@
 use foreign_types::ForeignTypeRef;
 use openssl::error::ErrorStack;
 use openssl::ex_data::Index;
-use openssl::ssl::{ClientHelloResponse, Ssl};
+use openssl::ssl::{ClientHelloResponse, ExtensionContext, Ssl, SslAcceptorBuilder};
 use pingora::tls::ssl::{SslAlert, SslRef};
 use simple_filter_box::core::FilterBox;
 use std::os::raw::{c_int, c_uchar, c_uint};
@@ -21,6 +21,17 @@ unsafe extern "C" {
         out: *mut *const c_uchar,
         outlen: *mut usize,
     ) -> c_int;
+}
+
+/// Registers STAR as a known extension so OpenSSL exposes it to the
+/// ClientHello callback and rejects duplicate extension types.
+pub fn register_star_tls_extension(builder: &mut SslAcceptorBuilder) -> Result<(), ErrorStack> {
+    builder.add_custom_ext(
+        STAR_TLS_EXTENSION_TYPE,
+        ExtensionContext::CLIENT_HELLO,
+        |_ssl, _context, _cert| Ok(None::<Vec<u8>>),
+        |_ssl, _context, _extension, _cert| Ok(()),
+    )
 }
 
 pub fn star_tls_extension_from_client_hello<'a>(ssl: &'a SslRef) -> Option<&'a [u8]> {

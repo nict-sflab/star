@@ -14,7 +14,8 @@ use openssl::ssl::{
 use rand_core::OsRng;
 use star_app::filter::StarFilterErrorStatus;
 use star_app::tls::{
-    star_tls_client_hello_callback, star_tls_extension_from_client_hello, STAR_TLS_EXTENSION_TYPE,
+    register_star_tls_extension, star_tls_client_hello_callback,
+    star_tls_extension_from_client_hello, STAR_TLS_EXTENSION_TYPE,
 };
 
 #[derive(Clone, Copy)]
@@ -34,6 +35,7 @@ impl RejectHarness {
         let mut acceptor =
             SslAcceptor::mozilla_intermediate_v5(SslMethod::tls()).expect("build TLS acceptor");
         tls::configure_server(&mut acceptor, CertificateKind::File);
+        register_star_tls_extension(&mut acceptor).expect("register STAR extension");
 
         let extension = match case {
             RejectCase::MissingExtension => {
