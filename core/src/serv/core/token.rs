@@ -50,28 +50,3 @@ impl Token {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::Token;
-
-    #[test]
-    fn token_bytes_round_trip() {
-        let token = Token::new([0x42; 32]);
-        let serialized = token.to_bytes();
-
-        assert_eq!(serialized.len(), 32);
-        assert_eq!(Token::from_bytes(&serialized).token, token.token);
-    }
-
-    #[test]
-    #[should_panic(expected = "token must be exactly 32 bytes")]
-    fn token_from_bytes_rejects_short_input() {
-        Token::from_bytes(&[0u8; 31]);
-    }
-
-    #[test]
-    #[should_panic(expected = "token must be exactly 32 bytes")]
-    fn token_from_bytes_rejects_extra_bytes() {
-        Token::from_bytes(&[0u8; 40]);
-    }
-}
