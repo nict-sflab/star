@@ -2,12 +2,11 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 
-use constant_time_utils::bytes::Long;
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use dashmap::DashMap;
+use simple_filter_box::{core::{Entry, FilterBox}, hashmap::HashMapFilterBox};
 
 const ENTRY_COUNTS: &[usize] = &[21_800];
-const STORAGE_TABLE_TITLE: &str = "DashMap<[u8; 32], ()> live allocated bytes";
+const STORAGE_TABLE_TITLE: &str = "HashMapFilterBox (32-byte tokens) live allocated bytes";
 
 struct CountingAllocator;
 
@@ -60,14 +59,17 @@ fn should_count_this_allocation() -> bool {
     MEASURE_ACTIVE.load(Ordering::Relaxed) && MEASURE_THIS_THREAD.with(Cell::get)
 }
 
-fn build_dashmap(entries: usize) -> DashMap<Long, ()> {
-    let map = DashMap::new();
+fn build_filter_box(entries: usize) -> HashMapFilterBox {
+    let mut filter = HashMapFilterBox::new();
     for idx in 0..entries {
-        let mut token = [0u8; 32];
+        let mut token: Entry = [0u8; 32];
         token[..8].copy_from_slice(&(idx as u64).to_be_bytes());
-        map.insert(token, ());
+        assert!(
+            filter.test_and_insert(&token).expect("insert token"),
+            "token must be unique"
+        );
     }
-    map
+    filter
 }
 
 fn bench_storage(_c: &mut Criterion) {
@@ -76,15 +78,15 @@ fn bench_storage(_c: &mut Criterion) {
         .expect("benchmark CPU core");
     assert!(core_affinity::set_for_current(core), "pin benchmark thread");
 
-    let warmup = build_dashmap(32);
+    let warmup = build_filter_box(32);
     black_box(&warmup);
     drop(warmup);
 
     println!();
     println!("{STORAGE_TABLE_TITLE}");
     println!(
-        "{:>12} {:>12} {:>16} {:>14}",
-        "entries", "capacity", "alloc_delta", "bytes/entry"
+        "{:>12} {:>16} {:>14}",
+        "entries", "alloc_delta", "bytes/entry"
     );
 
     for &entries in ENTRY_COUNTS {
@@ -92,22 +94,20 @@ fn bench_storage(_c: &mut Criterion) {
         MEASURE_THIS_THREAD.with(|flag| flag.set(true));
         MEASURE_ACTIVE.store(true, Ordering::Relaxed);
 
-        let map = build_dashmap(entries);
-        let capacity = map.capacity();
+        let filter = build_filter_box(entries);
 
         MEASURE_ACTIVE.store(false, Ordering::Relaxed);
         MEASURE_THIS_THREAD.with(|flag| flag.set(false));
         let allocated = MEASURED_DELTA_BYTES.load(Ordering::Relaxed).max(0) as usize;
 
         println!(
-            "{:>12} {:>12} {:>16} {:>14.2}",
+            "{:>12} {:>16} {:>14.2}",
             entries,
-            capacity,
             allocated,
             allocated as f64 / entries as f64
         );
-        black_box(&map);
-        drop(map);
+        black_box(&filter);
+        drop(filter);
     }
 
     println!();
