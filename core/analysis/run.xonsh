@@ -3,7 +3,8 @@
 import re, os
 from pathlib import Path
 
-STAR_OUTPUT_PATH = Path(os.environ.get("STAR_OUTPUT_PATH", "/workspace/output/bench"))
+STAR_OUTPUT_PATH = Path(os.environ.get("STAR_OUTPUT_PATH", "/workspace/star/output"))
+STAR_OUTPUT_PATH.mkdir(parents=True, exist_ok=True)
 FILE_NAME = STAR_OUTPUT_PATH / "analysis.s"
 
 cd @(Path(__file__).resolve().parent.parent)
