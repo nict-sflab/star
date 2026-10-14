@@ -7,6 +7,8 @@ use alloc::vec::Vec;
 use hpke_ng::HpkeError;
 use rand::Rng;
 
+const DEFAULT_MAX_TICKET: u32 = 100;
+
 // HPKE receiver living inside the enclave.
 pub struct Enclave {
     cipher_receiver: SecureChannelServer,
@@ -38,7 +40,7 @@ impl Enclave {
         let mut sk = [0u8; 32];
         rng.fill_bytes(&mut sk);
 
-        Self::new(0, sk, cipher_receiver).expect("failed to create enclave")
+        Self::new(DEFAULT_MAX_TICKET, sk, cipher_receiver).expect("failed to create enclave")
     }
 
     /// Public key for advertising to senders.
