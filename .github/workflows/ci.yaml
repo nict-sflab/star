@@ -14,7 +14,7 @@ env:
   AZURE_VM_NAME: ${{ vars.AZURE_VM_NAME }}
 
 jobs:
-  bench:
+  auto:
     if: >
       github.event.pull_request.merged == true &&
       github.event.pull_request.head.ref == 'develop'
