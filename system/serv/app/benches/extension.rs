@@ -7,15 +7,11 @@ use common::scale_out::{OPS_PER_SERVER, SERVER_COUNTS, ScaleOutServers, run_work
 use common::star::{KeyedEnclaves, MAX_COUNT_PER_CREDENTIAL, register_user};
 use common::tls::{self, CertificateKind, MemoryStream};
 use criterion::{Criterion, Throughput, black_box, criterion_group};
-use openssl::error::ErrorStack;
-use openssl::ssl::{
-    ClientHelloResponse, ExtensionContext, HandshakeError, SslAcceptor, SslAlert, SslMethod,
-};
+use openssl::ssl::{ExtensionContext, HandshakeError, SslAcceptor, SslMethod};
 use rand::{rand_core::UnwrapErr, rngs::SysRng};
 use star_app::filter::StarFilterErrorStatus;
 use star_app::tls::{
-    register_star_tls_extension, star_tls_client_hello_callback,
-    star_tls_extension_from_client_hello, STAR_TLS_EXTENSION_TYPE,
+    register_star_tls_extension, star_tls_client_hello_callback, STAR_TLS_EXTENSION_TYPE,
 };
 
 #[derive(Clone, Copy)]
@@ -37,21 +33,13 @@ impl RejectHarness {
         tls::configure_server(&mut acceptor, CertificateKind::File);
         register_star_tls_extension(&mut acceptor).expect("register STAR extension");
 
+        let (filter, issue_enclave) =
+            KeyedEnclaves::new().into_filter(vec![shard_index], shard_count);
+        let filter = Arc::new(filter);
         let extension = match case {
-            RejectCase::MissingExtension => {
-                acceptor.set_client_hello_callback(|ssl, alert| {
-                    if star_tls_extension_from_client_hello(ssl).is_none() {
-                        return reject_client_hello(alert, SslAlert::DECODE_ERROR);
-                    }
-                    Ok(ClientHelloResponse::SUCCESS)
-                });
-                None
-            }
+            RejectCase::MissingExtension => None,
             RejectCase::ReplayedToken | RejectCase::InvalidCredential => {
                 let invalid_credential = matches!(case, RejectCase::InvalidCredential);
-                let (filter, issue_enclave) =
-                    KeyedEnclaves::new().into_filter(vec![shard_index], shard_count);
-                let filter = Arc::new(filter);
                 let mut rng = UnwrapErr(SysRng);
                 let mut user = register_user(&issue_enclave, MAX_COUNT_PER_CREDENTIAL, &mut rng);
                 let period = u64::from_be_bytes(constant_time_utils::time::current_period());
@@ -88,13 +76,13 @@ impl RejectHarness {
                     request
                 };
 
-                acceptor.set_client_hello_callback(
-                    star_tls_client_hello_callback(filter).expect("configure STAR extension"),
-                );
-
                 Some(request)
             }
         };
+
+        acceptor.set_client_hello_callback(
+            star_tls_client_hello_callback(filter).expect("configure STAR extension"),
+        );
 
         let mut connector = tls::client_connector();
         if let Some(extension) = extension {
@@ -156,14 +144,6 @@ fn run_scale_out_worker(case: &str, shard_index: u32, shard_count: u32, core_id:
             }
         },
     );
-}
-
-fn reject_client_hello(
-    alert: &mut SslAlert,
-    ssl_alert: SslAlert,
-) -> Result<ClientHelloResponse, ErrorStack> {
-    *alert = ssl_alert;
-    Err(ErrorStack::get())
 }
 
 fn bench_client_hello_reject(c: &mut Criterion) {
