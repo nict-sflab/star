@@ -65,6 +65,13 @@ jobs:
             -- \
           "sudo -n -u azureuser -H bash -lc 'cd /home/azureuser/star/star && exec bash .github/workflows/1_eval.sh'"
 
+      - name: Refresh Azure login before tests
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
       - name: Run tests
         run: |
           az ssh vm \
@@ -72,6 +79,14 @@ jobs:
             -n "$AZURE_VM_NAME" \
             -- \
           "sudo -n -u azureuser -H bash -lc 'cd /home/azureuser/star/star && exec bash .github/workflows/2_test.sh'"
+
+      - name: Refresh Azure login before uploading results
+        if: success()
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Upload results
         if: success()
@@ -82,6 +97,14 @@ jobs:
             -- \
           "sudo -n -u azureuser -H bash -lc 'cd /home/azureuser/star/star && exec bash .github/workflows/3_finalize.sh'"
           
+      - name: Refresh Azure login before stopping VM
+        if: always()
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
       - name: Stop VM
         if: always()
         run: |
