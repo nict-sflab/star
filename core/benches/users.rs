@@ -2,10 +2,10 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughpu
 use rand::{rand_core::UnwrapErr, rngs::SysRng, Rng};
 use star_core::client::User;
 use star_core::secure_channel::client::SecureChannelClient;
-use star_core::serv::enclave::Enclave;
+use star_core::serv::enclave::{Enclave, DEFAULT_MAX_TICKET};
 
 const PERIOD: u64 = 1;
-const MAX_TOKENS_PER_CREDENTIAL: u32 = 3;
+const MAX_TOKENS_PER_CREDENTIAL: u32 = DEFAULT_MAX_TICKET;
 const ROUTE_BUCKETS: u32 = 1024;
 
 struct UserBenchFixture {

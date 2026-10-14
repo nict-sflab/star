@@ -3,7 +3,7 @@
 use rand::{rand_core::UnwrapErr, rngs::SysRng, Rng};
 use star_core::client::User;
 use star_core::secure_channel::client::SecureChannelClient;
-use star_core::serv::enclave::Enclave;
+use star_core::serv::enclave::{Enclave, DEFAULT_MAX_TICKET};
 
 const PERIOD: u64 = 1;
 const COUNTER: u64 = 0;
@@ -17,7 +17,7 @@ fn main() {
     rng.fill_bytes(&mut token_sk);
     rng.fill_bytes(&mut hpke_sk);
 
-    let max_tokens_per_credential = 3u32;
+    let max_tokens_per_credential = DEFAULT_MAX_TICKET;
 
     let enclave = Enclave::new(max_tokens_per_credential, token_sk, hpke_sk)
         .expect("failed to initialize enclave");
