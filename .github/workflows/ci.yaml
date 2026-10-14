@@ -9,89 +9,49 @@ permissions:
   id-token: write
   contents: read
 
-env:
-  AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
-  AZURE_VM_NAME: ${{ vars.AZURE_VM_NAME }}
-
 jobs:
-  bench:
-    if: >
+  start:
+    if: >-
       github.event.pull_request.merged == true &&
       github.event.pull_request.head.ref == 'develop'
+    uses: ./.github/workflows/ci-start.yaml
+    secrets: inherit
 
+  checkout:
+    needs: start
+    uses: ./.github/workflows/ci-checkout.yaml
+    secrets: inherit
+
+  benchmark:
+    needs: checkout
+    uses: ./.github/workflows/ci-benchmark.yaml
+    secrets: inherit
+
+  tests:
+    needs: benchmark
+    uses: ./.github/workflows/ci-tests.yaml
+    secrets: inherit
+
+  upload:
+    needs: tests
+    uses: ./.github/workflows/ci-upload.yaml
+    secrets: inherit
+
+  stop:
+    needs: [start, checkout, benchmark, tests, upload]
+    if: ${{ always() && needs.start.result == 'success' }}
+    uses: ./.github/workflows/ci-stop.yaml
+    secrets: inherit
+
+  notify:
+    needs: [start, checkout, benchmark, tests, upload, stop]
+    if: >-
+      always() &&
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.ref == 'develop'
     runs-on: ubuntu-latest
-
     steps:
-      - uses: azure/login@v3
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Start VM
-        run: |
-          az vm start \
-            -g "$AZURE_RESOURCE_GROUP" \
-            -n "$AZURE_VM_NAME"
-            
-      - name: Configure SSH known_hosts
-        run: |
-          VM_IP=$(az vm show \
-            -g "$AZURE_RESOURCE_GROUP" \
-            -n "$AZURE_VM_NAME" \
-            -d \
-            --query publicIps \
-            -o tsv)
-      
-          mkdir -p ~/.ssh
-      
-          echo "$VM_IP ${{ vars.AZURE_VM_HOST_KEY }}" \
-            >> ~/.ssh/known_hosts
-      
-          chmod 600 ~/.ssh/known_hosts
-      - name: Update VM checkout
-        run: |
-          az ssh vm \
-            -g "$AZURE_RESOURCE_GROUP" \
-            -n "$AZURE_VM_NAME" \
-            -- \
-          "sudo -n -u azureuser -H bash -lc 'cd /home/azureuser/star/star && git checkout main && git pull --ff-only'"
-
-      - name: Run benchmark
-        run: |
-          az ssh vm \
-            -g "$AZURE_RESOURCE_GROUP" \
-            -n "$AZURE_VM_NAME" \
-            -- \
-          "sudo -n -u azureuser -H bash -lc 'cd /home/azureuser/star/star && exec bash .github/workflows/1_eval.sh'"
-
-      - name: Run tests
-        run: |
-          az ssh vm \
-            -g "$AZURE_RESOURCE_GROUP" \
-            -n "$AZURE_VM_NAME" \
-            -- \
-          "sudo -n -u azureuser -H bash -lc 'cd /home/azureuser/star/star && exec bash .github/workflows/2_test.sh'"
-
-      - name: Upload results
-        if: success()
-        run: |
-          az ssh vm \
-            -g "$AZURE_RESOURCE_GROUP" \
-            -n "$AZURE_VM_NAME" \
-            -- \
-          "sudo -n -u azureuser -H bash -lc 'cd /home/azureuser/star/star && exec bash .github/workflows/3_finalize.sh'"
-          
-      - name: Stop VM
-        if: always()
-        run: |
-          az vm deallocate \
-            -g "$AZURE_RESOURCE_GROUP" \
-            -n "$AZURE_VM_NAME" \
-            --no-wait
-  
       - name: Send webhook
-        if: always()
         run: |
           ACTION_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           curl -X POST \
