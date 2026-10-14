@@ -37,11 +37,12 @@ services:
       - -euc
       - |
         cargo test --manifest-path core/Cargo.toml
-        cargo test --manifest-path system/client/Cargo.toml
         cargo build --manifest-path system/serv/Cargo.toml -p key-manager-service
         ./system/serv/target/debug/key-manager-service &
         timeout 120 bash -c 'until (echo > /dev/tcp/127.0.0.1/8090) &>/dev/null; do sleep 1; done'
         cargo test --manifest-path system/serv/Cargo.toml --workspace
+        STAR_ENCLAVE_SGXS=/workspace/star/system/serv/target/x86_64-fortanix-unknown-sgx/release/enclave.sgxs \
+          cargo test --manifest-path system/client/Cargo.toml
         # Reuse the image built above so parallel tests do not overwrite it.
         STAR_ENCLAVE_SGXS=/workspace/star/system/serv/target/x86_64-fortanix-unknown-sgx/release/enclave.sgxs \
           cargo test --manifest-path system/serv/Cargo.toml -p star_app --lib -- --ignored
