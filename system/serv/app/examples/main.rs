@@ -1,3 +1,6 @@
+#[path = "../benches/common/aesm_proxy.rs"]
+mod aesm_proxy;
+
 use star_app::{build_server, Shard};
 use std::env;
 use std::thread;
@@ -37,6 +40,7 @@ fn spawn_content_server(bind_addr: &str) -> (String, thread::JoinHandle<()>) {
 }
 
 fn main() {
+    let _aesm_proxy = aesm_proxy::AesmProxyGuard::start();
     let api_addr = env_or_default("STAR_API_ADDR", "0.0.0.0:8080");
     let proxy_addr = env_or_default("STAR_PROXY_ADDR", "0.0.0.0:18081");
     let content_bind_addr = env_or_first(

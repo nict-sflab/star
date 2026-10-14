@@ -25,9 +25,13 @@ STAR is designed around two security goals: rate-limiting and unlinkability.
 
 ### Deploy
 
+Requires SGX devices on the host.
+
 ```sh
 docker compose up
 ```
+
+Open <http://localhost:18082> to view the example through the STAR client proxy.
 
 ### Benchmark
 

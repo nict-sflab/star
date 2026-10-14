@@ -1,4 +1,18 @@
 services:
+  aesmd:
+    image: ghcr.io/oasisprotocol/aesmd-dcap:master
+    devices:
+      - /dev/sgx_enclave
+      - /dev/sgx_provision
+    volumes:
+      - aesmd:/var/run/aesmd
+      - ./sgx_default_qcnl.conf:/etc/sgx_default_qcnl.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /var/run/aesmd/aesm.socket"]
+      interval: 1s
+      timeout: 1s
+      retries: 60
+
   server:
     build:
       context: ..
@@ -6,18 +20,29 @@ services:
     devices:
       - /dev/sgx_enclave:/dev/sgx_enclave
       - /dev/sgx_provision:/dev/sgx_provision
+    depends_on:
+      aesmd:
+        condition: service_healthy
     volumes:
-      - /run/aesmd/aesm.socket:/run/aesmd/aesm.socket
+      - aesmd:/run/aesmd
     ports:
       - "18080:18080"
       - "18081:18081"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:18080/star/public_key"]
+      interval: 5s
+      timeout: 5s
+      start_period: 20m
+      retries: 3
 
   client:
     build:
       context: ..
       dockerfile: star/system/client/Dockerfile
     depends_on:
-      - server
+      server:
+        condition: service_healthy
+        restart: true
     environment:
       STAR_API_BASE: http://server:18080
       STAR_UPSTREAM_HOST: server
@@ -27,3 +52,6 @@ services:
       OPENSSL_NO_VENDOR: 1
     ports:
       - "18082:18082"
+
+volumes:
+  aesmd:

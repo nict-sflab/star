@@ -1,7 +1,7 @@
 FROM rust:bookworm
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    clang cmake curl libssl-dev openssl pkg-config protobuf-compiler socat zlib1g-dev \
+    clang cmake curl libssl-dev openssl pkg-config protobuf-compiler zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 RUN rustup target add x86_64-fortanix-unknown-sgx \
     && cargo install fortanix-sgx-tools --locked
@@ -14,8 +14,7 @@ COPY simple-filter-box /workspace/simple-filter-box
 COPY fast-rust-sgx-caller /workspace/fast-rust-sgx-caller
 
 WORKDIR /workspace/star/system/serv
-ENV AESM_PROXY=127.0.0.1:5555 \
-    STAR_KEY_MANAGER_ADDR=127.0.0.1:8090 \
+ENV STAR_KEY_MANAGER_ADDR=127.0.0.1:8090 \
     STAR_KEY_MANAGER_URL=http://127.0.0.1:8090 \
     STAR_API_ADDR=0.0.0.0:18080 \
     STAR_PROXY_ADDR=0.0.0.0:18081 \
@@ -27,7 +26,7 @@ ENV AESM_PROXY=127.0.0.1:5555 \
     TLS_KEY_PATH=/workspace/star/system/serv/app/examples/certs/server.key
 
 RUN cargo build --release --manifest-path utils/manage-key/service/Cargo.toml \
-    && cargo build --release --manifest-path app/Cargo.toml --bin star_app \
+    && cargo build --release --manifest-path app/Cargo.toml --example main \
     && cd app/examples && bash ./keygen.sh
 
-CMD ["bash", "-lc", "socat TCP-LISTEN:5555,fork,reuseaddr UNIX-CONNECT:/run/aesmd/aesm.socket & ./target/release/key-manager-service & until curl -fsS http://127.0.0.1:8090/star/key-manager/public_key >/dev/null; do sleep 1; done; exec ./target/release/star_app"]
+CMD ["bash", "-c", "./target/release/key-manager-service & until curl -fs http://127.0.0.1:8090/star/key-manager/public_key >/dev/null; do sleep 1; done; exec ./target/release/examples/main"]
