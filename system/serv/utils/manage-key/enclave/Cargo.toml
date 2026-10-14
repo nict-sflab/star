@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-rand = { version = "0.8", default-features = false, features = ["getrandom", "std", "std_rng"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
 star_attestation = { path = "../../attest", features = ["dcap-verify"] }
 hpke = { version = "0.11", default-features = false, features = ["alloc", "x25519"] }
 sgx-isa = { version = "0.5.0", features = ["serde"] }

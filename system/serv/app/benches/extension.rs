@@ -11,7 +11,7 @@ use openssl::error::ErrorStack;
 use openssl::ssl::{
     ClientHelloResponse, ExtensionContext, HandshakeError, SslAcceptor, SslAlert, SslMethod,
 };
-use rand_core::OsRng;
+use rand::{rand_core::UnwrapErr, rngs::SysRng};
 use star_app::filter::StarFilterErrorStatus;
 use star_app::tls::{
     register_star_tls_extension, star_tls_client_hello_callback,
@@ -52,7 +52,7 @@ impl RejectHarness {
                 let (filter, issue_enclave) =
                     KeyedEnclaves::new().into_filter(vec![shard_index], shard_count);
                 let filter = Arc::new(filter);
-                let mut rng = OsRng;
+                let mut rng = UnwrapErr(SysRng);
                 let mut user = register_user(&issue_enclave, MAX_COUNT_PER_CREDENTIAL, &mut rng);
                 let period = u64::from_be_bytes(constant_time_utils::time::current_period());
                 let (counter, request, token) = (0..MAX_COUNT_PER_CREDENTIAL)

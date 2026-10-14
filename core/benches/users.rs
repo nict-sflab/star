@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
-use rand::{rngs::OsRng, RngCore};
+use rand::{rand_core::UnwrapErr, rngs::SysRng, Rng};
 use star_core::client::User;
 use star_core::secure_channel::client::SecureChannelClient;
 use star_core::serv::enclave::Enclave;
@@ -16,7 +16,7 @@ struct UserBenchFixture {
 }
 
 fn build_user_fixture() -> UserBenchFixture {
-    let mut rng = OsRng;
+    let mut rng = UnwrapErr(SysRng);
 
     let mut token_sk = [0u8; 32];
     let mut hpke_sk = [0u8; 32];
@@ -70,7 +70,7 @@ fn bench_user_latency(c: &mut Criterion) {
             request_plain,
             ..
         } = build_user_fixture();
-        let mut rng = OsRng;
+        let mut rng = UnwrapErr(SysRng);
         b.iter(|| {
             let envelope = user
                 .client

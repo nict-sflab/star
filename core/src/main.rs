@@ -1,4 +1,4 @@
-use rand::{rngs::OsRng, RngCore};
+use rand::{rand_core::UnwrapErr, rngs::SysRng, Rng};
 use star_core::client::User;
 use star_core::secure_channel::client::SecureChannelClient;
 use star_core::serv::enclave::Enclave;
@@ -7,7 +7,7 @@ const period: u64 = 1;
 
 fn main() {
     // End-to-end demo: issue a credential, request a token over HPKE, and inspect the token.
-    let mut rng = OsRng;
+    let mut rng = UnwrapErr(SysRng);
 
     // Bootstrap enclave secrets.
     let mut token_sk = [0u8; 32];

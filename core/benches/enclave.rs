@@ -3,7 +3,7 @@ use chacha20poly1305::{
     ChaCha20Poly1305, Nonce,
 };
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
-use rand::{rngs::OsRng, RngCore};
+use rand::{rand_core::UnwrapErr, rngs::SysRng, Rng};
 use star_core::client::User;
 use star_core::secure_channel::client::SecureChannelClient;
 use star_core::secure_channel::server::SecureChannelServer;
@@ -34,7 +34,7 @@ struct BenchFixture {
 }
 
 fn build_fixture() -> BenchFixture {
-    let mut rng = OsRng;
+    let mut rng = UnwrapErr(SysRng);
 
     let mut token_sk = [0u8; 32];
     let mut hpke_sk = [0u8; 32];

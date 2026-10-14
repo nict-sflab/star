@@ -1,4 +1,4 @@
-use rand_core::OsRng;
+use rand::{rand_core::UnwrapErr, rngs::SysRng};
 use simple_filter_box::hashmap::HashMapFilterBox;
 use star_app::{
     KeyManagerRuntime, enclave::EnclaveRuntime, filter::StarFilter,
@@ -43,7 +43,7 @@ impl KeyedEnclaves {
     }
 }
 
-pub fn register_user(enclave: &EnclaveRuntime, max_count: u64, rng: &mut OsRng) -> User {
+pub fn register_user(enclave: &EnclaveRuntime, max_count: u64, rng: &mut UnwrapErr<SysRng>) -> User {
     let sender =
         SecureChannelClient::new(enclave.public_key().expect("public key")).expect("sender init");
     let mut user = User::new(max_count, sender);

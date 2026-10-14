@@ -1,5 +1,7 @@
 
-use rand::{rngs::OsRng, CryptoRng, Error, RngCore, SeedableRng};
+use std::convert::Infallible;
+
+use rand::{Rng, SeedableRng, TryCryptoRng, TryRng};
 use rand_chacha::ChaCha20Rng;
 
 pub(crate) struct PoisonedRng(ChaCha20Rng);
@@ -12,28 +14,26 @@ impl PoisonedRng {
     }
 }
 
-impl RngCore for PoisonedRng {
-    fn next_u32(&mut self) -> u32 {
+impl TryRng for PoisonedRng {
+    type Error = Infallible;
+
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
         let mut bytes = [0u8; 4];
-        self.fill_bytes(&mut bytes);
-        u32::from_le_bytes(bytes)
+        self.try_fill_bytes(&mut bytes)?;
+        Ok(u32::from_le_bytes(bytes))
     }
 
-    fn next_u64(&mut self) -> u64 {
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
         let mut bytes = [0u8; 8];
-        self.fill_bytes(&mut bytes);
-        u64::from_le_bytes(bytes)
+        self.try_fill_bytes(&mut bytes)?;
+        Ok(u64::from_le_bytes(bytes))
     }
 
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
         self.0.fill_bytes(dest);
         timecop::poison(dest);
-    }
-
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Error> {
-        self.fill_bytes(dest);
         Ok(())
     }
 }
 
-impl CryptoRng for PoisonedRng {}
+impl TryCryptoRng for PoisonedRng {}

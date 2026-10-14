@@ -55,7 +55,7 @@ fn issues_credentials_and_tokens_with_the_measured_limit() {
         ..Enclave::default()
     };
     let client = SecureChannelClient::new(enclave.public_key().unwrap()).unwrap();
-    let (request, shared_key) = client.send_shared_key(&mut OsRng).unwrap();
+    let (request, shared_key) = client.send_shared_key(&mut UnwrapErr(SysRng)).unwrap();
     let response = enclave.issue_cred(&request).unwrap();
     let credential = client
         .decrypt_with_shared_key(&response, &shared_key)
@@ -67,7 +67,7 @@ fn issues_credentials_and_tokens_with_the_measured_limit() {
         let mut request = credential.clone();
         request.extend_from_slice(&count.to_be_bytes());
         request.extend_from_slice(&period);
-        let encrypted = client.send_hpke(&request, &mut OsRng).unwrap();
+        let encrypted = client.send_hpke(&request, &mut UnwrapErr(SysRng)).unwrap();
         let token = enclave.issue_token(&encrypted, period).unwrap();
         if count < MAX_COUNT as u64 {
             assert_eq!(token.len(), 32);

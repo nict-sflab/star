@@ -5,7 +5,7 @@ use hpke::{
     kem::{Kem as _, X25519HkdfSha256},
     setup_sender, Deserializable, HpkeError, OpModeS, Serializable,
 };
-use rand::{rngs::OsRng, RngCore};
+use rand_core::{OsRng, RngCore};
 use star_attestation::PUBLIC_KEY_LEN;
 const KEY_BUNDLE_SEAL_LABEL: [u8; 16] = *b"key-bundle      ";
 pub struct KeyBundle {

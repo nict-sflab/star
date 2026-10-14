@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn authenticated_key_transfer() {
     let keys = KeyBundle::random(&mut OsRng);
-    let receiver = KeyReceiver::random(&mut OsRng);
+    let receiver = KeyReceiver::random();
     let envelope = keys.export(receiver.public_key(), &mut OsRng).unwrap();
     let received = receiver.receive(&envelope, keys.public_key()).unwrap();
     assert_eq!(received.enc_key, keys.enc_key);
@@ -13,8 +13,8 @@ fn authenticated_key_transfer() {
 #[test]
 fn rejects_invalid_key_transfers() {
     let keys = KeyBundle::random(&mut OsRng);
-    let receiver = KeyReceiver::random(&mut OsRng);
-    let other = KeyReceiver::random(&mut OsRng);
+    let receiver = KeyReceiver::random();
+    let other = KeyReceiver::random();
     let mut envelope = keys.export(receiver.public_key(), &mut OsRng).unwrap();
     assert!(receiver.receive(&envelope, other.public_key()).is_err());
     assert!(other.receive(&envelope, keys.public_key()).is_err());
@@ -44,7 +44,7 @@ fn invalid_evidence() {
         },
     };
     assert!(manager.export(&[]).is_err());
-    let receiver = KeyReceiver::random(&mut OsRng);
+    let receiver = KeyReceiver::random();
     let envelope = manager
         .keys
         .export(receiver.public_key(), &mut OsRng)

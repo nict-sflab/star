@@ -1,5 +1,5 @@
 use alloc::vec::Vec;
-use rand::RngCore;
+use rand::Rng;
 
 use crate::serv::core::bytes::{Long, Short};
 
@@ -16,7 +16,7 @@ impl Credential {
 
     pub fn random<R>(sk: Long, rng: &mut R) -> Self
     where
-        R: RngCore,
+        R: Rng,
     {
         use hmac::{Hmac, Mac};
         use sha2::Sha256;
