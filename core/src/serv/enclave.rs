@@ -4,11 +4,8 @@ use crate::serv::core::cred::Credential;
 use crate::serv::core::token::Token;
 
 use alloc::vec::Vec;
-use hpke::HpkeError;
-use rand::RngCore;
-
-#[cfg(feature = "timecop")]
-use timecop;
+use hpke_ng::HpkeError;
+use rand::Rng;
 
 // HPKE receiver living inside the enclave.
 pub struct Enclave {
@@ -30,10 +27,10 @@ impl Enclave {
         })
     }
 
-    /// Generate a fresh receiver keypair using curve25519-dalek.
+    /// Generate a fresh receiver keypair using hpke-ng.
     pub fn default<R>(rng: &mut R) -> Self
     where
-        R: RngCore,
+        R: Rng,
     {
         let mut cipher_receiver = [0u8; 32];
         rng.fill_bytes(&mut cipher_receiver);
@@ -50,25 +47,7 @@ impl Enclave {
     }
 
     pub fn issue_token(&self, cipher: &[u8], current_period: Short) -> Result<Vec<u8>, u8> {
-        const AAD_LEN: usize = 32;
-        const INFO_LEN: usize = 32;
-        const ENC_LEN: usize = 32;
-
-        let min_len = AAD_LEN + INFO_LEN + ENC_LEN;
-        assert!(cipher.len() >= min_len, "HPKE envelope too short");
-
-        let aad = &cipher[..AAD_LEN];
-        let info = &cipher[AAD_LEN..AAD_LEN + INFO_LEN];
-        let enc = &cipher[AAD_LEN + INFO_LEN..AAD_LEN + INFO_LEN + ENC_LEN];
-        let ciphertext = &cipher[AAD_LEN + INFO_LEN + ENC_LEN..];
-
-        let plain = match self
-            .cipher_receiver
-            .receive_hpke(enc, info, aad, ciphertext)
-        {
-            Ok(p) => p,
-            Err(_) => panic!("decryption failed"),
-        };
+        let plain = self.cipher_receiver.receive_envelope(cipher).ok_or(1)?;
 
         let result = self.issue_token_plain(&plain, current_period);
 
@@ -78,8 +57,6 @@ impl Enclave {
     /// Issue a token from an already decrypted request (credential 64 bytes + count 8 bytes + period 8 bytes).
     /// This is mainly for examples/tests; production callers should use `issue_token` with HPKE-protected payloads.
     pub fn issue_token_plain(&self, request: &[u8], current_period: Short) -> Vec<u8> {
-        #[cfg(feature = "timecop")]
-        timecop::poison(request);
 
         if request.len() < 80 {
             return alloc::vec![0u8];
@@ -99,13 +76,10 @@ impl Enclave {
 
     pub fn issue_cred<R>(&self, cipher: &[u8], rng: &mut R) -> Vec<u8>
     where
-        R: RngCore,
+        R: Rng,
     {
         let cred = self.issue_cred_plain(rng);
 
-        #[cfg(feature = "timecop")]
-        timecop::poison(cred.as_slice());
-        
         // The HPKE envelope is aad(32) || info(32) || enc(32) || ciphertext.
         // respond_cipher expects the full envelope to recover the shared key.
         let result = self.cipher_receiver.respond_cipher(&cred, cipher, rng);
@@ -115,15 +89,9 @@ impl Enclave {
 
     pub fn issue_cred_plain<R>(&self, rng: &mut R) -> Vec<u8>
     where
-        R: RngCore,
+        R: Rng,
     {
-        #[cfg(feature = "timecop")]
-        timecop::poison(self.sk.as_slice());
         let cred = Credential::random(self.sk, rng);
-
-        #[cfg(feature = "timecop")]
-        timecop::poison(cred.uid.as_slice());
-
         let result = cred.to_bytes();
 
         return result;

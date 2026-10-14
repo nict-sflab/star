@@ -10,10 +10,9 @@ timecop = ["timecop/timecop"]
 [dependencies]
 constant-time-utils = { path = "../../constant-time-utils", default-features = false }
 
-x25519-dalek = { version = "2", default-features = false, features = ["alloc", "precomputed-tables", "zeroize"] }
-curve25519-dalek = { version = "4", default-features = false, features = ["alloc", "precomputed-tables", "zeroize"] }
-hpke = { version = "0.11", default-features = false, features = ["alloc", "x25519"] }
-rand = { version = "0.8", default-features = false, features = ["getrandom"]}
+hpke-ng = { version = "0.2", default-features = false }
+rand = { version = "0.10", default-features = false, features = ["sys_rng"] }
+rand_core = { version = "0.10", default-features = false }
 hmac = { version = "0.12", default-features = false }
 sha2 = { version = "0.10", default-features = false }
 
@@ -21,6 +20,7 @@ subtle = { version = "2.6.1", default-features = false }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
 
 timecop = { path = "../../timecop-rs" }
+rand_chacha = { version = "0.10", default-features = false }
 
 [dev-dependencies]
 criterion = "0.5"
@@ -35,11 +35,20 @@ name = "comm"
 path = "./benches/comm.rs"
 
 [[bench]]
-name = "issue_token"
+name = "enclave"
 path = "benches/enclave.rs"
 harness = false
 
 [[bench]]
-name = "users"
+name = "user"
 path = "benches/users.rs"
 harness = false
+
+[package.metadata.fortanix-sgx]
+threads = 2
+
+[profile.release]
+opt-level = 3
+codegen-units = 1
+lto = "thin"
+incremental = false

@@ -5,6 +5,9 @@ edition = "2024"
 
 [dependencies]
 base64 = "0.22.1"
-dcap-qvl = { version = "0.4.1", default-features = false, features = ["std", "report", "ring", "default-x509"] }
+clap = { version = "4.6", features = ["derive"] }
+dcap-qvl = { version = "0.4.1", default-features = false, features = ["report"] }
+hex = "0.4"
 parity-scale-codec = "3.7"
-tokio = { version = "1", features = ["rt-multi-thread"] }
+star_attestation = { path = "../../utils/attest", features = ["dcap-verify"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

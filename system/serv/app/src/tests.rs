@@ -1,7 +1,6 @@
 use crate::api::{DEFAULT_PUBLIC_KEY_API, DEFAULT_REGISTER_API};
-use crate::enclave::report_data_for_public_key;
 use crate::KeyManagerRuntime;
-use crate::{all_prefix, build_server_without_startup_attestation};
+use crate::{build_server_without_startup_attestation, Shard};
 
 use crate::tls::STAR_TLS_EXTENSION_TYPE;
 use async_trait::async_trait;
@@ -9,10 +8,11 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use constant_time_utils::time;
 use openssl::ssl::{ExtensionContext, SslConnector, SslMethod, SslVerifyMode};
 use pingora::server::{RunArgs, ShutdownSignal, ShutdownSignalWatch};
-use rand_core::OsRng;
+use rand::{rand_core::UnwrapErr, rngs::SysRng};
 use star_core::client::User;
 use star_core::secure_channel::client::SecureChannelClient;
-use star_tools::{QuoteVerificationPolicy, decode_quote_input};
+use star_attestation::{Quote, QuotePolicy};
+use star_tools::{Verifier, decode_quote_input};
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
@@ -375,8 +375,7 @@ fn test_all() {
             &api_bind_addr,
             &proxy_bind_addr,
             &upstream_addr,
-            all_prefix(1),
-            1,
+            Shard::new(0, 1),
         )
         .expect("build test server");
         let shutdown = TestShutdown {
@@ -398,7 +397,7 @@ fn test_all() {
 
     let client = SecureChannelClient::new(public_key).expect("client init");
     let mut user = User::new(1, client);
-    let mut rng = OsRng;
+    let mut rng = UnwrapErr(SysRng);
 
     let (cred_request, shared_key) = user.request_credential(&mut rng);
     let cred_request_b64 = URL_SAFE.encode(cred_request);
@@ -449,7 +448,7 @@ fn test_all() {
 }
 
 #[test]
-fn public_key_attestation_quote_verifies_with_tools_policy() {
+fn public_key_attestation() {
     let _sgx_test_guard = SGX_TEST_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -470,29 +469,29 @@ fn public_key_attestation_quote_verifies_with_tools_policy() {
         URL_SAFE.encode(&quote)
     );
     let quote = decode_quote_input(startup_log.as_bytes()).expect("decode quote from startup log");
-    let parsed = star_tools::parse_quote(&quote).expect("parse quote");
-    let expected_mrsigner = parsed.mrsigner;
-    let expected_mrenclave = parsed.mrenclave;
-
-    assert_eq!(
-        star_tools::public_key_from_report_data(&parsed).expect("extract attested public key"),
-        public_key
-    );
-    assert_eq!(parsed.report_data, report_data_for_public_key(public_key));
-
-    let policy = QuoteVerificationPolicy {
-        expected_mrsigner: &expected_mrsigner,
-        expected_mrenclave: Some(&expected_mrenclave),
-        expected_public_key: Some(&public_key),
+    let parsed = Quote::parse(&quote).expect("parse quote");
+    let policy = QuotePolicy {
+        expected_mrsigner: Some(parsed.mrsigner),
+        expected_mrenclave: Some(parsed.mrenclave),
         allow_debug: true,
         allow_advisory: true,
-        pccs_url: None,
     };
-    let verified = star_tools::verify_quote(&quote, &policy).expect("verify quote with tools");
+    let runtime = tokio::runtime::Runtime::new().expect("create verification runtime");
+    let verifier = Verifier::new(None).expect("create verifier");
+    let verified = runtime
+        .block_on(verifier.verify(&quote, &policy))
+        .expect("verify quote with tools");
 
-    assert_eq!(verified.public_key, public_key);
     assert_eq!(
-        verified.parsed.report_data,
-        report_data_for_public_key(public_key)
+        verified.public_key().expect("extract attested public key"),
+        public_key
     );
+
+    // Change the public key in the v5 SGX report, preserving the trusted measurements.
+    let mut forged = quote;
+    forged[54 + 320] ^= 1;
+    let err = runtime
+        .block_on(verifier.verify(&forged, &policy))
+        .expect_err("a changed public key must invalidate the quote signature");
+    assert!(err.contains("verify DCAP quote"), "{err}");
 }

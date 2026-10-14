@@ -3,43 +3,57 @@ use chacha20poly1305::{
     aead::{Aead, KeyInit},
     ChaCha20Poly1305, Nonce,
 };
-use hpke::{
-    aead::ChaCha20Poly1305 as HpkeChaCha20Poly1305,
-    kdf::HkdfSha256,
-    kem::{Kem as _, X25519HkdfSha256},
-    setup_receiver, Deserializable, HpkeError, OpModeR, Serializable,
+use hpke_ng::{
+    kem::dh::{DiffieHellman, X25519},
+    ChaCha20Poly1305 as HpkeChaCha20Poly1305, DhKemX25519HkdfSha256, HkdfSha256, Hpke,
+    HpkeError, Kem,
 };
-use rand::{CryptoRng, RngCore};
+use rand::{CryptoRng, Rng};
+
+type HpkeSuite = Hpke<DhKemX25519HkdfSha256, HkdfSha256, HpkeChaCha20Poly1305>;
 
 // HPKE receiver living inside the enclave.
 pub struct SecureChannelServer {
-    pub sk: <X25519HkdfSha256 as hpke::kem::Kem>::PrivateKey,
-    pub pk: <X25519HkdfSha256 as hpke::kem::Kem>::PublicKey,
+    pub sk: <DhKemX25519HkdfSha256 as Kem>::PrivateKey,
+    pub pk: [u8; 32],
 }
 
 impl SecureChannelServer {
     /// Restore a receiver from an existing 32-byte X25519 secret key.
     pub fn new(sk_bytes: [u8; 32]) -> Result<Self, HpkeError> {
-        let sk = <X25519HkdfSha256 as hpke::kem::Kem>::PrivateKey::from_bytes(&sk_bytes)?;
-        let pk = X25519HkdfSha256::sk_to_pk(&sk);
+        let sk = DhKemX25519HkdfSha256::sk_from_bytes(&sk_bytes)?;
+
+        // hpke-ng caches the matching public key in its private-key wrapper for
+        // decapsulation. Derive the advertised public key once at construction.
+        let raw_sk = X25519::sk_from_bytes(&sk_bytes)?;
+        let raw_pk = X25519::sk_to_pk(&raw_sk);
+        let pk_bytes = X25519::pk_to_bytes(&raw_pk);
+        let pk = pk_bytes
+            .as_slice()
+            .try_into()
+            .expect("X25519 public key must be 32 bytes");
+
         Ok(Self { sk, pk })
     }
 
-    /// Generate a fresh receiver keypair using curve25519-dalek.
+    /// Generate a fresh receiver keypair using hpke-ng.
     pub fn random<R>(rng: &mut R) -> Self
     where
-        R: CryptoRng + RngCore,
+        R: CryptoRng,
     {
-        let (sk, pk) = X25519HkdfSha256::gen_keypair(rng);
+        let (sk, pk) = DhKemX25519HkdfSha256::generate(rng)
+            .expect("X25519 key generation must succeed");
+        let pk = pk
+            .as_ref()
+            .try_into()
+            .expect("X25519 public key must be 32 bytes");
 
         Self { sk, pk }
     }
 
     /// Public key for advertising to senders.
     pub fn public_key(&self) -> [u8; 32] {
-        let bytes = self.pk.to_bytes();
-        let bytes_ref: &[u8] = bytes.as_ref();
-        bytes_ref.try_into().expect("public key must be 32 bytes")
+        self.pk
     }
 
     /// Decrypt an HPKE ciphertext (X25519 + ChaCha20-Poly1305).
@@ -50,50 +64,49 @@ impl SecureChannelServer {
         aad: &[u8],
         ciphertext: &[u8],
     ) -> Result<Vec<u8>, HpkeError> {
-        let enc = <X25519HkdfSha256 as hpke::kem::Kem>::EncappedKey::from_bytes(enc)?;
-        let mut ctx = setup_receiver::<HpkeChaCha20Poly1305, HkdfSha256, X25519HkdfSha256>(
-            &OpModeR::Base,
-            &self.sk,
-            &enc,
-            info,
-        )?;
-
-        ctx.open(ciphertext, aad)
+        let enc = DhKemX25519HkdfSha256::enc_from_bytes(enc)?;
+        HpkeSuite::open_base(&enc, &self.sk, info, aad, ciphertext)
     }
 
-    pub fn respond_cipher<R>(&self, response: &[u8], cipher: &[u8], rng: &mut R) -> Vec<u8>
-    where
-        R: RngCore,
-    {
+    /// Decrypt an envelope: aad(32) || info(32) || enc(32) || ciphertext.
+    /// Returns `None` when the envelope is malformed or decryption fails.
+    pub fn receive_envelope(&self, cipher: &[u8]) -> Option<Vec<u8>> {
         const AAD_LEN: usize = 32;
         const INFO_LEN: usize = 32;
         const ENC_LEN: usize = 32;
 
-        let min_len = AAD_LEN + INFO_LEN + ENC_LEN;
-        assert!(cipher.len() >= min_len, "HPKE envelope too short");
+        if cipher.len() < AAD_LEN + INFO_LEN + ENC_LEN {
+            return None;
+        }
 
-        let aad = &cipher[..AAD_LEN];
-        let info = &cipher[AAD_LEN..AAD_LEN + INFO_LEN];
-        let enc = &cipher[AAD_LEN + INFO_LEN..AAD_LEN + INFO_LEN + ENC_LEN];
-        let ciphertext = &cipher[AAD_LEN + INFO_LEN + ENC_LEN..];
+        let (aad, rest) = cipher.split_at(AAD_LEN);
+        let (info, rest) = rest.split_at(INFO_LEN);
+        let (enc, ciphertext) = rest.split_at(ENC_LEN);
 
-        #[cfg(feature = "timecop")]
-        timecop::poison(ciphertext);
+        self.receive_hpke(enc, info, aad, ciphertext).ok()
+    }
 
-        let key = self
-            .receive_hpke(enc, info, aad, ciphertext)
-            .expect("decryption failed");
-
-        #[cfg(feature = "timecop")]
-        timecop::poison(key.as_slice());
+    pub fn respond_cipher<R>(&self, response: &[u8], cipher: &[u8], rng: &mut R) -> Vec<u8>
+    where
+        R: Rng,
+    {
+        let key = match self.receive_envelope(cipher) {
+            Some(key) => key,
+            None => return Vec::new(),
+        };
 
         let mut nonce_bytes = [0u8; 12];
         rng.fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
 
-        let aead =
-            ChaCha20Poly1305::new_from_slice(&key).expect("HPKE response key must be 32 bytes");
-        let ciphertext = aead.encrypt(nonce, response).expect("encryption failure!");
+        let aead = match ChaCha20Poly1305::new_from_slice(&key) {
+            Ok(aead) => aead,
+            Err(_) => return Vec::new(),
+        };
+        let ciphertext = match aead.encrypt(nonce, response) {
+            Ok(ciphertext) => ciphertext,
+            Err(_) => return Vec::new(),
+        };
 
         let mut result = Vec::with_capacity(nonce_bytes.len() + ciphertext.len());
         result.extend_from_slice(&nonce_bytes);

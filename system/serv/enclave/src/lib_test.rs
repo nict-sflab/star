@@ -1,71 +1,83 @@
-#[cfg(test)]
-mod tests {
-    use super::super::*;
+use super::*;
+use star_core::secure_channel::client::SecureChannelClient;
 
-    #[test]
-    fn init_rejects_raw_key_bundle() {
-        let mut app = EnclaveApp::new();
-        let bundle = KeyBundle {
-            enc_key: [7u8; 32],
-            hpke_receiver_key: [8u8; 32],
-        };
-        let payload = encode_key_bundle(bundle);
+#[test]
+fn key_transfer_does_not_initialize_issuer() {
+    let mut enclave = Enclave::default();
+    let previous_key = enclave.transfer_public_key();
+    enclave.prepare_key_transfer().unwrap();
+    assert_ne!(enclave.transfer_public_key(), previous_key);
+    assert!(enclave.public_key().is_err());
+    assert!(enclave.issue_cred(&[]).is_err());
+    assert!(enclave.issue_token(&[], [0; 8]).is_err());
+}
 
-        let (status, payload) = app.handle(OP_INIT, &payload);
+#[test]
+fn failed_install_leaves_enclave_uninitialized() {
+    let mut enclave = Enclave::default();
+    let transfer_key = enclave.transfer_public_key();
+    assert!(enclave.install_keys(&[0; 64], &[0; 64]).is_err());
+    assert!(enclave.public_key().is_err());
+    assert_eq!(enclave.transfer_public_key(), transfer_key);
+}
 
-        assert_eq!(status, STATUS_BAD_REQUEST);
-        assert_eq!(
-            payload,
-            b"init does not accept keys; install key-manager envelope with OP_INSTALL_KEYS"
-        );
+#[test]
+fn initialized_enclave_rejects_key_replacement() {
+    let mut enclave = Enclave {
+        issuer: Some(CredentialIssuer::new(MAX_COUNT, [7; 32], [8; 32]).unwrap()),
+        ..Enclave::default()
+    };
+    let public_key = enclave.public_key().unwrap();
+    let transfer_key = enclave.transfer_public_key();
+    assert!(enclave.prepare_key_transfer().is_err());
+    assert!(enclave.install_keys(&[], &[]).is_err());
+    assert_eq!(enclave.public_key().unwrap(), public_key);
+    assert_eq!(enclave.transfer_public_key(), transfer_key);
+}
 
-        let (status, payload) = app.handle(OP_PUBLIC_KEY, &[]);
-        assert_eq!(status, STATUS_NOT_INITIALIZED);
-        assert_eq!(payload, b"enclave is not initialized");
+#[test]
+fn invalid_issuance_requests_are_rejected() {
+    let enclave = Enclave {
+        issuer: Some(CredentialIssuer::new(MAX_COUNT, [7; 32], [8; 32]).unwrap()),
+        ..Enclave::default()
+    };
+    assert!(enclave.issue_cred(&[]).is_err());
+    assert!(enclave.issue_token(&[], [0; 8]).is_err());
+}
+
+#[test]
+fn issues_credentials_and_tokens_with_the_measured_limit() {
+    let enclave = Enclave {
+        issuer: Some(
+            CredentialIssuer::new(u32::from_be_bytes(MEASURED_MAX_COUNT_BE), [7; 32], [8; 32])
+                .unwrap(),
+        ),
+        ..Enclave::default()
+    };
+    let client = SecureChannelClient::new(enclave.public_key().unwrap()).unwrap();
+    let (request, shared_key) = client.send_shared_key(&mut UnwrapErr(SysRng)).unwrap();
+    let response = enclave.issue_cred(&request).unwrap();
+    let credential = client
+        .decrypt_with_shared_key(&response, &shared_key)
+        .unwrap();
+    assert_eq!(credential.len(), 64);
+
+    let period = 42u64.to_be_bytes();
+    for count in [0, MAX_COUNT as u64] {
+        let mut request = credential.clone();
+        request.extend_from_slice(&count.to_be_bytes());
+        request.extend_from_slice(&period);
+        let encrypted = client.send_hpke(&request, &mut UnwrapErr(SysRng)).unwrap();
+        let token = enclave.issue_token(&encrypted, period).unwrap();
+        if count < MAX_COUNT as u64 {
+            assert_eq!(token.len(), 32);
+        } else {
+            assert_eq!(token, [0]);
+        }
     }
+}
 
-    #[test]
-    fn empty_init_only_prepares_key_manager_transfer() {
-        let mut app = EnclaveApp::new();
-
-        let (status, payload) = app.handle(OP_INIT, &[]);
-
-        assert_eq!(status, STATUS_OK);
-        assert!(payload.is_empty());
-
-        let (status, payload) = app.handle(OP_PUBLIC_KEY, &[]);
-        assert_eq!(status, STATUS_NOT_INITIALIZED);
-        assert_eq!(payload, b"enclave is not initialized");
-
-        let (status, payload) = app.handle(OP_TRANSFER_PUBLIC_KEY, &[]);
-        assert_eq!(status, STATUS_OK);
-        assert_eq!(payload.len(), PUBLIC_KEY_LEN);
-    }
-
-    #[test]
-    fn key_bundle_round_trips() {
-        let bundle = KeyBundle {
-            enc_key: [7u8; 32],
-            hpke_receiver_key: [8u8; 32],
-        };
-
-        let encoded = encode_key_bundle(bundle);
-        let decoded = decode_key_bundle(&encoded).expect("decode");
-
-        assert_eq!(decoded.enc_key, bundle.enc_key);
-        assert_eq!(decoded.hpke_receiver_key, bundle.hpke_receiver_key);
-    }
-
-    #[test]
-    fn measured_max_count_matches_policy() {
-        assert_eq!(enclave_max_count(), MAX_COUNT);
-        assert_eq!(MEASURED_MAX_COUNT_BE, MAX_COUNT.to_be_bytes());
-    }
-
-    fn encode_key_bundle(bundle: KeyBundle) -> Vec<u8> {
-        let mut out = Vec::with_capacity(64);
-        out.extend_from_slice(&bundle.enc_key);
-        out.extend_from_slice(&bundle.hpke_receiver_key);
-        out
-    }
+#[test]
+fn measured_max_count_matches_policy() {
+    assert_eq!(u32::from_be_bytes(MEASURED_MAX_COUNT_BE), MAX_COUNT);
 }

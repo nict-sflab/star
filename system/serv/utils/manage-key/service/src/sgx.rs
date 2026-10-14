@@ -1,84 +1,77 @@
-use std::path::Path;
-use std::path::PathBuf;
-use std::process::Command;
-use std::{fmt, io};
+use std::io;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::Mutex;
 
-use aesm_client::AesmClient;
-use enclave_runner::{EnclaveBuilder, Library};
-use enclave_runner_sgx::EnclaveBuilder as SgxEnclaveBuilder;
-use sgxs_loaders::isgx::Device as SgxDevice;
+use crate::protocol;
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum EnclaveError {
+    #[error("enclave build failed to start: {0}")]
     Build(io::Error),
+    #[error("enclave build failed: {0}")]
     BuildFailed(String),
-    Library(String),
-    Remote { status: u64, payload: Vec<u8> },
-    ResponseTooLarge { len: usize },
+    #[error("enclave runner error: {0}")]
+    Runner(String),
+    #[error("enclave stream error: {0}")]
+    Io(#[from] io::Error),
+    #[error("enclave remote error: status {status}: {}", String::from_utf8_lossy(.payload))]
+    Remote { status: u8, payload: Vec<u8> },
 }
 
-impl fmt::Display for EnclaveError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Build(err) => write!(f, "enclave build failed to start: {err}"),
-            Self::BuildFailed(status) => write!(f, "enclave build failed: {status}"),
-            Self::Library(err) => write!(f, "enclave library error: {err}"),
-            Self::Remote { status, payload } => {
-                write!(f, "enclave remote error: status {status}")?;
-                if !payload.is_empty() {
-                    write!(f, ": {}", String::from_utf8_lossy(payload))?;
-                }
-                Ok(())
-            }
-            Self::ResponseTooLarge { len } => write!(f, "enclave response too large: {len} bytes"),
+pub(crate) const SGX_TARGET: &str = "x86_64-fortanix-unknown-sgx";
+
+pub(crate) struct CommandRuntime {
+    child: Mutex<Child>,
+}
+
+impl CommandRuntime {
+    pub(crate) fn load(sgxs: &Path) -> Result<Self, EnclaveError> {
+        let runner =
+            std::env::var_os("STAR_KEY_MANAGER_RUNNER").unwrap_or_else(|| "ftxsgx-runner".into());
+        Self::spawn(Command::new(runner).arg(sgxs))
+    }
+
+    fn spawn(command: &mut Command) -> Result<Self, EnclaveError> {
+        let child = command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .map_err(|err| EnclaveError::Runner(format!("start runner: {err}")))?;
+        Ok(Self {
+            child: Mutex::new(child),
+        })
+    }
+
+    pub(crate) fn call(&self, op: u8, payload: &[u8]) -> Result<Vec<u8>, EnclaveError> {
+        let mut child = self
+            .child
+            .lock()
+            .map_err(|err| EnclaveError::Runner(err.to_string()))?;
+        // Hold the lock for the whole exchange so concurrent calls cannot mix frames.
+        protocol::write(child.stdin.as_mut().expect("piped stdin"), op, payload)?;
+        let (status, payload) = protocol::read(child.stdout.as_mut().expect("piped stdout"))?
+            .ok_or_else(|| {
+                EnclaveError::Runner("runner closed stdout; see stderr for details".into())
+            })?;
+        match status {
+            protocol::OK => Ok(payload),
+            protocol::ERROR => Err(EnclaveError::Remote { status, payload }),
+            _ => Err(EnclaveError::Runner(format!(
+                "invalid response status: {status}"
+            ))),
         }
     }
 }
 
-impl std::error::Error for EnclaveError {}
-
-pub(crate) const SGX_TARGET: &str = "x86_64-fortanix-unknown-sgx";
-
-const MAX_PAYLOAD_LEN: usize = 16 * 1024 * 1024;
-const STATUS_OK: u64 = 0;
-const STATUS_BUFFER_TOO_SMALL: u64 = 5;
-
-pub(crate) struct LibraryRuntime {
-    library: Library,
-}
-
-unsafe impl Send for LibraryRuntime {}
-unsafe impl Sync for LibraryRuntime {}
-
-impl LibraryRuntime {
-    pub(crate) fn load(sgxs: &Path) -> Result<Self, EnclaveError> {
-        let mut device = SgxDevice::new()
-            .map_err(EnclaveError::Build)?
-            .einittoken_provider(AesmClient::new())
-            .build();
-
-        let sgx_builder = SgxEnclaveBuilder::new(sgxs);
-
-        let library = EnclaveBuilder::new(sgx_builder)
-            .build(&mut device)
-            .map_err(|err| EnclaveError::Library(err.to_string()))?;
-
-        Ok(Self { library })
-    }
-
-    pub(crate) fn call(
-        &self,
-        op: u64,
-        payload: &[u8],
-        initial_capacity: usize,
-    ) -> Result<Vec<u8>, EnclaveError> {
-        std::thread::scope(|scope| {
-            let handle = scope.spawn(|| call_library(&self.library, op, payload, initial_capacity));
-            match handle.join() {
-                Ok(result) => result,
-                Err(panic) => std::panic::resume_unwind(panic),
-            }
-        })
+impl Drop for CommandRuntime {
+    fn drop(&mut self) {
+        let child = self.child.get_mut().unwrap_or_else(|err| err.into_inner());
+        // Close the input and reap the child, even if it is stuck in a usercall.
+        drop(child.stdin.take());
+        let _ = child.kill();
+        let _ = child.wait();
     }
 }
 
@@ -108,14 +101,26 @@ pub(crate) fn build_sgxs(
             .arg(manifest_path),
     )?;
 
-    let target_dir = release_target_dir(manifest_dir, binary_name)?;
+    let mut candidates = Vec::new();
+    if let Some(target_dir) = std::env::var_os("CARGO_TARGET_DIR") {
+        candidates.push(PathBuf::from(target_dir));
+    }
+    candidates.extend(manifest_dir.ancestors().map(|path| path.join("target")));
+    let target_dir = candidates
+        .into_iter()
+        .map(|path| path.join(SGX_TARGET).join("release"))
+        .find(|path| path.join(binary_name).is_file())
+        .ok_or_else(|| {
+            EnclaveError::BuildFailed(format!(
+                "cargo built {binary_name}, but the SGX ELF was not found"
+            ))
+        })?;
     let elf_path = target_dir.join(binary_name);
     let sgxs_path = target_dir.join(format!("{binary_name}.sgxs"));
 
     run_command(
         Command::new("ftxsgx-elf2sgxs")
             .arg(&elf_path)
-            .arg("--library")
             .arg("--debug")
             .arg("--heap-size")
             .arg(heap_size)
@@ -128,31 +133,6 @@ pub(crate) fn build_sgxs(
     )?;
 
     Ok(sgxs_path)
-}
-
-fn release_target_dir(manifest_dir: &Path, binary_name: &str) -> Result<PathBuf, EnclaveError> {
-    let mut candidates = Vec::new();
-
-    if let Some(target_dir) = std::env::var_os("CARGO_TARGET_DIR") {
-        candidates.push(PathBuf::from(target_dir));
-    }
-
-    let mut current = Some(manifest_dir);
-    while let Some(path) = current {
-        candidates.push(path.join("target"));
-        current = path.parent();
-    }
-
-    for candidate in candidates {
-        let target_dir = candidate.join(SGX_TARGET).join("release");
-        if target_dir.join(binary_name).is_file() {
-            return Ok(target_dir);
-        }
-    }
-
-    Err(EnclaveError::BuildFailed(format!(
-        "cargo built {binary_name}, but the SGX ELF was not found"
-    )))
 }
 
 fn run_command(command: &mut Command) -> Result<(), EnclaveError> {
@@ -171,51 +151,3 @@ fn run_command(command: &mut Command) -> Result<(), EnclaveError> {
     )))
 }
 
-fn call_library(
-    library: &Library,
-    op: u64,
-    payload: &[u8],
-    initial_capacity: usize,
-) -> Result<Vec<u8>, EnclaveError> {
-    let mut output = vec![0u8; initial_capacity];
-
-    loop {
-        let (status, len) = unsafe {
-            library.call(
-                op,
-                payload.as_ptr() as u64,
-                payload.len() as u64,
-                output.as_mut_ptr() as u64,
-                output.len() as u64,
-            )
-        }
-        .map_err(|err| EnclaveError::Library(err.to_string()))?;
-
-        let len =
-            usize::try_from(len).map_err(|_| EnclaveError::ResponseTooLarge { len: usize::MAX })?;
-
-        if status == STATUS_BUFFER_TOO_SMALL {
-            if len > MAX_PAYLOAD_LEN {
-                return Err(EnclaveError::ResponseTooLarge { len });
-            }
-
-            output.resize(len, 0);
-            continue;
-        }
-
-        if len > output.len() {
-            return Err(EnclaveError::ResponseTooLarge { len });
-        }
-
-        output.truncate(len);
-
-        if status == STATUS_OK {
-            return Ok(output);
-        }
-
-        return Err(EnclaveError::Remote {
-            status,
-            payload: output,
-        });
-    }
-}

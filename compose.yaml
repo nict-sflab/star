@@ -1,0 +1,29 @@
+services:
+  server:
+    build:
+      context: ..
+      dockerfile: star/system/serv/Dockerfile
+    devices:
+      - /dev/sgx_enclave:/dev/sgx_enclave
+      - /dev/sgx_provision:/dev/sgx_provision
+    volumes:
+      - /run/aesmd/aesm.socket:/run/aesmd/aesm.socket
+    ports:
+      - "18080:18080"
+      - "18081:18081"
+
+  client:
+    build:
+      context: ..
+      dockerfile: star/system/client/Dockerfile
+    depends_on:
+      - server
+    environment:
+      STAR_API_BASE: http://server:18080
+      STAR_UPSTREAM_HOST: server
+      STAR_UPSTREAM_PORT: "18081"
+      STAR_UPSTREAM_SNI: localhost
+      STAR_CLIENT_PROXY_LISTEN: 0.0.0.0:18082
+      OPENSSL_NO_VENDOR: 1
+    ports:
+      - "18082:18082"

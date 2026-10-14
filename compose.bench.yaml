@@ -1,0 +1,93 @@
+services:
+  aesmd:
+      image: ghcr.io/oasisprotocol/aesmd-dcap:master
+      devices:
+        - /dev/sgx_enclave
+        - /dev/sgx_provision
+      volumes:
+        - aesmd:/var/run/aesmd
+        - ./sgx_default_qcnl.conf:/etc/sgx_default_qcnl.conf:ro
+
+  ecdaa-rs:
+    image: nixos/nix:latest
+    volumes:
+      - ./bench:/bench
+    command:
+      - nix-shell
+      - -p
+      - git
+      - cargo
+      - coreutils
+      - --command
+      - >
+        set -euo pipefail;
+        rm -rf /tmp/ecdaa-rs;
+        git clone --depth 1 https://github.com/akakou/ecdaa-rs /tmp/ecdaa-rs;
+        cd /tmp/ecdaa-rs;
+        cargo bench 2>&1 | tee /bench/ecdaa-rs.log
+
+  arc:
+    image: nixos/nix:latest
+    volumes:
+      - ./bench:/bench
+    command:
+      - nix-shell
+      - -p
+      - git
+      - cargo
+      - coreutils
+      - --command
+      - >
+        set -euo pipefail;
+        rm -rf /tmp/arc;
+        git clone --depth 1 https://github.com/cloudflareresearch/arc.git /tmp/arc;
+        cd /tmp/arc;
+        grep -q 'const PRES_LIMIT: NonZero<u32> = NonZero::new(1000)' benches/arc_bench.rs;
+        sed -i 's/const PRES_LIMIT: NonZero<u32> = NonZero::new(1000)/const PRES_LIMIT: NonZero<u32> = NonZero::new(100)/' benches/arc_bench.rs;
+        cargo bench --features suite_ristretto255 --bench arc_bench -- arc 2>&1 | tee /bench/arc.log
+
+  core:
+    build:
+      context: ..
+      dockerfile: star/Dockerfile.bench
+    devices:
+      - /dev/sgx_enclave
+      - /dev/sgx_provision
+    volumes:
+      - ./bench:/workspace/star/bench
+    command: >
+      bash -o pipefail -c '
+        cargo bench --manifest-path core/Cargo.toml --bench enclave --target x86_64-fortanix-unknown-sgx -- --discard-baseline --noplot | tee bench/serv1.log &&
+        cargo bench --manifest-path core/Cargo.toml --bench user -- --discard-baseline --noplot | tee bench/user.log &&
+        cargo run --manifest-path core/Cargo.toml --bin comm --release -- --discard-baseline | tee bench/comm.log
+      '
+
+  serv:
+    build:
+      context: ..
+      dockerfile: star/Dockerfile.bench
+    depends_on:
+      - aesmd
+    devices:
+      - /dev/sgx_enclave
+      - /dev/sgx_provision
+    environment:
+      STAR_MAX_COUNT: "1000000"
+    volumes:
+      - aesmd:/run/aesmd
+      - ./bench:/workspace/star/bench
+    command: >
+      bash -o pipefail -c '
+        while [ ! -S /run/aesmd/aesm.socket ]; do sleep 0.1; done;
+        cargo bench --manifest-path system/serv/app/Cargo.toml --bench "*" -- --discard-baseline --noplot | tee bench/serv2.log
+      '
+
+  sidechannel:
+    build:
+      context: ..
+      dockerfile: star/core/analysis/Dockerfile
+    volumes:
+      - ./bench:/workspace/star/bench
+
+volumes:
+  aesmd:

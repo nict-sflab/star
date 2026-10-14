@@ -14,7 +14,7 @@ log = "0.4"
 openssl = "0.10.75"
 pingora = { version = "0.6.0", features = ["openssl"] }
 pingora-core = { version = "0.6.0", features = ["openssl"] }
-rand = { version = "0.8", default-features = false, features = ["getrandom"] }
+rand = { version = "0.10", default-features = false, features = ["sys_rng"] }
 star-core = { path = "../../core" }
 tokio = { version = "1", features = ["full"] }
 ureq = "2"
