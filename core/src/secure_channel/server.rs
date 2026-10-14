@@ -68,17 +68,31 @@ impl SecureChannelServer {
         HpkeSuite::open_base(&enc, &self.sk, info, aad, ciphertext)
     }
 
+    /// Decrypt an envelope: aad(32) || info(32) || enc(32) || ciphertext.
+    /// Returns `None` when the envelope is malformed or decryption fails.
+    pub fn receive_envelope(&self, cipher: &[u8]) -> Option<Vec<u8>> {
+        const AAD_LEN: usize = 32;
+        const INFO_LEN: usize = 32;
+        const ENC_LEN: usize = 32;
+
+        if cipher.len() < AAD_LEN + INFO_LEN + ENC_LEN {
+            return None;
+        }
+
+        let (aad, rest) = cipher.split_at(AAD_LEN);
+        let (info, rest) = rest.split_at(INFO_LEN);
+        let (enc, ciphertext) = rest.split_at(ENC_LEN);
+
+        self.receive_hpke(enc, info, aad, ciphertext).ok()
+    }
+
     pub fn respond_cipher<R>(&self, response: &[u8], cipher: &[u8], rng: &mut R) -> Vec<u8>
     where
         R: Rng,
     {
-        let Some((aad, info, enc, ciphertext)) = split_hpke_envelope(cipher) else {
-            return Vec::new();
-        };
-
-        let key = match self.receive_hpke(enc, info, aad, ciphertext) {
-            Ok(key) => key,
-            Err(_) => return Vec::new(),
+        let key = match self.receive_envelope(cipher) {
+            Some(key) => key,
+            None => return Vec::new(),
         };
 
         let mut nonce_bytes = [0u8; 12];
@@ -100,22 +114,4 @@ impl SecureChannelServer {
 
         result
     }
-}
-
-pub(crate) fn split_hpke_envelope(cipher: &[u8]) -> Option<(&[u8], &[u8], &[u8], &[u8])> {
-    const AAD_LEN: usize = 32;
-    const INFO_LEN: usize = 32;
-    const ENC_LEN: usize = 32;
-
-    let min_len = AAD_LEN + INFO_LEN + ENC_LEN;
-    if cipher.len() < min_len {
-        return None;
-    }
-
-    let aad = &cipher[..AAD_LEN];
-    let info = &cipher[AAD_LEN..AAD_LEN + INFO_LEN];
-    let enc = &cipher[AAD_LEN + INFO_LEN..AAD_LEN + INFO_LEN + ENC_LEN];
-    let ciphertext = &cipher[AAD_LEN + INFO_LEN + ENC_LEN..];
-
-    Some((aad, info, enc, ciphertext))
 }
