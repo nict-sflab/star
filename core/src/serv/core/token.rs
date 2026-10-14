@@ -28,11 +28,7 @@ impl Token {
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Self {
-        assert!(
-            bytes.len() >= 40,
-            "token bytes must contain 32-byte token + 8-byte period"
-        );
-        let token: Long = bytes[0..32].try_into().expect("fixed-length slice");
+        let token: Long = bytes.try_into().expect("token must be exactly 32 bytes");
 
         Self { token }
     }
@@ -53,3 +49,4 @@ impl Token {
         bytes
     }
 }
+
