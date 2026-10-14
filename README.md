@@ -36,10 +36,10 @@ Open <http://localhost:18082> to view the example through the STAR client proxy.
 ### Benchmark
 
 ```sh
-docker compose -f compose.bench.yaml up --build core
-docker compose -f compose.bench.yaml up --build serv
-docker compose -f compose.bench.yaml up --build sidechannel
-docker compose -f compose.bench.yaml down --rmi all --remove-orphans
+docker compose -f compose.eval.yaml up --build core --exit-code-from core
+docker compose -f compose.eval.yaml up --build serv --exit-code-from serv
+docker compose -f compose.eval.yaml up --build sidechannel --exit-code-from sidechannel
+docker compose -f compose.eval.yaml down --rmi all --remove-orphans
 ```
 
 ### Test (requires SGX hardware)
