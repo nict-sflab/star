@@ -38,3 +38,7 @@ docker compose -f compose.bench.yaml up --build sidechannel
 docker compose -f compose.bench.yaml down --rmi all --remove-orphans
 ```
 
+## Disclaimer
+
+This is a research-grade Proof of Concept (PoC) and does not guarantee complete security when deployed.   
+For example, the implementation of a trusted time source, which would be required in a production environment, has been omitted.
