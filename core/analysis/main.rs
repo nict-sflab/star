@@ -1,4 +1,4 @@
-use rand::{rngs::OsRng, RngCore};
+use rand::{rand_core::UnwrapErr, rngs::SysRng, Rng};
 use star_core::client::User;
 use star_core::secure_channel::{
     client::SecureChannelClient,
@@ -98,7 +98,7 @@ fn fail1() {
 }
 
 fn fail2() {
-    let mut rng = OsRng;
+    let mut rng = UnwrapErr(SysRng);
     let mut hpke_sk = [0u8; 32];
     rng.fill_bytes(&mut hpke_sk);
 

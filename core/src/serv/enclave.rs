@@ -5,7 +5,7 @@ use crate::serv::core::token::Token;
 
 use alloc::vec::Vec;
 use hpke_ng::HpkeError;
-use rand::RngCore;
+use rand::Rng;
 
 // HPKE receiver living inside the enclave.
 pub struct Enclave {
@@ -30,7 +30,7 @@ impl Enclave {
     /// Generate a fresh receiver keypair using hpke-ng.
     pub fn default<R>(rng: &mut R) -> Self
     where
-        R: RngCore,
+        R: Rng,
     {
         let mut cipher_receiver = [0u8; 32];
         rng.fill_bytes(&mut cipher_receiver);
@@ -80,7 +80,7 @@ impl Enclave {
 
     pub fn issue_cred<R>(&self, cipher: &[u8], rng: &mut R) -> Vec<u8>
     where
-        R: RngCore,
+        R: Rng,
     {
         let cred = self.issue_cred_plain(rng);
 
@@ -93,7 +93,7 @@ impl Enclave {
 
     pub fn issue_cred_plain<R>(&self, rng: &mut R) -> Vec<u8>
     where
-        R: RngCore,
+        R: Rng,
     {
         let cred = Credential::random(self.sk, rng);
         let result = cred.to_bytes();

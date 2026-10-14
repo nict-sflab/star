@@ -9,7 +9,7 @@ default = []
 bench-max-count = []
 
 [dependencies]
-rand = { version = "0.8", default-features = false, features = ["getrandom", "std", "std_rng"] }
+rand = { version = "0.10", default-features = false, features = ["sys_rng"] }
 star-core = { path = "../../../core" }
 star_attestation = { path = "../utils/attest" }
 key-manager = { path = "../utils/manage-key/enclave" }

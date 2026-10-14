@@ -8,7 +8,7 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use constant_time_utils::time;
 use openssl::ssl::{ExtensionContext, SslConnector, SslMethod, SslVerifyMode};
 use pingora::server::{RunArgs, ShutdownSignal, ShutdownSignalWatch};
-use rand_core::OsRng;
+use rand::{rand_core::UnwrapErr, rngs::SysRng};
 use star_core::client::User;
 use star_core::secure_channel::client::SecureChannelClient;
 use star_attestation::{Quote, QuotePolicy};
@@ -397,7 +397,7 @@ fn test_all() {
 
     let client = SecureChannelClient::new(public_key).expect("client init");
     let mut user = User::new(1, client);
-    let mut rng = OsRng;
+    let mut rng = UnwrapErr(SysRng);
 
     let (cred_request, shared_key) = user.request_credential(&mut rng);
     let cred_request_b64 = URL_SAFE.encode(cred_request);

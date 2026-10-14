@@ -6,7 +6,7 @@ use chacha20poly1305::{
 #[cfg(target_env = "sgx")]
 use hkdf::Hkdf;
 #[cfg(target_env = "sgx")]
-use rand::{rngs::OsRng, RngCore};
+use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sgx_isa::{Attributes, Miscselect};
 #[cfg(target_env = "sgx")]

@@ -5,7 +5,7 @@ use hpke::{
     kem::{Kem, X25519HkdfSha256},
     setup_receiver, Deserializable, OpModeR, Serializable,
 };
-use rand::rngs::OsRng;
+use rand_core::OsRng;
 use star_attestation::{Evidence, PUBLIC_KEY_LEN};
 
 /// Receives a key bundle from an authenticated key manager.
@@ -14,8 +14,9 @@ pub struct KeyReceiver {
 }
 
 impl KeyReceiver {
-    pub fn random(rng: &mut OsRng) -> Self {
-        let (secret_key, _) = X25519HkdfSha256::gen_keypair(rng);
+    pub fn random() -> Self {
+        // hpke 0.11 still uses rand_core 0.6; keep its RNG private to key-manager.
+        let (secret_key, _) = X25519HkdfSha256::gen_keypair(&mut OsRng);
         Self { secret_key }
     }
 
