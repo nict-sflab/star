@@ -1,134 +1,134 @@
 === VALGRIND OUTPUT ===
-==2554== Memcheck, a memory error detector
-==2554== Copyright (C) 2002-2026, and GNU GPL'd, by Julian Seward et al.
-==2554== Using Valgrind-3.27.1 and LibVEX; rerun with -h for copyright info
-==2554== Command: ./target/release/analysis
-==2554== 
-==2554== Conditional jump or move depends on uninitialised value(s)
-==2554==    at 0x4024CB0: <hpke_ng::kem::dh::X25519 as hpke_ng::kem::dh::DiffieHellman>::dh (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x400C601: <star_core::secure_channel::client::SecureChannelClient>::send_hpke::<analysis::rng::PoisonedRng> (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x400E6CD: analysis::main (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x400DA25: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()> (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x400E37B: std::rt::lang_start::<()>::{closure#0} (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x4055D96: std::rt::lang_start_internal (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x4013AE3: main (in /workspace/star/core/target/release/analysis)
-==2554== 
-==2554== Conditional jump or move depends on uninitialised value(s)
-==2554==    at 0x4024CB0: <hpke_ng::kem::dh::X25519 as hpke_ng::kem::dh::DiffieHellman>::dh (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x403C7F9: <star_core::secure_channel::server::SecureChannelServer>::receive_hpke (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x400EDB2: analysis::main (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x400DA25: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()> (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x400E37B: std::rt::lang_start::<()>::{closure#0} (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x4055D96: std::rt::lang_start_internal (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x4013AE3: main (in /workspace/star/core/target/release/analysis)
-==2554== 
-==2554== Conditional jump or move depends on uninitialised value(s)
-==2554==    at 0x4022660: <hpke_ng::aead::ChaCha20Poly1305 as hpke_ng::aead::SealingAead>::open (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x403DCC3: <star_core::secure_channel::server::SecureChannelServer>::receive_hpke (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x400EDB2: analysis::main (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x400DA25: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()> (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x400E37B: std::rt::lang_start::<()>::{closure#0} (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x4055D96: std::rt::lang_start_internal (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x4013AE3: main (in /workspace/star/core/target/release/analysis)
-==2554== 
-==2554== Conditional jump or move depends on uninitialised value(s)
-==2554==    at 0x403C5E4: <star_core::secure_channel::client::SecureChannelClient>::decrypt_with_shared_key (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x403BDCE: <star_core::client::User>::receive_credential (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x400F252: analysis::main (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x400DA25: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()> (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x400E37B: std::rt::lang_start::<()>::{closure#0} (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x4055D96: std::rt::lang_start_internal (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x4013AE3: main (in /workspace/star/core/target/release/analysis)
-==2554== 
-==2554== Conditional jump or move depends on uninitialised value(s)
-==2554==    at 0x4024CB0: <hpke_ng::kem::dh::X25519 as hpke_ng::kem::dh::DiffieHellman>::dh (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x400C601: <star_core::secure_channel::client::SecureChannelClient>::send_hpke::<analysis::rng::PoisonedRng> (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x400F2A7: analysis::main (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x400DA25: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()> (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x400E37B: std::rt::lang_start::<()>::{closure#0} (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x4055D96: std::rt::lang_start_internal (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x4013AE3: main (in /workspace/star/core/target/release/analysis)
-==2554== 
-==2554== Conditional jump or move depends on uninitialised value(s)
-==2554==    at 0x4024CB0: <hpke_ng::kem::dh::X25519 as hpke_ng::kem::dh::DiffieHellman>::dh (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x403C7F9: <star_core::secure_channel::server::SecureChannelServer>::receive_hpke (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x403E279: <star_core::serv::enclave::Enclave>::issue_token (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x400F3B9: analysis::main (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x400DA25: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()> (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x400E37B: std::rt::lang_start::<()>::{closure#0} (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x4055D96: std::rt::lang_start_internal (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x4013AE3: main (in /workspace/star/core/target/release/analysis)
-==2554== 
-==2554== Conditional jump or move depends on uninitialised value(s)
-==2554==    at 0x4022660: <hpke_ng::aead::ChaCha20Poly1305 as hpke_ng::aead::SealingAead>::open (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x403DCC3: <star_core::secure_channel::server::SecureChannelServer>::receive_hpke (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x403E279: <star_core::serv::enclave::Enclave>::issue_token (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x400F3B9: analysis::main (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x400DA25: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()> (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x400E37B: std::rt::lang_start::<()>::{closure#0} (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x4055D96: std::rt::lang_start_internal (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x4013AE3: main (in /workspace/star/core/target/release/analysis)
-==2554== 
-==2554== Conditional jump or move depends on uninitialised value(s)
-==2554==    at 0x403E37B: <star_core::serv::enclave::Enclave>::issue_token_plain (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x403E2A2: <star_core::serv::enclave::Enclave>::issue_token (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x400F3B9: analysis::main (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x400DA25: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()> (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x400E37B: std::rt::lang_start::<()>::{closure#0} (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x4055D96: std::rt::lang_start_internal (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x4013AE3: main (in /workspace/star/core/target/release/analysis)
-==2554== 
-==2554== Conditional jump or move depends on uninitialised value(s)
-==2554==    at 0x4024CB0: <hpke_ng::kem::dh::X25519 as hpke_ng::kem::dh::DiffieHellman>::dh (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x400F7E8: analysis::main (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x400DA25: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()> (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x400E37B: std::rt::lang_start::<()>::{closure#0} (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x4055D96: std::rt::lang_start_internal (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x4013AE3: main (in /workspace/star/core/target/release/analysis)
-==2554== 
-==2554== Conditional jump or move depends on uninitialised value(s)
-==2554==    at 0x4024CB0: <hpke_ng::kem::dh::X25519 as hpke_ng::kem::dh::DiffieHellman>::dh (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x403C7F9: <star_core::secure_channel::server::SecureChannelServer>::receive_hpke (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x4011F34: analysis::main (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x400DA25: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()> (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x400E37B: std::rt::lang_start::<()>::{closure#0} (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x4055D96: std::rt::lang_start_internal (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x4013AE3: main (in /workspace/star/core/target/release/analysis)
-==2554== 
-==2554== Conditional jump or move depends on uninitialised value(s)
-==2554==    at 0x4022660: <hpke_ng::aead::ChaCha20Poly1305 as hpke_ng::aead::SealingAead>::open (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x403DCC3: <star_core::secure_channel::server::SecureChannelServer>::receive_hpke (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x4011F34: analysis::main (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x400DA25: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()> (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x400E37B: std::rt::lang_start::<()>::{closure#0} (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x4055D96: std::rt::lang_start_internal (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x4013AE3: main (in /workspace/star/core/target/release/analysis)
-==2554== 
+==2555== Memcheck, a memory error detector
+==2555== Copyright (C) 2002-2026, and GNU GPL'd, by Julian Seward et al.
+==2555== Using Valgrind-3.27.1 and LibVEX; rerun with -h for copyright info
+==2555== Command: ./target/release/analysis
+==2555== 
+==2555== Conditional jump or move depends on uninitialised value(s)
+==2555==    at 0x4024CB0: <hpke_ng::kem::dh::X25519 as hpke_ng::kem::dh::DiffieHellman>::dh (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x400C601: <star_core::secure_channel::client::SecureChannelClient>::send_hpke::<analysis::rng::PoisonedRng> (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x400E6CD: analysis::main (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x400DA25: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()> (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x400E37B: std::rt::lang_start::<()>::{closure#0} (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x4055D96: std::rt::lang_start_internal (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x4013AE3: main (in /workspace/star/core/target/release/analysis)
+==2555== 
+==2555== Conditional jump or move depends on uninitialised value(s)
+==2555==    at 0x4024CB0: <hpke_ng::kem::dh::X25519 as hpke_ng::kem::dh::DiffieHellman>::dh (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x403C7F9: <star_core::secure_channel::server::SecureChannelServer>::receive_hpke (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x400EDB2: analysis::main (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x400DA25: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()> (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x400E37B: std::rt::lang_start::<()>::{closure#0} (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x4055D96: std::rt::lang_start_internal (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x4013AE3: main (in /workspace/star/core/target/release/analysis)
+==2555== 
+==2555== Conditional jump or move depends on uninitialised value(s)
+==2555==    at 0x4022660: <hpke_ng::aead::ChaCha20Poly1305 as hpke_ng::aead::SealingAead>::open (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x403DCC3: <star_core::secure_channel::server::SecureChannelServer>::receive_hpke (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x400EDB2: analysis::main (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x400DA25: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()> (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x400E37B: std::rt::lang_start::<()>::{closure#0} (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x4055D96: std::rt::lang_start_internal (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x4013AE3: main (in /workspace/star/core/target/release/analysis)
+==2555== 
+==2555== Conditional jump or move depends on uninitialised value(s)
+==2555==    at 0x403C5E4: <star_core::secure_channel::client::SecureChannelClient>::decrypt_with_shared_key (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x403BDCE: <star_core::client::User>::receive_credential (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x400F252: analysis::main (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x400DA25: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()> (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x400E37B: std::rt::lang_start::<()>::{closure#0} (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x4055D96: std::rt::lang_start_internal (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x4013AE3: main (in /workspace/star/core/target/release/analysis)
+==2555== 
+==2555== Conditional jump or move depends on uninitialised value(s)
+==2555==    at 0x4024CB0: <hpke_ng::kem::dh::X25519 as hpke_ng::kem::dh::DiffieHellman>::dh (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x400C601: <star_core::secure_channel::client::SecureChannelClient>::send_hpke::<analysis::rng::PoisonedRng> (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x400F2A7: analysis::main (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x400DA25: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()> (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x400E37B: std::rt::lang_start::<()>::{closure#0} (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x4055D96: std::rt::lang_start_internal (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x4013AE3: main (in /workspace/star/core/target/release/analysis)
+==2555== 
+==2555== Conditional jump or move depends on uninitialised value(s)
+==2555==    at 0x4024CB0: <hpke_ng::kem::dh::X25519 as hpke_ng::kem::dh::DiffieHellman>::dh (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x403C7F9: <star_core::secure_channel::server::SecureChannelServer>::receive_hpke (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x403E279: <star_core::serv::enclave::Enclave>::issue_token (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x400F3B9: analysis::main (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x400DA25: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()> (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x400E37B: std::rt::lang_start::<()>::{closure#0} (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x4055D96: std::rt::lang_start_internal (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x4013AE3: main (in /workspace/star/core/target/release/analysis)
+==2555== 
+==2555== Conditional jump or move depends on uninitialised value(s)
+==2555==    at 0x4022660: <hpke_ng::aead::ChaCha20Poly1305 as hpke_ng::aead::SealingAead>::open (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x403DCC3: <star_core::secure_channel::server::SecureChannelServer>::receive_hpke (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x403E279: <star_core::serv::enclave::Enclave>::issue_token (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x400F3B9: analysis::main (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x400DA25: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()> (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x400E37B: std::rt::lang_start::<()>::{closure#0} (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x4055D96: std::rt::lang_start_internal (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x4013AE3: main (in /workspace/star/core/target/release/analysis)
+==2555== 
+==2555== Conditional jump or move depends on uninitialised value(s)
+==2555==    at 0x403E37B: <star_core::serv::enclave::Enclave>::issue_token_plain (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x403E2A2: <star_core::serv::enclave::Enclave>::issue_token (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x400F3B9: analysis::main (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x400DA25: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()> (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x400E37B: std::rt::lang_start::<()>::{closure#0} (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x4055D96: std::rt::lang_start_internal (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x4013AE3: main (in /workspace/star/core/target/release/analysis)
+==2555== 
+==2555== Conditional jump or move depends on uninitialised value(s)
+==2555==    at 0x4024CB0: <hpke_ng::kem::dh::X25519 as hpke_ng::kem::dh::DiffieHellman>::dh (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x400F7E8: analysis::main (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x400DA25: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()> (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x400E37B: std::rt::lang_start::<()>::{closure#0} (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x4055D96: std::rt::lang_start_internal (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x4013AE3: main (in /workspace/star/core/target/release/analysis)
+==2555== 
+==2555== Conditional jump or move depends on uninitialised value(s)
+==2555==    at 0x4024CB0: <hpke_ng::kem::dh::X25519 as hpke_ng::kem::dh::DiffieHellman>::dh (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x403C7F9: <star_core::secure_channel::server::SecureChannelServer>::receive_hpke (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x4011F34: analysis::main (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x400DA25: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()> (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x400E37B: std::rt::lang_start::<()>::{closure#0} (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x4055D96: std::rt::lang_start_internal (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x4013AE3: main (in /workspace/star/core/target/release/analysis)
+==2555== 
+==2555== Conditional jump or move depends on uninitialised value(s)
+==2555==    at 0x4022660: <hpke_ng::aead::ChaCha20Poly1305 as hpke_ng::aead::SealingAead>::open (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x403DCC3: <star_core::secure_channel::server::SecureChannelServer>::receive_hpke (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x4011F34: analysis::main (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x400DA25: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()> (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x400E37B: std::rt::lang_start::<()>::{closure#0} (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x4055D96: std::rt::lang_start_internal (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x4013AE3: main (in /workspace/star/core/target/release/analysis)
+==2555== 
 done
-==2554== 
-==2554== HEAP SUMMARY:
-==2554==     in use at exit: 544 bytes in 1 blocks
-==2554==   total heap usage: 93 allocs, 92 frees, 7,105 bytes allocated
-==2554== 
-==2554== 544 bytes in 1 blocks are still reachable in loss record 1 of 1
-==2554==    at 0x48CD7D0: malloc (in /nix/store/mf7rzpknxwg0q1wf0nm8gfzikapg00h1-valgrind-3.27.1/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
-==2554==    by 0x40690B7: <alloc::collections::btree::map::entry::VacantEntry<usize, std::sys::pal::unix::stack_overflow::thread_info::ThreadInfo>>::insert_entry (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x405A153: std::sys::pal::unix::stack_overflow::thread_info::set_current_info (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x405AD7F: std::sys::pal::unix::stack_overflow::imp::init (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x406957F: std::sys::pal::unix::init (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x4055D90: std::rt::lang_start_internal (in /workspace/star/core/target/release/analysis)
-==2554==    by 0x4013AE3: main (in /workspace/star/core/target/release/analysis)
-==2554== 
-==2554== LEAK SUMMARY:
-==2554==    definitely lost: 0 bytes in 0 blocks
-==2554==    indirectly lost: 0 bytes in 0 blocks
-==2554==      possibly lost: 0 bytes in 0 blocks
-==2554==    still reachable: 544 bytes in 1 blocks
-==2554==         suppressed: 0 bytes in 0 blocks
-==2554== 
-==2554== Use --track-origins=yes to see where uninitialised values come from
-==2554== For lists of detected and suppressed errors, rerun with: -s
-==2554== ERROR SUMMARY: 11 errors from 11 contexts (suppressed: 0 from 0)
+==2555== 
+==2555== HEAP SUMMARY:
+==2555==     in use at exit: 544 bytes in 1 blocks
+==2555==   total heap usage: 93 allocs, 92 frees, 7,105 bytes allocated
+==2555== 
+==2555== 544 bytes in 1 blocks are still reachable in loss record 1 of 1
+==2555==    at 0x48CD7D0: malloc (in /nix/store/mf7rzpknxwg0q1wf0nm8gfzikapg00h1-valgrind-3.27.1/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==2555==    by 0x40690B7: <alloc::collections::btree::map::entry::VacantEntry<usize, std::sys::pal::unix::stack_overflow::thread_info::ThreadInfo>>::insert_entry (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x405A153: std::sys::pal::unix::stack_overflow::thread_info::set_current_info (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x405AD7F: std::sys::pal::unix::stack_overflow::imp::init (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x406957F: std::sys::pal::unix::init (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x4055D90: std::rt::lang_start_internal (in /workspace/star/core/target/release/analysis)
+==2555==    by 0x4013AE3: main (in /workspace/star/core/target/release/analysis)
+==2555== 
+==2555== LEAK SUMMARY:
+==2555==    definitely lost: 0 bytes in 0 blocks
+==2555==    indirectly lost: 0 bytes in 0 blocks
+==2555==      possibly lost: 0 bytes in 0 blocks
+==2555==    still reachable: 544 bytes in 1 blocks
+==2555==         suppressed: 0 bytes in 0 blocks
+==2555== 
+==2555== Use --track-origins=yes to see where uninitialised values come from
+==2555== For lists of detected and suppressed errors, rerun with: -s
+==2555== ERROR SUMMARY: 11 errors from 11 contexts (suppressed: 0 from 0)
 
 === A=0x4024CB0 F=0x24cb0 ===
 
@@ -989,8 +989,8 @@ Disassembly of section .text:
    3e23e:	4d 89 c6             	mov    %r8,%r14
    3e241:	4c 8d 42 20          	lea    0x20(%rdx),%r8
    3e245:	48 8d 42 40          	lea    0x40(%rdx),%rax
-   3e249:	48 83 c1 a0          	add    $0xffffffffffffffa0,%rcx
-   3e24d:	4c 8d 52 60          	lea    0x60(%rdx),%r10
+   3e249:	4c 8d 52 60          	lea    0x60(%rdx),%r10
+   3e24d:	48 83 c1 a0          	add    $0xffffffffffffffa0,%rcx
    3e251:	48 8d 7d c0          	lea    -0x40(%rbp),%rdi
    3e255:	49 89 cb             	mov    %rcx,%r11
    3e258:	b9 20 00 00 00       	mov    $0x20,%ecx
