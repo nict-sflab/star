@@ -6,7 +6,7 @@ STAR is an experimental implementation of anonymous rate limiting using a server
 It allows a service to enforce per-user access limits without linking authentication requests to the same user. 
 STAR is designed around two security goals: rate-limiting and unlinkability. 
 
-[![Benchmark](https://github.com/nict-sflab/star/actions/workflows/auto-bench.yaml/badge.svg?branch=main)](https://github.com/nict-sflab/star/actions/workflows/auto-bench.yaml)
+[![Benchmark](https://github.com/nict-sflab/star/actions/workflows/ci.yaml/badge.svg?branch=main)](https://github.com/nict-sflab/star/actions/workflows/ci.yaml)
 
 ## What is included
 
