@@ -1,4 +1,4 @@
-name: Benchmark and tests
+name: Benchmark and Tests
 
 on:
   pull_request:
