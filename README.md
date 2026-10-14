@@ -31,7 +31,7 @@ Requires SGX devices on the host.
 docker compose up
 ```
 
-Open <http://localhost:18082> to view the example through the STAR client proxy.
+Open <http://localhost:18082> to view the example through the STAR client proxy. The local demo runs two STAR shards, with one shared key manager hosted by shard 0 and a separate upstream for each shard.
 
 ### Benchmark
 

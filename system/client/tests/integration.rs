@@ -2,6 +2,8 @@ use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -105,13 +107,8 @@ fn request(addr: &str) -> String {
 }
 
 #[test]
-fn client_proxy_authenticates_then_rejects_exhausted_limit() {
+fn client_proxy_routes_across_two_shards_and_rejects_exhausted_limit() {
     start_aesm_proxy();
-    let api_addr = free_addr();
-    let star_proxy_addr = free_addr();
-    let client_addr = free_addr();
-    let upstream = UpstreamServer::http("127.0.0.1:0").expect("bind upstream");
-    let upstream_addr = upstream.server_addr().to_ip().expect("upstream IP");
 
     let certs = Path::new(env!("CARGO_MANIFEST_DIR")).join("../serv/app/examples/certs");
     unsafe {
@@ -119,65 +116,121 @@ fn client_proxy_authenticates_then_rejects_exhausted_limit() {
         std::env::set_var("TLS_KEY_PATH", certs.join("server.key"));
     }
 
-    let (star_stop, star_stopped) = oneshot::channel();
-    let api_bind = api_addr.clone();
-    let star_bind = star_proxy_addr.clone();
-    let upstream_bind = upstream_addr.to_string();
-    let star_thread = thread::spawn(move || {
-        let server = build_star_server(&api_bind, &star_bind, &upstream_bind, Shard::new(0, 1))
+    let upstream_done = Arc::new(AtomicBool::new(false));
+    let mut upstream_workers = Vec::new();
+    let mut star_stops = Vec::new();
+    let mut star_threads = Vec::new();
+    let mut star_proxy_addrs = Vec::new();
+    let mut api_addrs = Vec::new();
+    for shard_index in 0..2 {
+        let api_addr = free_addr();
+        let star_proxy_addr = free_addr();
+        let upstream = UpstreamServer::http("127.0.0.1:0").expect("bind upstream");
+        let upstream_addr = upstream.server_addr().to_ip().expect("upstream IP");
+        let done = Arc::clone(&upstream_done);
+        upstream_workers.push(thread::spawn(move || {
+            while !done.load(Ordering::Relaxed) {
+                if let Some(request) = upstream
+                    .recv_timeout(Duration::from_millis(100))
+                    .expect("receive upstream request")
+                {
+                    request
+                        .respond(Response::from_string(format!("shard-{shard_index}")))
+                        .expect("respond");
+                }
+            }
+        }));
+
+        let (star_stop, star_stopped) = oneshot::channel();
+        let api_bind = api_addr.clone();
+        let star_bind = star_proxy_addr.clone();
+        star_threads.push(thread::spawn(move || {
+            let server = build_star_server(
+                &api_bind,
+                &star_bind,
+                &upstream_addr.to_string(),
+                Shard::new(shard_index, 2),
+            )
             .expect("build STAR server");
-        server.run(RunArgs {
-            shutdown_signal: Box::new(TestShutdown(Mutex::new(star_stopped))),
+            server.run(RunArgs {
+                shutdown_signal: Box::new(TestShutdown(Mutex::new(star_stopped))),
+            });
+        }));
+        wait_for_listener(&api_addr);
+        wait_for_listener(&star_proxy_addr);
+        star_stops.push(star_stop);
+        star_proxy_addrs.push(star_proxy_addr);
+        api_addrs.push(api_addr);
+    }
+
+    let api_base = format!("http://{}", api_addrs[0]);
+    let star_port = star_proxy_addrs[0]
+        .rsplit_once(':')
+        .unwrap()
+        .1
+        .parse()
+        .unwrap();
+    let mut covered_both_shards = false;
+    for _ in 0..16 {
+        let client_addr = free_addr();
+        let client_bind = client_addr.clone();
+        let api_base = api_base.clone();
+        let shard_endpoints = star_proxy_addrs.clone();
+        let (client_stop, client_stopped) = oneshot::channel();
+        let client_thread = thread::spawn(move || {
+            let config = ProxyConfig {
+                listen_addr: client_bind,
+                star_api_base: api_base,
+                max_requests_per_period: 4,
+                upstream: StarUpstream::new("127.0.0.1".into(), star_port, "localhost".into())
+                    .with_shards(shard_endpoints)
+                    .expect("configure STAR shards"),
+            };
+            let server = build_client_server(config).expect("register client and build proxy");
+            server.run(RunArgs {
+                shutdown_signal: Box::new(TestShutdown(Mutex::new(client_stopped))),
+            });
         });
-    });
-    wait_for_listener(&api_addr);
+        wait_for_listener(&client_addr);
 
-    let (client_stop, client_stopped) = oneshot::channel();
-    let client_bind = client_addr.clone();
-    let api_base = format!("http://{api_addr}");
-    let star_port = star_proxy_addr.rsplit_once(':').unwrap().1.parse().unwrap();
-    let client_thread = thread::spawn(move || {
-        let config = ProxyConfig {
-            listen_addr: client_bind,
-            star_api_base: api_base,
-            max_requests_per_period: 1,
-            upstream: StarUpstream::new("127.0.0.1".into(), star_port, "localhost".into()),
-        };
-        let server = build_client_server(config).expect("register client and build proxy");
-        server.run(RunArgs {
-            shutdown_signal: Box::new(TestShutdown(Mutex::new(client_stopped))),
-        });
-    });
-    wait_for_listener(&client_addr);
-
-    let upstream_worker = thread::spawn(move || {
-        let first = upstream
-            .recv_timeout(Duration::from_secs(10))
-            .expect("receive upstream request")
-            .expect("authenticated request reached upstream");
-        first.respond(Response::from_string("OK")).expect("respond");
-        upstream
-            .recv_timeout(Duration::from_secs(1))
-            .expect("check for unexpected upstream request")
-            .is_none()
-    });
-
-    let success = request(&client_addr);
-    assert!(success.starts_with("HTTP/1.1 200"), "{success}");
-    assert!(success.ends_with("OK"), "{success}");
-
-    let rejected = request(&client_addr);
-    assert!(
-        rejected.is_empty(),
-        "exhausted client request was accepted: {rejected}"
-    );
-    assert!(
-        upstream_worker.join().unwrap(),
-        "exhausted request reached upstream"
-    );
-
-    let _ = client_stop.send(());
-    client_thread.join().unwrap();
-    let _ = star_stop.send(());
-    star_thread.join().unwrap();
+        let period = constant_time_utils::time::current_period();
+        let mut seen = [false; 2];
+        for _ in 0..4 {
+            let success = request(&client_addr);
+            assert!(success.starts_with("HTTP/1.1 200"), "{success}");
+            let shard_index = if success.ends_with("shard-0") {
+                0
+            } else if success.ends_with("shard-1") {
+                1
+            } else {
+                panic!("unexpected upstream response: {success}");
+            };
+            seen[shard_index] = true;
+        }
+        let rejected = request(&client_addr);
+        let same_period = constant_time_utils::time::current_period() == period;
+        let _ = client_stop.send(());
+        client_thread.join().unwrap();
+        if same_period {
+            assert!(
+                rejected.is_empty(),
+                "exhausted client request was accepted: {rejected}"
+            );
+            if seen.into_iter().all(|seen| seen) {
+                covered_both_shards = true;
+                break;
+            }
+        }
+    }
+    assert!(covered_both_shards, "both shards must serve one ticket");
+    for stop in star_stops {
+        let _ = stop.send(());
+    }
+    for thread in star_threads {
+        thread.join().unwrap();
+    }
+    upstream_done.store(true, Ordering::Relaxed);
+    for worker in upstream_workers {
+        worker.join().unwrap();
+    }
 }
