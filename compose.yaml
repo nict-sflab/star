@@ -1,29 +1,90 @@
 services:
-  server:
+  aesmd:
+    image: ghcr.io/oasisprotocol/aesmd-dcap:master
+    devices:
+      - /dev/sgx_enclave
+      - /dev/sgx_provision
+    volumes:
+      - aesmd:/var/run/aesmd
+      - ./sgx_default_qcnl.conf:/etc/sgx_default_qcnl.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /var/run/aesmd/aesm.socket"]
+      interval: 1s
+      timeout: 1s
+      retries: 60
+
+  # The image's default command starts shard 0 and the shared key manager.
+  server-shard-0:
     build:
       context: ..
       dockerfile: star/system/serv/Dockerfile
     devices:
       - /dev/sgx_enclave:/dev/sgx_enclave
       - /dev/sgx_provision:/dev/sgx_provision
+    depends_on:
+      aesmd:
+        condition: service_healthy
     volumes:
-      - /run/aesmd/aesm.socket:/run/aesmd/aesm.socket
+      - aesmd:/run/aesmd
+    environment:
+      STAR_KEY_MANAGER_ADDR: 0.0.0.0:8090
+      STAR_SHARD_INDEX: "0"
+      STAR_SHARD_COUNT: "2"
     ports:
       - "18080:18080"
       - "18081:18081"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:18080/star/public_key"]
+      interval: 5s
+      timeout: 5s
+      start_period: 20m
+      retries: 3
+
+  server-shard-1:
+    build:
+      context: ..
+      dockerfile: star/system/serv/Dockerfile
+    command: ["./target/release/examples/main"]
+    devices:
+      - /dev/sgx_enclave:/dev/sgx_enclave
+      - /dev/sgx_provision:/dev/sgx_provision
+    depends_on:
+      aesmd:
+        condition: service_healthy
+      server-shard-0:
+        condition: service_healthy
+    volumes:
+      - aesmd:/run/aesmd
+    environment:
+      STAR_KEY_MANAGER_URL: http://server-shard-0:8090
+      STAR_SHARD_INDEX: "1"
+      STAR_SHARD_COUNT: "2"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:18080/star/public_key"]
+      interval: 5s
+      timeout: 5s
+      start_period: 20m
+      retries: 3
 
   client:
     build:
       context: ..
       dockerfile: star/system/client/Dockerfile
     depends_on:
-      - server
+      server-shard-0:
+        condition: service_healthy
+        restart: true
+      server-shard-1:
+        condition: service_healthy
+        restart: true
     environment:
-      STAR_API_BASE: http://server:18080
-      STAR_UPSTREAM_HOST: server
-      STAR_UPSTREAM_PORT: "18081"
+      STAR_API_BASE: http://server-shard-0:18080
+      STAR_UPSTREAM_SHARDS: server-shard-0:18081,server-shard-1:18081
       STAR_UPSTREAM_SNI: localhost
       STAR_CLIENT_PROXY_LISTEN: 0.0.0.0:18082
       OPENSSL_NO_VENDOR: 1
     ports:
       - "18082:18082"
+
+volumes:
+  aesmd:

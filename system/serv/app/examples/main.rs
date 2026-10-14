@@ -1,4 +1,7 @@
-use star_app::{build_server, Shard};
+#[path = "../benches/common/aesm_proxy.rs"]
+mod aesm_proxy;
+
+use star_app::{Shard, build_server};
 use std::env;
 use std::thread;
 use tiny_http::{Header, Response, Server as TinyServer};
@@ -37,6 +40,7 @@ fn spawn_content_server(bind_addr: &str) -> (String, thread::JoinHandle<()>) {
 }
 
 fn main() {
+    let _aesm_proxy = aesm_proxy::AesmProxyGuard::start();
     let api_addr = env_or_default("STAR_API_ADDR", "0.0.0.0:8080");
     let proxy_addr = env_or_default("STAR_PROXY_ADDR", "0.0.0.0:18081");
     let content_bind_addr = env_or_first(
@@ -51,7 +55,7 @@ fn main() {
     let (content_addr, _content_handle) = spawn_content_server(&content_bind_addr);
     let shard = Shard::new(
         env_or_default("STAR_SHARD_INDEX", "0").parse().unwrap(),
-        env_or_default("STAR_SHARD_COUNT", "1").parse().unwrap(),
+        env_or_default("STAR_SHARD_COUNT", "2").parse().unwrap(),
     );
     let server = build_server(&api_addr, &proxy_addr, &content_addr, shard);
     server.unwrap().run_forever();

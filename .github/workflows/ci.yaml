@@ -1,4 +1,4 @@
-name: Benchmark
+name: Benchmark and tests
 
 on:
   pull_request:
@@ -49,14 +49,38 @@ jobs:
             >> ~/.ssh/known_hosts
       
           chmod 600 ~/.ssh/known_hosts
-            
+      - name: Update VM checkout
+        run: |
+          az ssh vm \
+            -g "$AZURE_RESOURCE_GROUP" \
+            -n "$AZURE_VM_NAME" \
+            -- \
+          "sudo -n -u azureuser -H bash -lc 'cd /home/azureuser/star/star && git checkout main && git pull --ff-only'"
+
       - name: Run benchmark
         run: |
           az ssh vm \
             -g "$AZURE_RESOURCE_GROUP" \
             -n "$AZURE_VM_NAME" \
             -- \
-          "sudo -n -u azureuser -H bash -lc 'cd /home/azureuser/star/star && exec bash .github/workflows/auto-bench.sh'"
+          "sudo -n -u azureuser -H bash -lc 'cd /home/azureuser/star/star && exec bash .github/workflows/1_eval.sh'"
+
+      - name: Run tests
+        run: |
+          az ssh vm \
+            -g "$AZURE_RESOURCE_GROUP" \
+            -n "$AZURE_VM_NAME" \
+            -- \
+          "sudo -n -u azureuser -H bash -lc 'cd /home/azureuser/star/star && exec bash .github/workflows/2_test.sh'"
+
+      - name: Upload results
+        if: success()
+        run: |
+          az ssh vm \
+            -g "$AZURE_RESOURCE_GROUP" \
+            -n "$AZURE_VM_NAME" \
+            -- \
+          "sudo -n -u azureuser -H bash -lc 'cd /home/azureuser/star/star && exec bash .github/workflows/3_finalize.sh'"
           
       - name: Stop VM
         if: always()

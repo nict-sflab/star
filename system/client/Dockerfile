@@ -9,10 +9,12 @@ WORKDIR /workspace
 COPY star /workspace/star
 COPY constant-time-utils /workspace/constant-time-utils
 COPY timecop-rs /workspace/timecop-rs
+COPY simple-filter-box /workspace/simple-filter-box
+COPY fast-rust-sgx-caller /workspace/fast-rust-sgx-caller
 
 
 WORKDIR /workspace/star/system/client
-RUN nix-shell -p rustc cargo pkg-config openssl cmake gcc gnumake \
-    --run 'cargo build --release'
+RUN nix-shell -p rustup pkg-config openssl cmake gcc gnumake \
+    --run 'rustup toolchain install stable && cargo build --release'
 
 CMD ["./target/release/star-client-proxy"]

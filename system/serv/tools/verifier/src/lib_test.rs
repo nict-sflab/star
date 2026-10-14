@@ -39,14 +39,14 @@ fn startup_log() {
 
 #[test]
 fn rejects_invalid_quotes() {
-    let mut old_quote = fake_quote();
-    old_quote[..2].copy_from_slice(&3u16.to_le_bytes());
+    let mut unsupported_quote = fake_quote();
+    unsupported_quote[..2].copy_from_slice(&4u16.to_le_bytes());
     for input in [
         Vec::new(),
         vec![0xff],
         b"invalid base64!".to_vec(),
         URL_SAFE.encode(b"not a quote").into_bytes(),
-        URL_SAFE.encode(&old_quote).into_bytes(),
+        URL_SAFE.encode(&unsupported_quote).into_bytes(),
         URL_SAFE.encode(&fake_quote()[..100]).into_bytes(),
     ] {
         assert!(decode_quote_input(&input).is_err());
