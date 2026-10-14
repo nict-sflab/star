@@ -1,4 +1,4 @@
-use crate::secure_channel::server::{split_hpke_envelope, SecureChannelServer};
+use crate::secure_channel::server::SecureChannelServer;
 use crate::serv::core::bytes::{Long, Short};
 use crate::serv::core::cred::Credential;
 use crate::serv::core::token::Token;
@@ -47,11 +47,7 @@ impl Enclave {
     }
 
     pub fn issue_token(&self, cipher: &[u8], current_period: Short) -> Result<Vec<u8>, u8> {
-        let (aad, info, enc, ciphertext) = split_hpke_envelope(cipher).ok_or(1)?;
-        let plain = self
-            .cipher_receiver
-            .receive_hpke(enc, info, aad, ciphertext)
-            .map_err(|_| 1)?;
+        let plain = self.cipher_receiver.receive_envelope(cipher).ok_or(1)?;
 
         let result = self.issue_token_plain(&plain, current_period);
 
