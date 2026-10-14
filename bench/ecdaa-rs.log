@@ -3,88 +3,88 @@
      Locking 71 packages to latest compatible versions
       Adding criterion v0.5.1 (available: v0.8.2)
  Downloading crates ...
-  Downloaded cast v0.3.0
   Downloaded autocfg v1.5.1
   Downloaded anstyle v1.0.14
+  Downloaded cast v0.3.0
   Downloaded anes v0.1.6
-  Downloaded aho-corasick v1.1.5
-  Downloaded unicode-ident v1.0.27
-  Downloaded plotters-svg v0.3.7
-  Downloaded ciborium-io v0.2.2
-  Downloaded cfg-if v1.0.5
-  Downloaded quote v1.0.47
-  Downloaded zmij v1.0.23
-  Downloaded walkdir v2.5.0
-  Downloaded itoa v1.0.18
-  Downloaded serde_core v1.0.229
-  Downloaded proc-macro2 v1.0.107
-  Downloaded serde v1.0.229
-  Downloaded zerocopy-derive v0.8.62
-  Downloaded plotters v0.3.7
-  Downloaded zerocopy v0.8.62
-  Downloaded regex v1.13.1
-  Downloaded serde_json v1.0.154
-  Downloaded clap_builder v4.6.7
-  Downloaded syn v2.0.119
-  Downloaded rayon v1.12.0
-  Downloaded itertools v0.10.5
-  Downloaded syn v3.0.9
-  Downloaded criterion v0.5.1
-  Downloaded memchr v2.8.3
-  Downloaded half v2.7.1
-  Downloaded crossbeam-epoch v0.9.21
-  Downloaded regex-syntax v0.8.11
   Downloaded clap v4.6.7
-  Downloaded rayon-core v1.13.0
-  Downloaded num-traits v0.2.19
+  Downloaded plotters-svg v0.3.7
+  Downloaded is-terminal v0.4.17
+  Downloaded cfg-if v1.0.5
+  Downloaded ciborium-io v0.2.2
   Downloaded either v1.19.0
-  Downloaded crossbeam-utils v0.8.23
-  Downloaded ciborium v0.2.2
-  Downloaded serde_derive v1.0.229
-  Downloaded oorandom v11.1.5
-  Downloaded crossbeam-deque v0.8.8
-  Downloaded ciborium-ll v0.2.2
-  Downloaded tinytemplate v1.2.1
-  Downloaded same-file v1.0.6
-  Downloaded regex-automata v0.4.18
-  Downloaded once_cell v1.21.4
   Downloaded criterion-plot v0.5.0
   Downloaded clap_lex v1.1.1
+  Downloaded same-file v1.0.6
+  Downloaded itoa v1.0.18
+  Downloaded walkdir v2.5.0
+  Downloaded aho-corasick v1.1.5
+  Downloaded tinytemplate v1.2.1
   Downloaded plotters-backend v0.3.7
-  Downloaded is-terminal v0.4.17
+  Downloaded zmij v1.0.23
+  Downloaded crossbeam-deque v0.8.8
+  Downloaded ciborium v0.2.2
+  Downloaded unicode-ident v1.0.27
+  Downloaded serde_derive v1.0.229
+  Downloaded serde_core v1.0.229
+  Downloaded serde v1.0.229
+  Downloaded criterion v0.5.1
+  Downloaded itertools v0.10.5
+  Downloaded zerocopy-derive v0.8.63
+  Downloaded regex v1.13.1
+  Downloaded rayon v1.12.0
+  Downloaded clap_builder v4.6.7
+  Downloaded plotters v0.3.7
+  Downloaded memchr v2.8.3
+  Downloaded rayon-core v1.13.0
+  Downloaded proc-macro2 v1.0.107
+  Downloaded half v2.7.1
+  Downloaded syn v3.0.9
+  Downloaded zerocopy v0.8.63
+  Downloaded regex-automata v0.4.18
+  Downloaded syn v2.0.119
+  Downloaded crossbeam-epoch v0.9.21
+  Downloaded num-traits v0.2.19
+  Downloaded regex-syntax v0.8.11
+  Downloaded serde_json v1.0.154
+  Downloaded crossbeam-utils v0.8.23
+  Downloaded quote v1.0.47
+  Downloaded once_cell v1.21.4
+  Downloaded oorandom v11.1.5
+  Downloaded ciborium-ll v0.2.2
   Downloaded libc v0.2.190
    Compiling proc-macro2 v1.0.107
-   Compiling quote v1.0.47
    Compiling unicode-ident v1.0.27
+   Compiling quote v1.0.47
    Compiling serde_core v1.0.229
    Compiling serde v1.0.229
    Compiling crossbeam-utils v0.8.23
-   Compiling zerocopy v0.8.62
    Compiling crossbeam-epoch v0.9.21
+   Compiling zerocopy v0.8.63
    Compiling zmij v1.0.23
    Compiling autocfg v1.5.1
    Compiling crossbeam-deque v0.8.8
-   Compiling serde_json v1.0.154
-   Compiling either v1.19.0
-   Compiling libc v0.2.190
    Compiling cfg-if v1.0.5
    Compiling rayon-core v1.13.0
+   Compiling serde_json v1.0.154
+   Compiling libc v0.2.190
+   Compiling either v1.19.0
+   Compiling itoa v1.0.18
+   Compiling anstyle v1.0.14
+   Compiling clap_lex v1.1.1
    Compiling memchr v2.8.3
+   Compiling plotters-backend v0.3.7
    Compiling ciborium-io v0.2.2
    Compiling regex-syntax v0.8.11
-   Compiling anstyle v1.0.14
-   Compiling itoa v1.0.18
-   Compiling plotters-backend v0.3.7
-   Compiling clap_lex v1.1.1
    Compiling same-file v1.0.6
    Compiling cast v0.3.0
-   Compiling once_cell v1.21.4
-   Compiling anes v0.1.6
-   Compiling walkdir v2.5.0
    Compiling oorandom v11.1.5
+   Compiling once_cell v1.21.4
+   Compiling walkdir v2.5.0
+   Compiling anes v0.1.6
+   Compiling clap_builder v4.6.7
    Compiling itertools v0.10.5
    Compiling plotters-svg v0.3.7
-   Compiling clap_builder v4.6.7
    Compiling num-traits v0.2.19
    Compiling syn v3.0.9
    Compiling syn v2.0.119
@@ -95,7 +95,7 @@
    Compiling criterion-plot v0.5.0
    Compiling clap v4.6.7
    Compiling regex v1.13.1
-   Compiling zerocopy-derive v0.8.62
+   Compiling zerocopy-derive v0.8.63
    Compiling serde_derive v1.0.229
    Compiling mcore64 v0.1.0 (https://github.com/akakou/fp256bn-amcl?branch=serde#8e3b98f6)
    Compiling tinytemplate v1.2.1
@@ -105,69 +105,67 @@
    Compiling ciborium-ll v0.2.2
    Compiling ciborium v0.2.2
    Compiling criterion v0.5.1
-    Finished `bench` profile [optimized] target(s) in 19.88s
-     Running unittests src/lib.rs (target/release/deps/ecdaa-bbc3cb34f58d269b)
+    Finished `bench` profile [optimized] target(s) in 18.50s
+     Running unittests src/lib.rs (target/release/deps/ecdaa-337b14d7f70a37af)
 
 running 1 test
 test tests::test_ok ... ignored
 
 test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-     Running benches/ecdaa.rs (target/release/deps/ecdaa-bb7bbc8f43de60e0)
+     Running benches/ecdaa.rs (target/release/deps/ecdaa-2a8724d52080fa6d)
 Gnuplot not found, using plotters backend
 Benchmarking ecdaa/join_request_random
 Benchmarking ecdaa/join_request_random: Warming up for 3.0000 s
-Benchmarking ecdaa/join_request_random: Collecting 100 samples in estimated 8.7758 s (10k iterations)
+Benchmarking ecdaa/join_request_random: Collecting 100 samples in estimated 8.7346 s (10k iterations)
 Benchmarking ecdaa/join_request_random: Analyzing
 ecdaa/join_request_random
-                        time:   [655.15 µs 655.22 µs 655.28 µs]
-Found 6 outliers among 100 measurements (6.00%)
-  4 (4.00%) low severe
-  1 (1.00%) low mild
-  1 (1.00%) high severe
+                        time:   [651.44 µs 651.49 µs 651.55 µs]
+Found 8 outliers among 100 measurements (8.00%)
+  2 (2.00%) high mild
+  6 (6.00%) high severe
 Benchmarking ecdaa/join_request_valid
 Benchmarking ecdaa/join_request_valid: Warming up for 3.0000 s
-Benchmarking ecdaa/join_request_valid: Collecting 100 samples in estimated 6.7166 s (15k iterations)
+Benchmarking ecdaa/join_request_valid: Collecting 100 samples in estimated 6.7023 s (15k iterations)
 Benchmarking ecdaa/join_request_valid: Analyzing
 ecdaa/join_request_valid
-                        time:   [442.20 µs 442.25 µs 442.31 µs]
-Found 6 outliers among 100 measurements (6.00%)
+                        time:   [442.14 µs 442.17 µs 442.21 µs]
+Found 8 outliers among 100 measurements (8.00%)
   1 (1.00%) low mild
-  4 (4.00%) high mild
-  1 (1.00%) high severe
+  5 (5.00%) high mild
+  2 (2.00%) high severe
 Benchmarking ecdaa/credential_issue_no_encryption
 Benchmarking ecdaa/credential_issue_no_encryption: Warming up for 3.0000 s
-Benchmarking ecdaa/credential_issue_no_encryption: Collecting 100 samples in estimated 6.0230 s (15k iterations)
+Benchmarking ecdaa/credential_issue_no_encryption: Collecting 100 samples in estimated 6.0226 s (15k iterations)
 Benchmarking ecdaa/credential_issue_no_encryption: Analyzing
 ecdaa/credential_issue_no_encryption
-                        time:   [397.72 µs 397.76 µs 397.81 µs]
-Found 2 outliers among 100 measurements (2.00%)
-  1 (1.00%) high mild
+                        time:   [397.64 µs 397.68 µs 397.72 µs]
+Found 8 outliers among 100 measurements (8.00%)
+  5 (5.00%) low mild
+  2 (2.00%) high mild
   1 (1.00%) high severe
 Benchmarking ecdaa/credential_valid
 Benchmarking ecdaa/credential_valid: Warming up for 3.0000 s
-Benchmarking ecdaa/credential_valid: Collecting 100 samples in estimated 5.0446 s (1100 iterations)
+Benchmarking ecdaa/credential_valid: Collecting 100 samples in estimated 5.0449 s (1100 iterations)
 Benchmarking ecdaa/credential_valid: Analyzing
-ecdaa/credential_valid  time:   [4.5910 ms 4.5914 ms 4.5917 ms]
+ecdaa/credential_valid  time:   [4.5740 ms 4.5742 ms 4.5745 ms]
 Found 1 outliers among 100 measurements (1.00%)
   1 (1.00%) high mild
 Benchmarking ecdaa/signature_sign
 Benchmarking ecdaa/signature_sign: Warming up for 3.0000 s
 
 Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 8.0s, enable flat sampling, or reduce sample count to 50.
-Benchmarking ecdaa/signature_sign: Collecting 100 samples in estimated 7.9674 s (5050 iterations)
+Benchmarking ecdaa/signature_sign: Collecting 100 samples in estimated 7.9665 s (5050 iterations)
 Benchmarking ecdaa/signature_sign: Analyzing
-ecdaa/signature_sign    time:   [1.3653 ms 1.3654 ms 1.3655 ms]
-Found 7 outliers among 100 measurements (7.00%)
-  3 (3.00%) low severe
-  2 (2.00%) low mild
-  2 (2.00%) high severe
-Benchmarking ecdaa/signature_verify
-Benchmarking ecdaa/signature_verify: Warming up for 3.0000 s
-Benchmarking ecdaa/signature_verify: Collecting 100 samples in estimated 5.4231 s (1000 iterations)
-Benchmarking ecdaa/signature_verify: Analyzing
-ecdaa/signature_verify  time:   [5.4293 ms 5.4296 ms 5.4299 ms]
-Found 2 outliers among 100 measurements (2.00%)
+ecdaa/signature_sign    time:   [1.3645 ms 1.3646 ms 1.3647 ms]
+Found 12 outliers among 100 measurements (12.00%)
+  9 (9.00%) low severe
   1 (1.00%) low mild
   1 (1.00%) high mild
+  1 (1.00%) high severe
+Benchmarking ecdaa/signature_verify
+Benchmarking ecdaa/signature_verify: Warming up for 3.0000 s
+Benchmarking ecdaa/signature_verify: Collecting 100 samples in estimated 5.4566 s (1000 iterations)
+Benchmarking ecdaa/signature_verify: Analyzing
+ecdaa/signature_verify  time:   [5.4138 ms 5.4141 ms 5.4143 ms]
 
