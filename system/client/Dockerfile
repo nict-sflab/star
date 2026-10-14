@@ -12,7 +12,7 @@ COPY timecop-rs /workspace/timecop-rs
 
 
 WORKDIR /workspace/star/system/client
-RUN nix-shell -p rustc cargo pkg-config openssl cmake gcc gnumake \
-    --run 'cargo build --release'
+RUN nix-shell -p rustup pkg-config openssl cmake gcc gnumake \
+    --run 'rustup toolchain install stable && cargo build --release'
 
 CMD ["./target/release/star-client-proxy"]

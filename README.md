@@ -38,6 +38,13 @@ docker compose -f compose.bench.yaml up --build sidechannel
 docker compose -f compose.bench.yaml down --rmi all --remove-orphans
 ```
 
+### Test (requires SGX hardware)
+
+```sh
+docker compose -f compose.test.yaml up --build --exit-code-from tests
+docker compose -f compose.test.yaml down
+```
+
 ## Disclaimer
 
 This is a research-grade Proof of Concept (PoC) and does not guarantee complete security when deployed.   
