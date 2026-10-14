@@ -8,9 +8,7 @@ use hpke_ng::{
     ChaCha20Poly1305 as HpkeChaCha20Poly1305, DhKemX25519HkdfSha256, HkdfSha256, Hpke,
     HpkeError, Kem,
 };
-use rand::{CryptoRng, RngCore};
-
-use super::RngCompat;
+use rand::{CryptoRng, Rng};
 
 type HpkeSuite = Hpke<DhKemX25519HkdfSha256, HkdfSha256, HpkeChaCha20Poly1305>;
 
@@ -41,10 +39,9 @@ impl SecureChannelServer {
     /// Generate a fresh receiver keypair using hpke-ng.
     pub fn random<R>(rng: &mut R) -> Self
     where
-        R: CryptoRng + RngCore,
+        R: CryptoRng,
     {
-        let mut compat_rng = RngCompat(rng);
-        let (sk, pk) = DhKemX25519HkdfSha256::generate(&mut compat_rng)
+        let (sk, pk) = DhKemX25519HkdfSha256::generate(rng)
             .expect("X25519 key generation must succeed");
         let pk = pk
             .as_ref()
@@ -73,7 +70,7 @@ impl SecureChannelServer {
 
     pub fn respond_cipher<R>(&self, response: &[u8], cipher: &[u8], rng: &mut R) -> Vec<u8>
     where
-        R: RngCore,
+        R: Rng,
     {
         let Some((aad, info, enc, ciphertext)) = split_hpke_envelope(cipher) else {
             return Vec::new();
@@ -83,9 +80,6 @@ impl SecureChannelServer {
             Ok(key) => key,
             Err(_) => return Vec::new(),
         };
-
-        #[cfg(feature = "timecop")]
-        timecop::poison(key.as_slice());
 
         let mut nonce_bytes = [0u8; 12];
         rng.fill_bytes(&mut nonce_bytes);

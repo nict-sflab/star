@@ -5,10 +5,7 @@ use crate::serv::core::token::Token;
 
 use alloc::vec::Vec;
 use hpke_ng::HpkeError;
-use rand::RngCore;
-
-#[cfg(feature = "timecop")]
-use timecop;
+use rand::Rng;
 
 // HPKE receiver living inside the enclave.
 pub struct Enclave {
@@ -33,7 +30,7 @@ impl Enclave {
     /// Generate a fresh receiver keypair using hpke-ng.
     pub fn default<R>(rng: &mut R) -> Self
     where
-        R: RngCore,
+        R: Rng,
     {
         let mut cipher_receiver = [0u8; 32];
         rng.fill_bytes(&mut cipher_receiver);
@@ -64,8 +61,6 @@ impl Enclave {
     /// Issue a token from an already decrypted request (credential 64 bytes + count 8 bytes + period 8 bytes).
     /// This is mainly for examples/tests; production callers should use `issue_token` with HPKE-protected payloads.
     pub fn issue_token_plain(&self, request: &[u8], current_period: Short) -> Vec<u8> {
-        #[cfg(feature = "timecop")]
-        timecop::poison(request);
 
         if request.len() < 80 {
             return alloc::vec![0u8];
@@ -85,12 +80,9 @@ impl Enclave {
 
     pub fn issue_cred<R>(&self, cipher: &[u8], rng: &mut R) -> Vec<u8>
     where
-        R: RngCore,
+        R: Rng,
     {
         let cred = self.issue_cred_plain(rng);
-
-        #[cfg(feature = "timecop")]
-        timecop::poison(cred.as_slice());
 
         // The HPKE envelope is aad(32) || info(32) || enc(32) || ciphertext.
         // respond_cipher expects the full envelope to recover the shared key.
@@ -101,15 +93,9 @@ impl Enclave {
 
     pub fn issue_cred_plain<R>(&self, rng: &mut R) -> Vec<u8>
     where
-        R: RngCore,
+        R: Rng,
     {
-        #[cfg(feature = "timecop")]
-        timecop::poison(self.sk.as_slice());
         let cred = Credential::random(self.sk, rng);
-
-        #[cfg(feature = "timecop")]
-        timecop::poison(cred.uid.as_slice());
-
         let result = cred.to_bytes();
 
         return result;

@@ -8,7 +8,7 @@ use std::{
 
 use common::star::{BenchFilter, KeyedEnclaves, MAX_COUNT_PER_CREDENTIAL, register_user};
 use criterion::{BatchSize, Criterion, Throughput, black_box, criterion_group, criterion_main};
-use rand_core::OsRng;
+use rand::{rand_core::UnwrapErr, rngs::SysRng};
 use simple_filter_box::{core::Entry, hashmap::HashMapFilterBox};
 use star_app::{
     KeyManagerRuntime, enclave::EnclaveRuntime, filter::StarFilter,
@@ -51,12 +51,12 @@ struct TokenRequestGenerator {
     user: User,
     counter: u64,
     period: u64,
-    rng: OsRng,
+    rng: UnwrapErr<SysRng>,
 }
 
 impl TokenRequestGenerator {
     fn new(issue_enclave: Arc<EnclaveRuntime>) -> Self {
-        let mut rng = OsRng;
+        let mut rng = UnwrapErr(SysRng);
         let user = register_user(&issue_enclave, MAX_COUNT_PER_CREDENTIAL, &mut rng);
 
         Self {
@@ -185,7 +185,7 @@ fn bench_diagnostics(c: &mut Criterion) {
     let request_enclave = EnclaveRuntime::from_env().expect("request enclave");
     install_key_manager_keys_for_enclave(&key_manager, &request_enclave)
         .expect("install request enclave benchmark keys");
-    let mut rng = OsRng;
+    let mut rng = UnwrapErr(SysRng);
     let mut user = register_user(&request_enclave, MAX_COUNT_PER_CREDENTIAL, &mut rng);
     let request = user
         .request_auth(

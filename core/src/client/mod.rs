@@ -1,5 +1,5 @@
 use alloc::vec::Vec;
-use rand::{CryptoRng, RngCore};
+use rand::CryptoRng;
 
 use crate::{
     secure_channel,
@@ -26,7 +26,7 @@ impl User {
 
     pub fn request_credential<R>(&self, rng: &mut R) -> (Vec<u8>, [u8; 32])
     where
-        R: CryptoRng + RngCore,
+        R: CryptoRng,
     {
         self.client
             .send_shared_key(rng)
@@ -95,7 +95,7 @@ impl User {
         rng: &mut R,
     ) -> Result<Vec<u8>, hpke_ng::HpkeError>
     where
-        R: CryptoRng + RngCore,
+        R: CryptoRng,
     {
         let token_request = self.request_auth_plain(counter, period);
         let cipher = self.client.send_hpke(&token_request, rng)?;

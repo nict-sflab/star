@@ -5,7 +5,7 @@ mod seal;
 
 pub use key_bundle::KeyBundle;
 pub use key_receiver::KeyReceiver;
-use rand::rngs::OsRng;
+use rand_core::OsRng;
 use star_attestation::{Evidence, Quote, QuotePolicy, PUBLIC_KEY_LEN};
 
 pub struct KeyManager {

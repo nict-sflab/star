@@ -1,5 +1,5 @@
 use key_manager::KeyReceiver;
-use rand::rngs::OsRng;
+use rand::{rand_core::UnwrapErr, rngs::SysRng};
 use star_attestation::{Quote, PUBLIC_KEY_LEN};
 use star_core::serv::enclave::Enclave as CredentialIssuer;
 
@@ -21,7 +21,7 @@ impl Default for Enclave {
     fn default() -> Self {
         Self {
             issuer: None,
-            key_receiver: KeyReceiver::random(&mut OsRng),
+            key_receiver: KeyReceiver::random(),
         }
     }
 }
@@ -32,7 +32,7 @@ impl Enclave {
         if self.issuer.is_some() {
             return Err("enclave already initialized".into());
         }
-        self.key_receiver = KeyReceiver::random(&mut OsRng);
+        self.key_receiver = KeyReceiver::random();
         Ok(())
     }
 
@@ -69,7 +69,7 @@ impl Enclave {
     }
 
     pub fn issue_cred(&self, request: &[u8]) -> Result<Vec<u8>, String> {
-        let credential = self.issuer()?.issue_cred(request, &mut OsRng);
+        let credential = self.issuer()?.issue_cred(request, &mut UnwrapErr(SysRng));
         if credential.is_empty() {
             return Err("issue_cred failed".into());
         }

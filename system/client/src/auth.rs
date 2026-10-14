@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
-use rand::rngs::OsRng;
+use rand::{rand_core::UnwrapErr, rngs::SysRng};
 use star_core::{client::User, secure_channel::client::SecureChannelClient};
 
 use crate::BoxError;
@@ -31,7 +31,7 @@ impl StarClient {
         let channel = SecureChannelClient::new(public_key)
             .map_err(|error| format!("failed to initialize secure channel: {error:?}"))?;
         let mut user = User::new(max_requests_per_period, channel);
-        let mut rng = OsRng;
+        let mut rng = UnwrapErr(SysRng);
         let (request, shared_key) = user.request_credential(&mut rng);
         let request = URL_SAFE.encode(request);
 
@@ -74,7 +74,7 @@ impl StarClient {
         session.next_counter += 1;
 
         let route = session.user.route(counter, period, shard_count);
-        let mut rng = OsRng;
+        let mut rng = UnwrapErr(SysRng);
         session
             .user
             .request_auth(counter, period, &mut rng)
@@ -99,7 +99,7 @@ mod tests {
         let enclave = Enclave::new(64, [17; 32], [29; 32]).unwrap();
         for shard_count in [1, 2, 4, 7] {
             let mut user = User::new(64, SecureChannelClient::new(enclave.public_key()).unwrap());
-            user.receive_credential_plain(&enclave.issue_cred_plain(&mut OsRng));
+            user.receive_credential_plain(&enclave.issue_cred_plain(&mut UnwrapErr(SysRng)));
             let client = StarClient {
                 session: Arc::new(Mutex::new(CredentialSession {
                     user,
