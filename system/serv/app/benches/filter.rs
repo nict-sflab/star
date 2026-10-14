@@ -172,76 +172,9 @@ fn bench_check_duplication(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_diagnostics(c: &mut Criterion) {
-    pin_benchmark_thread();
-    if env::var_os("STAR_FILTER_BENCH_DIAGNOSTICS").is_none() {
-        return;
-    }
-
-    let _aesm_proxy = common::aesm_proxy::AesmProxyGuard::start();
-    let rt = current_thread_runtime();
-    let key_manager = KeyManagerRuntime::from_env_with_sealed_keys(&[]).expect("key manager");
-
-    let request_enclave = EnclaveRuntime::from_env().expect("request enclave");
-    install_key_manager_keys_for_enclave(&key_manager, &request_enclave)
-        .expect("install request enclave benchmark keys");
-    let mut rng = UnwrapErr(SysRng);
-    let mut user = register_user(&request_enclave, MAX_COUNT_PER_CREDENTIAL, &mut rng);
-    let request = user
-        .request_auth(
-            0,
-            u64::from_be_bytes(constant_time_utils::time::current_period()),
-            &mut rng,
-        )
-        .expect("token request");
-
-    let public_key_enclave = EnclaveRuntime::from_env().expect("public key enclave");
-    install_key_manager_keys_for_enclave(&key_manager, &public_key_enclave)
-        .expect("install public key enclave benchmark keys");
-
-    let issue_token_enclave = EnclaveRuntime::from_env().expect("issue token enclave");
-    install_key_manager_keys_for_enclave(&key_manager, &issue_token_enclave)
-        .expect("install issue token enclave benchmark keys");
-
-    let mut group = c.benchmark_group(DIAGNOSTICS_GROUP_NAME);
-    group.sample_size(10);
-    group.measurement_time(Duration::from_secs(1));
-    group.throughput(Throughput::Elements(1));
-
-    group.bench_function("public_key_ecall", |b| {
-        b.iter(|| black_box(public_key_enclave.public_key().expect("public key")));
-    });
-
-    group.bench_function("issue_token_direct_ecall", |b| {
-        b.iter(|| {
-            black_box(
-                issue_token_enclave
-                    .issue_token(
-                        black_box(request.as_slice()),
-                        constant_time_utils::time::current_period(),
-                    )
-                    .expect("issue token"),
-            );
-        });
-    });
-
-    group.bench_function("spawn_blocking_noop", |b| {
-        b.to_async(&rt).iter(|| async {
-            black_box(
-                tokio::task::spawn_blocking(|| 1u64)
-                    .await
-                    .expect("spawn_blocking join"),
-            );
-        });
-    });
-
-    group.finish();
-}
-
 criterion_group!(
     benches,
     bench_issue_token_and_route,
     bench_check_duplication,
-    bench_diagnostics
 );
 criterion_main!(benches);
