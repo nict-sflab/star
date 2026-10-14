@@ -9,10 +9,10 @@ use star_core::secure_channel::client::SecureChannelClient;
 use star_core::secure_channel::server::SecureChannelServer;
 use star_core::serv::core::cred::Credential;
 use star_core::serv::core::token::Token;
-use star_core::serv::enclave::Enclave;
+use star_core::serv::enclave::{Enclave, DEFAULT_MAX_TICKET};
 
 const PERIOD: u64 = 1;
-const MAX_TOKENS_PER_CREDENTIAL: u32 = 3;
+const MAX_TOKENS_PER_CREDENTIAL: u32 = DEFAULT_MAX_TICKET;
 const ROUTE_BUCKETS: u32 = 1024;
 
 struct BenchFixture {

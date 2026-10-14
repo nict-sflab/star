@@ -4,7 +4,7 @@ use star_core::secure_channel::{
     client::SecureChannelClient,
     server::SecureChannelServer,
 };
-use star_core::serv::enclave::Enclave;
+use star_core::serv::enclave::{Enclave, DEFAULT_MAX_TICKET};
 
 mod rng;
 use rng::PoisonedRng;
@@ -15,7 +15,7 @@ fn main() {
     // PoisonedRng poisons the random values it generates.
     // Do not poison the RNG object itself.
     let mut rng = PoisonedRng::new();
-    let max_tokens_per_credential = 3u32;
+    let max_tokens_per_credential = DEFAULT_MAX_TICKET;
 
     // Target 1: Enclave::default(&mut rng)
     // The RNG output is poisoned by PoisonedRng.

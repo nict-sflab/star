@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 use hpke_ng::HpkeError;
 use rand::Rng;
 
-const DEFAULT_MAX_TICKET: u32 = 100;
+pub const DEFAULT_MAX_TICKET: u32 = 100;
 
 // HPKE receiver living inside the enclave.
 pub struct Enclave {
