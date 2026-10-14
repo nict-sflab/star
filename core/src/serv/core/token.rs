@@ -28,11 +28,7 @@ impl Token {
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Self {
-        assert!(
-            bytes.len() >= 40,
-            "token bytes must contain 32-byte token + 8-byte period"
-        );
-        let token: Long = bytes[0..32].try_into().expect("fixed-length slice");
+        let token: Long = bytes.try_into().expect("token must be exactly 32 bytes");
 
         Self { token }
     }
@@ -51,5 +47,31 @@ impl Token {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&self.token);
         bytes
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Token;
+
+    #[test]
+    fn token_bytes_round_trip() {
+        let token = Token::new([0x42; 32]);
+        let serialized = token.to_bytes();
+
+        assert_eq!(serialized.len(), 32);
+        assert_eq!(Token::from_bytes(&serialized).token, token.token);
+    }
+
+    #[test]
+    #[should_panic(expected = "token must be exactly 32 bytes")]
+    fn token_from_bytes_rejects_short_input() {
+        Token::from_bytes(&[0u8; 31]);
+    }
+
+    #[test]
+    #[should_panic(expected = "token must be exactly 32 bytes")]
+    fn token_from_bytes_rejects_extra_bytes() {
+        Token::from_bytes(&[0u8; 40]);
     }
 }
