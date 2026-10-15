@@ -14,12 +14,13 @@ const PERIOD: u64 = 1;
 fn main() {
     // PoisonedRng poisons the random values it generates.
     // Do not poison the RNG object itself.
-    let mut rng = PoisonedRng::new();
+    let mut enclave_rng = PoisonedRng::new();
+    let mut client_rng = UnwrapErr(SysRng);
     let max_tokens_per_credential = DEFAULT_MAX_TICKET;
 
-    // Target 1: Enclave::default(&mut rng)
+    // Target 1: Enclave::default(&mut enclave_rng)
     // The RNG output is poisoned by PoisonedRng.
-    let enclave = Enclave::default(&mut rng);
+    let enclave = Enclave::default(&mut enclave_rng);
 
     // User setup and credential issuance.
     let pk = enclave.public_key();
@@ -28,20 +29,20 @@ fn main() {
     let sender = SecureChannelClient::new(pk)
         .expect("failed to initialize sender");
     let mut user = User::new(max_tokens_per_credential as u64, sender);
-    let (cipher, ck) = user.request_credential(&mut rng);
+    let (cipher, ck) = user.request_credential(&mut client_rng);
 
-    // Target 2: enclave.issue_cred(&cipher, &mut rng)
+    // Target 2: enclave.issue_cred(&cipher, &mut enclave_rng)
     // Poison the cipher bytes, not the enclave or RNG objects.
     timecop::poison(cipher.as_slice());
 
-    let credential_bytes: Vec<u8> = enclave.issue_cred(&cipher, &mut rng);
+    let credential_bytes: Vec<u8> = enclave.issue_cred(&cipher, &mut enclave_rng);
 
     timecop::unpoison(cipher.as_slice());
     timecop::unpoison(credential_bytes.as_slice());
     user.receive_credential(&credential_bytes, &ck);
 
     let envelope = user
-        .request_auth(1, PERIOD, &mut rng)
+        .request_auth(1, PERIOD, &mut client_rng)
         .expect("failed to build token request");
     let period = PERIOD.to_be_bytes();
 
