@@ -1,5 +1,7 @@
 use std::env;
 
+use star_core::serv::enclave::DEFAULT_MAX_TICKET;
+
 use crate::upstream::StarUpstream;
 
 #[derive(Clone, Debug)]
@@ -35,7 +37,7 @@ impl ProxyConfig {
             max_requests_per_period: env::var("STAR_MAX_COUNT")
                 .ok()
                 .and_then(|value| value.parse().ok())
-                .unwrap_or(10),
+                .unwrap_or(u64::from(DEFAULT_MAX_TICKET)),
             upstream,
         }
     }
