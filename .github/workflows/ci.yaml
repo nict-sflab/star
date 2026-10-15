@@ -1,0 +1,60 @@
+name: Benchmark and Tests
+
+on:
+  pull_request:
+    branches: [main]
+    types: [closed]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  start:
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.ref == 'develop'
+    uses: ./.github/workflows/ci-start.yaml
+    secrets: inherit
+
+  checkout:
+    needs: start
+    uses: ./.github/workflows/ci-checkout.yaml
+    secrets: inherit
+
+  benchmark:
+    needs: checkout
+    uses: ./.github/workflows/ci-benchmark.yaml
+    secrets: inherit
+
+  tests:
+    needs: benchmark
+    uses: ./.github/workflows/ci-tests.yaml
+    secrets: inherit
+
+  upload:
+    needs: tests
+    uses: ./.github/workflows/ci-upload.yaml
+    secrets: inherit
+
+  stop:
+    needs: [start, checkout, benchmark, tests, upload]
+    if: ${{ always() && needs.start.result == 'success' }}
+    uses: ./.github/workflows/ci-stop.yaml
+    secrets: inherit
+
+  notify:
+    needs: [start, checkout, benchmark, tests, upload, stop]
+    if: >-
+      always() &&
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.ref == 'develop'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send webhook
+        run: |
+          ACTION_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          curl -X POST \
+            -H 'Content-Type: application/json' \
+            --data "{\"text\":\"$ACTION_URL\"}" \
+            "${{ secrets.WEBHOOK_URL }}"

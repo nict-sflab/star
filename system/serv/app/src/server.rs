@@ -4,6 +4,7 @@ use pingora_web::App as WebApp;
 use simple_filter_box::hashmap::HashMapFilterBox;
 use std::error::Error;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::api::{DEFAULT_PUBLIC_KEY_API, DEFAULT_REGISTER_API, IssueApi, PublicKeyApi};
 use crate::env_or_default;
@@ -93,7 +94,7 @@ fn build_server_with_startup_attestation(
         let mut tls_settings = TlsSettings::intermediate(&tls_cert_path, &tls_key_path)?;
         tls_settings.set_groups_list("X25519")?;
         register_star_tls_extension(&mut tls_settings)?;
-        tls_settings.set_client_hello_callback(star_tls_client_hello_callback(filter)?);
+        tls_settings.set_client_hello_callback(star_tls_client_hello_callback(Arc::clone(&filter))?);
         proxy_service.add_tls_with_settings(proxy_addr, None, tls_settings);
     }
 
@@ -101,11 +102,62 @@ fn build_server_with_startup_attestation(
         api: Box::new(api_service),
         proxy: Box::new(proxy_service),
     });
+    server.add_service(HlBatchService { filter });
     Ok(server)
 }
 
-// Pingora normally creates one runtime per service. Group both listeners so
-// registration and filtering share the shard's single request worker.
+const PERIOD_SECONDS: u64 = 60;
+
+fn until_next_period(now: Duration) -> Duration {
+    let seconds_left = PERIOD_SECONDS - now.as_secs() % PERIOD_SECONDS;
+    Duration::from_secs(seconds_left) - Duration::from_nanos(u64::from(now.subsec_nanos()))
+}
+
+struct HlBatchService {
+    filter: Arc<StarFilter<HashMapFilterBox>>,
+}
+
+#[async_trait::async_trait]
+impl pingora::services::Service for HlBatchService {
+    async fn start_service(
+        &mut self,
+        _fds: Option<pingora::server::ListenFds>,
+        mut shutdown: pingora::server::ShutdownWatch,
+        _listeners_per_fd: usize,
+    ) {
+        let mut maintained_period = None;
+        loop {
+            let period = u64::from_be_bytes(constant_time_utils::time::current_period());
+            if maintained_period != Some(period) {
+                if let Err(error) = self.filter.maintain_hls() {
+                    log::error!("HL batch maintenance failed: {error:?}");
+                }
+                maintained_period = Some(period);
+            }
+
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time before UNIX_EPOCH");
+            tokio::select! {
+                _ = tokio::time::sleep(until_next_period(now)) => {}
+                changed = shutdown.changed() => {
+                    if changed.is_err() || *shutdown.borrow() {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    fn name(&self) -> &str {
+        "star-hl-batch"
+    }
+
+    fn threads(&self) -> Option<usize> {
+        Some(1)
+    }
+}
+
 struct ShardService {
     api: Box<dyn pingora::services::Service>,
     proxy: Box<dyn pingora::services::Service>,
@@ -162,6 +214,33 @@ mod tests {
         fn name(&self) -> &str {
             "probe"
         }
+    }
+
+    #[test]
+    fn waits_until_shared_period_boundary() {
+        assert_eq!(
+            until_next_period(Duration::ZERO),
+            Duration::from_secs(PERIOD_SECONDS)
+        );
+        assert_eq!(
+            until_next_period(Duration::from_secs(PERIOD_SECONDS - 1)),
+            Duration::from_secs(1)
+        );
+        assert_eq!(
+            until_next_period(Duration::new(PERIOD_SECONDS * 2 - 1, 250_000_000)),
+            Duration::from_millis(750)
+        );
+
+        let before = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() / PERIOD_SECONDS;
+        let actual = u64::from_be_bytes(constant_time_utils::time::current_period());
+        let after = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() / PERIOD_SECONDS;
+        assert!(actual == before || actual == after);
     }
 
     #[test]
