@@ -51,5 +51,5 @@ docker compose -f compose.test.yaml down
 
 ## Disclaimer
 
-This is a research-grade Proof of Concept (PoC) and does not guarantee complete security when deployed.   
-For example, the implementation of a trusted time source, which would be required in a production environment, has been omitted.
+This is a research-grade Proof of Concept (PoC) and does not guarantee complete security when deployed[^1].   
+[^1]: e.g., the implementation of a trusted time source, which would be required in a production environment, has been omitted.
