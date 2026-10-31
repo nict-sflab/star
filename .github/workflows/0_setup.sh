@@ -1,10 +1,12 @@
-sudo rm ./output/*
+#!/usr/bin/env bash
+set -euo pipefail
 
 git reset
 git checkout main
+git pull --ff-only
 
-git pull
+mkdir -p output
+sudo rm -f -- ./output/*
 
-git status | tee result/durty.txt
-screenfetch | tee result/machine.txt
-
+git status | tee output/durty.txt
+screenfetch | tee output/machine.txt
