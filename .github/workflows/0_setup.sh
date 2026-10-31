@@ -5,12 +5,12 @@ git reset
 git checkout main
 git pull --ff-only
 
-mkdir -p output result
+mkdir -p output
 sudo rm -f -- ./output/*
 
-git status | tee result/durty.txt
+git status | tee output/durty.txt
 if command -v screenfetch >/dev/null 2>&1; then
-  screenfetch | tee result/machine.txt
+  screenfetch | tee output/machine.txt
 else
-  uname -a | tee result/machine.txt
+  uname -a | tee output/machine.txt
 fi
