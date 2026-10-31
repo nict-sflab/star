@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use simple_filter_box::{core::{Entry, FilterBox}, hashmap::HashMapFilterBox};
 
-const ENTRY_COUNTS: &[usize] = &[21_800];
+const ENTRY_COUNTS: &[usize] = &[1360];
 const STORAGE_TABLE_TITLE: &str = "HashMapFilterBox (32-byte tokens) live allocated bytes";
 
 struct CountingAllocator;
